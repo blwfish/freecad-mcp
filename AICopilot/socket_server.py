@@ -17,6 +17,70 @@ from PySide import QtCore
 # Platform-specific socket handling
 IS_WINDOWS = platform.system() == "Windows"
 
+# =============================================================================
+# MCP Debug Infrastructure
+# =============================================================================
+# Optional but recommended - provides crash logging and operation tracing
+# If modules are present but incomplete/broken, we crash early to alert user
+
+DEBUG_ENABLED = False
+_debugger = None
+_monitor = None
+
+def _log_operation(operation, parameters=None, result=None, error=None, duration=None):
+    """No-op fallback if debug not enabled"""
+    pass
+
+def _capture_state():
+    """No-op fallback if debug not enabled"""
+    return {}
+
+try:
+    from freecad_debug import (
+        init_debugger, 
+        log_operation as _log_op_impl,
+        capture_state as _capture_state_impl,
+        get_debugger
+    )
+    from freecad_health import init_monitor, get_monitor
+    
+    # Initialize with FreeCAD-appropriate settings
+    _debugger = init_debugger(
+        log_dir="/tmp/freecad_mcp_debug",
+        enable_console=False,  # Don't spam FreeCAD Report View
+        enable_file=True
+    )
+    _monitor = init_monitor()
+    
+    # Wire up the actual implementations
+    _log_operation = _log_op_impl
+    _capture_state = _capture_state_impl
+    
+    DEBUG_ENABLED = True
+    FreeCAD.Console.PrintMessage("✅ MCP Debug infrastructure loaded\n")
+    FreeCAD.Console.PrintMessage("   Logs: /tmp/freecad_mcp_debug/\n")
+    FreeCAD.Console.PrintMessage("   Crashes: /tmp/freecad_mcp_crashes/\n")
+    
+except ImportError as e:
+    # Debug modules not present - that's OK, continue without them
+    FreeCAD.Console.PrintMessage(f"ℹ️  MCP Debug not available (optional): {e}\n")
+    
+except Exception as e:
+    # Debug modules present but broken - crash early to alert user
+    FreeCAD.Console.PrintError(f"❌ MCP Debug modules broken: {e}\n")
+    FreeCAD.Console.PrintError("   Fix or remove freecad_debug.py/freecad_health.py\n")
+    raise
+
+# Operations that get full state capture (more expensive but useful for debugging)
+FULLY_INSTRUMENTED_OPS = {
+    'get_screenshot', 
+    'screenshot',
+    'execute_python', 
+    'view_control',
+    'part_operations',
+    'partdesign_operations',
+}
+
 # Import our new modal command system
 try:
     from modal_command_system import get_modal_system
@@ -309,16 +373,77 @@ class FreeCADSocketServer:
                 
     def _process_command(self, command_str: str) -> str:
         """Process incoming command and return response"""
+        start_time = time.time()
+        tool_name = "unknown"
+        args = {}
+        before_state = None
+        
         try:
             # Parse JSON command
             command = json.loads(command_str)
             
             # Extract tool name and arguments
-            tool_name = command.get('tool')
+            tool_name = command.get('tool', 'unknown')
             args = command.get('args', {})
+            
+            # Determine instrumentation level
+            full_instrumentation = (
+                DEBUG_ENABLED and 
+                tool_name in FULLY_INSTRUMENTED_OPS
+            )
+            
+            # Log incoming request
+            if DEBUG_ENABLED:
+                _log_operation(
+                    operation=f"REQUEST:{tool_name}",
+                    parameters=args
+                )
+                
+                # Capture state before for fully instrumented ops
+                if full_instrumentation:
+                    try:
+                        before_state = _capture_state()
+                    except Exception as state_err:
+                        FreeCAD.Console.PrintWarning(
+                            f"State capture failed: {state_err}\n"
+                        )
             
             # Route to appropriate handler
             result = self._execute_tool(tool_name, args)
+            
+            duration = time.time() - start_time
+            
+            # Log successful completion
+            if DEBUG_ENABLED:
+                # Truncate large results for logging
+                result_summary = result
+                if result and len(str(result)) > 500:
+                    result_summary = str(result)[:500] + "...[truncated]"
+                
+                _log_operation(
+                    operation=f"RESPONSE:{tool_name}",
+                    parameters={"duration_ms": int(duration * 1000)},
+                    result=result_summary
+                )
+                
+                # Capture and compare state after for fully instrumented ops
+                if full_instrumentation and before_state:
+                    try:
+                        after_state = _capture_state()
+                        # Log state delta if objects changed
+                        before_count = before_state.get('object_count', 0)
+                        after_count = after_state.get('object_count', 0)
+                        if before_count != after_count:
+                            _log_operation(
+                                operation=f"STATE_CHANGE:{tool_name}",
+                                parameters={
+                                    "objects_before": before_count,
+                                    "objects_after": after_count,
+                                    "delta": after_count - before_count
+                                }
+                            )
+                    except Exception as state_err:
+                        pass  # State comparison is best-effort
             
             return json.dumps({
                 "success": True,
@@ -326,6 +451,28 @@ class FreeCADSocketServer:
             })
             
         except Exception as e:
+            duration = time.time() - start_time
+            
+            # Log failure with full details
+            if DEBUG_ENABLED:
+                import traceback
+                _log_operation(
+                    operation=f"ERROR:{tool_name}",
+                    parameters=args,
+                    error=e,
+                    duration=duration
+                )
+                
+                # If we have a monitor, log crash details
+                if _monitor:
+                    try:
+                        _monitor.log_crash(
+                            health_status={"tool": tool_name, "args": args},
+                            additional_info={"traceback": traceback.format_exc()}
+                        )
+                    except:
+                        pass
+            
             return json.dumps({
                 "success": False,
                 "error": str(e)
@@ -488,7 +635,7 @@ class FreeCADSocketServer:
             # Recompute and fit view
             doc.recompute()
             if FreeCADGui.ActiveDocument:
-                FreeCADGui.SendMsgToActiveView("ViewFit")
+                pass  # DISABLED: FreeCADGui.SendMsgToActiveView("ViewFit") - causes hang from non-GUI thread
             
             return f"Created box: {box.Name} ({length}x{width}x{height}mm) at ({x},{y},{z})"
             
@@ -513,7 +660,7 @@ class FreeCADSocketServer:
             
             doc.recompute()
             if FreeCADGui.ActiveDocument:
-                FreeCADGui.SendMsgToActiveView("ViewFit")
+                pass  # DISABLED: FreeCADGui.SendMsgToActiveView("ViewFit") - causes hang from non-GUI thread
             
             return f"Created cylinder: {cylinder.Name} (R{radius}, H{height}) at ({x},{y},{z})"
             
@@ -536,7 +683,7 @@ class FreeCADSocketServer:
             
             doc.recompute()
             if FreeCADGui.ActiveDocument:
-                FreeCADGui.SendMsgToActiveView("ViewFit")
+                pass  # DISABLED: FreeCADGui.SendMsgToActiveView("ViewFit") - causes hang from non-GUI thread
             
             return f"Created sphere: {sphere.Name} (R{radius}) at ({x},{y},{z})"
             
@@ -563,7 +710,7 @@ class FreeCADSocketServer:
             
             doc.recompute()
             if FreeCADGui.ActiveDocument:
-                FreeCADGui.SendMsgToActiveView("ViewFit")
+                pass  # DISABLED: FreeCADGui.SendMsgToActiveView("ViewFit") - causes hang from non-GUI thread
             
             return f"Created cone: {cone.Name} (R1{radius1}, R2{radius2}, H{height}) at ({x},{y},{z})"
             
@@ -588,7 +735,7 @@ class FreeCADSocketServer:
             
             doc.recompute()
             if FreeCADGui.ActiveDocument:
-                FreeCADGui.SendMsgToActiveView("ViewFit")
+                pass  # DISABLED: FreeCADGui.SendMsgToActiveView("ViewFit") - causes hang from non-GUI thread
             
             return f"Created torus: {torus.Name} (R1{radius1}, R2{radius2}) at ({x},{y},{z})"
             
@@ -621,7 +768,7 @@ class FreeCADSocketServer:
             
             doc.recompute()
             if FreeCADGui.ActiveDocument:
-                FreeCADGui.SendMsgToActiveView("ViewFit")
+                pass  # DISABLED: FreeCADGui.SendMsgToActiveView("ViewFit") - causes hang from non-GUI thread
             
             return f"Created wedge: {wedge.Name} ({xmax}x{ymax}x{zmax}) at origin"
             
@@ -2034,38 +2181,125 @@ class FreeCADSocketServer:
             return f"Error calculating mass properties: {e}"
     
     def _get_screenshot_gui_safe(self, args: Dict[str, Any]) -> str:
-        """Take screenshot of current view using GUI-safe thread queue"""
+        """Take screenshot of current view using GUI-safe thread queue
+        
+        FULLY INSTRUMENTED - logs all steps for crash debugging
+        """
+        screenshot_id = f"screenshot_{int(time.time() * 1000)}"
+        
+        if DEBUG_ENABLED:
+            _log_operation(
+                operation=f"SCREENSHOT_START:{screenshot_id}",
+                parameters=args
+            )
+        
         try:
             if not FreeCADGui.ActiveDocument:
+                if DEBUG_ENABLED:
+                    _log_operation(
+                        operation=f"SCREENSHOT_FAIL:{screenshot_id}",
+                        result="No active document"
+                    )
                 return "No active document for screenshot"
                 
             import tempfile
             import base64
-            import time
             
             width = args.get('width', 800)
             height = args.get('height', 600)
             
-            # Define GUI task
+            if DEBUG_ENABLED:
+                _log_operation(
+                    operation=f"SCREENSHOT_SETUP:{screenshot_id}",
+                    parameters={"width": width, "height": height}
+                )
+            
+            # Define GUI task with internal logging
             def screenshot_task():
+                task_start = time.time()
+                
+                if DEBUG_ENABLED:
+                    _log_operation(
+                        operation=f"SCREENSHOT_TASK_START:{screenshot_id}",
+                        parameters={"thread": "GUI"}
+                    )
+                
                 try:
                     view = FreeCADGui.ActiveDocument.ActiveView
                     if not view:
+                        if DEBUG_ENABLED:
+                            _log_operation(
+                                operation=f"SCREENSHOT_TASK_FAIL:{screenshot_id}",
+                                result="No active view"
+                            )
                         return {"error": "No active view"}
+                    
+                    if DEBUG_ENABLED:
+                        _log_operation(
+                            operation=f"SCREENSHOT_VIEW_OK:{screenshot_id}",
+                            parameters={"view_type": str(type(view))}
+                        )
                     
                     # Create temporary file
                     with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
                         tmp_path = tmp.name
-                        
-                    # GUI-safe: Save image in main thread
+                    
+                    if DEBUG_ENABLED:
+                        _log_operation(
+                            operation=f"SCREENSHOT_TMPFILE:{screenshot_id}",
+                            parameters={"path": tmp_path}
+                        )
+                    
+                    # THE CRITICAL CALL - this is likely where crashes happen
+                    if DEBUG_ENABLED:
+                        _log_operation(
+                            operation=f"SCREENSHOT_SAVEIMAGE_START:{screenshot_id}",
+                            parameters={"path": tmp_path, "width": width, "height": height}
+                        )
+                    
                     view.saveImage(tmp_path, width, height, "White")
+                    
+                    if DEBUG_ENABLED:
+                        _log_operation(
+                            operation=f"SCREENSHOT_SAVEIMAGE_DONE:{screenshot_id}",
+                            parameters={"path": tmp_path}
+                        )
+                    
+                    # Verify file was created
+                    if not os.path.exists(tmp_path):
+                        if DEBUG_ENABLED:
+                            _log_operation(
+                                operation=f"SCREENSHOT_TASK_FAIL:{screenshot_id}",
+                                result="saveImage did not create file"
+                            )
+                        return {"error": "saveImage did not create file"}
+                    
+                    file_size = os.path.getsize(tmp_path)
+                    if DEBUG_ENABLED:
+                        _log_operation(
+                            operation=f"SCREENSHOT_FILE_OK:{screenshot_id}",
+                            parameters={"size_bytes": file_size}
+                        )
                     
                     # Convert to base64
                     with open(tmp_path, 'rb') as f:
                         image_data = base64.b64encode(f.read()).decode('utf-8')
                     
+                    if DEBUG_ENABLED:
+                        _log_operation(
+                            operation=f"SCREENSHOT_ENCODED:{screenshot_id}",
+                            parameters={"base64_len": len(image_data)}
+                        )
+                    
                     # Cleanup
                     os.unlink(tmp_path)
+                    
+                    task_duration = time.time() - task_start
+                    if DEBUG_ENABLED:
+                        _log_operation(
+                            operation=f"SCREENSHOT_TASK_DONE:{screenshot_id}",
+                            parameters={"duration_ms": int(task_duration * 1000)}
+                        )
                     
                     return {
                         "success": True,
@@ -2075,16 +2309,41 @@ class FreeCADSocketServer:
                     }
                     
                 except Exception as e:
+                    if DEBUG_ENABLED:
+                        import traceback
+                        _log_operation(
+                            operation=f"SCREENSHOT_TASK_EXCEPTION:{screenshot_id}",
+                            error=e,
+                            parameters={"traceback": traceback.format_exc()}
+                        )
                     return {"error": f"Screenshot task failed: {e}"}
             
             # Queue task and wait for result
+            if DEBUG_ENABLED:
+                _log_operation(
+                    operation=f"SCREENSHOT_QUEUE:{screenshot_id}",
+                    parameters={"queue_size": gui_task_queue.qsize()}
+                )
+            
             gui_task_queue.put(screenshot_task)
             
             # Wait for result with timeout
             start_time = time.time()
-            while time.time() - start_time < 10:  # 10 second timeout
+            timeout_seconds = 10
+            
+            while time.time() - start_time < timeout_seconds:
                 try:
                     result = gui_response_queue.get_nowait()
+                    
+                    if DEBUG_ENABLED:
+                        _log_operation(
+                            operation=f"SCREENSHOT_RESULT:{screenshot_id}",
+                            parameters={
+                                "wait_ms": int((time.time() - start_time) * 1000),
+                                "result_type": type(result).__name__
+                            }
+                        )
+                    
                     if isinstance(result, dict):
                         if "error" in result:
                             return f"Error taking screenshot: {result['error']}"
@@ -2099,9 +2358,22 @@ class FreeCADSocketServer:
                     time.sleep(0.1)
                     continue
             
+            if DEBUG_ENABLED:
+                _log_operation(
+                    operation=f"SCREENSHOT_TIMEOUT:{screenshot_id}",
+                    parameters={"timeout_seconds": timeout_seconds}
+                )
+            
             return "Screenshot timeout - GUI thread may be busy"
             
         except Exception as e:
+            if DEBUG_ENABLED:
+                import traceback
+                _log_operation(
+                    operation=f"SCREENSHOT_SETUP_EXCEPTION:{screenshot_id}",
+                    error=e,
+                    parameters={"traceback": traceback.format_exc()}
+                )
             return f"Error in screenshot setup: {e}"
     
     def _set_view_gui_safe(self, args: Dict[str, Any]) -> str:
@@ -2196,6 +2468,8 @@ class FreeCADSocketServer:
     def _execute_python(self, args: Dict[str, Any]) -> str:
         """Execute Python code in FreeCAD context with expression value capture.
         
+        FULLY INSTRUMENTED - logs all steps for crash debugging
+        
         This method handles both statements and expressions, returning the value
         of the last expression if present (similar to IPython/Jupyter behavior).
         
@@ -2215,11 +2489,28 @@ class FreeCADSocketServer:
         
         code = args.get('code', '')
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        exec_id = f"exec_{int(time.time() * 1000)}"
+        
+        # Log execution start with code preview
+        if DEBUG_ENABLED:
+            code_preview = code[:200] + "..." if len(code) > 200 else code
+            _log_operation(
+                operation=f"EXEC_START:{exec_id}",
+                parameters={"code_preview": code_preview, "code_len": len(code)}
+            )
         
         FreeCAD.Console.PrintMessage(f"[{timestamp}] EXEC START: {repr(code[:100])}...\n")
         
         def execute_task():
             """Task to run on GUI thread"""
+            task_start = time.time()
+            
+            if DEBUG_ENABLED:
+                _log_operation(
+                    operation=f"EXEC_TASK_START:{exec_id}",
+                    parameters={"thread": "GUI"}
+                )
+            
             try:
                 # Enhanced pre-flight safety checks
                 if 'newDocument' in code:
@@ -2296,14 +2587,39 @@ class FreeCADSocketServer:
                     if result_value is not None:
                         result_str = repr(result_value)
                         FreeCAD.Console.PrintMessage(f"EXEC: Result: {result_str}\n")
+                        
+                        if DEBUG_ENABLED:
+                            task_duration = time.time() - task_start
+                            _log_operation(
+                                operation=f"EXEC_SUCCESS:{exec_id}",
+                                parameters={"duration_ms": int(task_duration * 1000)},
+                                result=result_str[:200] if len(result_str) > 200 else result_str
+                            )
+                        
                         return {"success": True, "result": result_str}
                     else:
                         FreeCAD.Console.PrintMessage("EXEC: No result value\n")
+                        
+                        if DEBUG_ENABLED:
+                            task_duration = time.time() - task_start
+                            _log_operation(
+                                operation=f"EXEC_SUCCESS:{exec_id}",
+                                parameters={"duration_ms": int(task_duration * 1000)},
+                                result="Code executed successfully (no return value)"
+                            )
+                        
                         return {"success": True, "result": "Code executed successfully"}
                         
                 except SyntaxError as syn_err:
                     # If AST parsing fails, fall back to simple exec
                     FreeCAD.Console.PrintWarning(f"EXEC: AST parse failed, using simple exec: {syn_err}\n")
+                    
+                    if DEBUG_ENABLED:
+                        _log_operation(
+                            operation=f"EXEC_AST_FALLBACK:{exec_id}",
+                            parameters={"syntax_error": str(syn_err)}
+                        )
+                    
                     exec(code, exec_context)
                     
                     if 'result' in exec_context:
@@ -2313,12 +2629,28 @@ class FreeCADSocketServer:
                 except Exception as exec_error:
                     FreeCAD.Console.PrintError(f"EXEC: Code execution failed: {exec_error}\n")
                     FreeCAD.Console.PrintError(f"EXEC: Traceback: {traceback.format_exc()}\n")
+                    
+                    if DEBUG_ENABLED:
+                        _log_operation(
+                            operation=f"EXEC_FAIL:{exec_id}",
+                            error=exec_error,
+                            parameters={"traceback": traceback.format_exc()}
+                        )
+                    
                     return {"error": f"Python execution error: {exec_error}"}
                     
             except Exception as e:
                 error_msg = f"Python execution error: {e}"
                 FreeCAD.Console.PrintError(f"EXEC ERROR: {error_msg}\n")
                 FreeCAD.Console.PrintError(f"EXEC TRACEBACK: {traceback.format_exc()}\n")
+                
+                if DEBUG_ENABLED:
+                    _log_operation(
+                        operation=f"EXEC_OUTER_FAIL:{exec_id}",
+                        error=e,
+                        parameters={"traceback": traceback.format_exc()}
+                    )
+                
                 return {"error": error_msg}
         
         # Queue task for GUI thread execution
@@ -2449,7 +2781,7 @@ class FreeCADSocketServer:
         """Fit all objects in the view"""
         try:
             if FreeCADGui.ActiveDocument:
-                FreeCADGui.SendMsgToActiveView("ViewFit")
+                pass  # DISABLED: FreeCADGui.SendMsgToActiveView("ViewFit") - causes hang from non-GUI thread
                 return "View fitted to all objects"
             else:
                 return "No active document"
@@ -2664,97 +2996,253 @@ class FreeCADSocketServer:
 
 
     def _handle_partdesign_operations(self, args: Dict[str, Any]) -> str:
-        """Smart dispatcher for all PartDesign operations (20+ operations)"""
+        """Smart dispatcher for all PartDesign operations (20+ operations)
+        
+        GUI-SAFE: All operations are queued to the GUI thread to prevent crashes
+        from NSWindow/Qt threading violations.
+        """
         operation = args.get('operation', '')
+        pd_op_id = f"partdesign_{operation}_{int(time.time() * 1000)}"
         
-        # For fillet and chamfer, use the Part workbench methods that support selection workflow
-        # These work with both Part and PartDesign objects
-        if operation == "fillet":
-            return self._fillet_edges(args)
-        elif operation == "chamfer":
-            return self._chamfer_edges(args)
+        if DEBUG_ENABLED:
+            _log_operation(
+                operation=f"PD_OP_START:{pd_op_id}",
+                parameters=args
+            )
         
-        # TEMPORARILY DISABLE modal command system for PartDesign to prevent crashes
-        # Modal system opens native FreeCAD dialogs which can cause issues
-        # Use direct implementation methods instead
+        # Define the actual work to run on GUI thread
+        def partdesign_operation_task():
+            task_start = time.time()
+            
+            if DEBUG_ENABLED:
+                _log_operation(
+                    operation=f"PD_OP_TASK_START:{pd_op_id}",
+                    parameters={"thread": "GUI", "operation": operation}
+                )
+            
+            try:
+                # For fillet and chamfer, use the Part workbench methods that support selection workflow
+                # These work with both Part and PartDesign objects
+                if operation == "fillet":
+                    result = self._fillet_edges(args)
+                elif operation == "chamfer":
+                    result = self._chamfer_edges(args)
+                # Core PartDesign operations
+                elif operation == "pad":
+                    result = self._pad_sketch(args)
+                elif operation == "revolution":
+                    result = self._revolution(args)
+                elif operation == "groove":
+                    result = self._partdesign_groove(args)
+                elif operation == "loft":
+                    result = self._loft_profiles(args)
+                elif operation == "sweep":
+                    result = self._sweep_path(args)
+                elif operation == "additive_pipe":
+                    result = self._partdesign_additive_pipe(args)
+                elif operation == "subtractive_sweep":
+                    result = self._partdesign_subtractive_sweep(args)
+                # Pattern features
+                elif operation == "mirror":
+                    result = self._mirror_feature(args)
+                # Hole features
+                elif operation in ["hole", "counterbore", "countersink"]:
+                    result = self._hole_wizard({**args, "hole_type": operation})
+                else:
+                    result = f"Unknown PartDesign operation: {operation}"
+                
+                if DEBUG_ENABLED:
+                    task_duration = time.time() - task_start
+                    _log_operation(
+                        operation=f"PD_OP_TASK_DONE:{pd_op_id}",
+                        parameters={"duration_ms": int(task_duration * 1000)},
+                        result=result[:200] if len(str(result)) > 200 else result
+                    )
+                
+                return {"success": True, "result": result}
+                
+            except Exception as e:
+                import traceback
+                if DEBUG_ENABLED:
+                    _log_operation(
+                        operation=f"PD_OP_TASK_FAIL:{pd_op_id}",
+                        error=e,
+                        parameters={"traceback": traceback.format_exc()}
+                    )
+                return {"error": f"PartDesign operation failed: {e}"}
         
-        # TODO: Re-enable modal system once dialog handling is stabilized
-        modal_system_disabled = True
-        # Fallback to original methods for operations not yet converted
-        if operation == "pad":
-            return self._pad_sketch(args)
-        elif operation == "revolution":
-            return self._revolution(args)
-        elif operation == "groove":
-            return self._partdesign_groove(args)
-        elif operation == "loft":
-            return self._loft_profiles(args)
-        elif operation == "sweep":
-            return self._sweep_path(args)
-        elif operation == "additive_pipe":
-            return self._partdesign_additive_pipe(args)
-        elif operation == "subtractive_sweep":
-            return self._partdesign_subtractive_sweep(args)
-        # Dress-up features - fallback to old methods if modal system fails
-        elif operation == "fillet":
-            return self._fillet_edges(args)
-        elif operation == "chamfer":
-            return self._chamfer_edges(args)
-        # Pattern features
-        elif operation == "mirror":
-            return self._mirror_feature(args)
-        # Hole features
-        elif operation in ["hole", "counterbore", "countersink"]:
-            return self._hole_wizard({**args, "hole_type": operation})
-        else:
-            return f"Unknown PartDesign operation: {operation}"
+        # Queue task for GUI thread execution
+        if DEBUG_ENABLED:
+            _log_operation(
+                operation=f"PD_OP_QUEUE:{pd_op_id}",
+                parameters={"queue_size": gui_task_queue.qsize()}
+            )
+        
+        gui_task_queue.put(partdesign_operation_task)
+        
+        # Wait for result with timeout
+        start_time = time.time()
+        timeout_seconds = 30  # Allow longer for complex operations
+        
+        while time.time() - start_time < timeout_seconds:
+            try:
+                result = gui_response_queue.get_nowait()
+                
+                if DEBUG_ENABLED:
+                    _log_operation(
+                        operation=f"PD_OP_RESULT:{pd_op_id}",
+                        parameters={"wait_ms": int((time.time() - start_time) * 1000)}
+                    )
+                
+                if isinstance(result, dict):
+                    if "error" in result:
+                        return result["error"]
+                    elif "success" in result:
+                        return result["result"]
+                return str(result)
+                
+            except queue.Empty:
+                time.sleep(0.05)  # 50ms polling
+                continue
+        
+        if DEBUG_ENABLED:
+            _log_operation(
+                operation=f"PD_OP_TIMEOUT:{pd_op_id}",
+                parameters={"timeout_seconds": timeout_seconds}
+            )
+        
+        return f"PartDesign operation timeout - GUI thread may be busy"
 
     def _handle_part_operations(self, args: Dict[str, Any]) -> str:
-        """Smart dispatcher for all Part operations (18+ operations)"""
-        operation = args.get('operation', '')
+        """Smart dispatcher for all Part operations (18+ operations)
         
-        # Route to appropriate Part method
-        if operation == "box":
-            return self._create_box(args)
-        elif operation == "cylinder":
-            return self._create_cylinder(args)
-        elif operation == "sphere":
-            return self._create_sphere(args)
-        elif operation == "cone":
-            return self._create_cone(args)
-        elif operation == "torus":
-            return self._create_torus(args)
-        elif operation == "wedge":
-            return self._create_wedge(args)
-        # Boolean operations
-        elif operation == "fuse":
-            return self._fuse_objects(args)
-        elif operation == "cut":
-            return self._cut_objects(args)
-        elif operation == "common":
-            return self._common_objects(args)
-        elif operation == "section":
-            return self._part_section(args)
-        # Transform operations
-        elif operation == "move":
-            return self._move_object(args)
-        elif operation == "rotate":
-            return self._rotate_object(args)
-        elif operation == "scale":
-            return self._part_scale_object(args)
-        elif operation == "mirror":
-            return self._part_mirror_object(args)
-        # Advanced creation
-        elif operation == "loft":
-            return self._loft_profiles(args)
-        elif operation == "sweep":
-            return self._sweep_path(args)
-        elif operation == "extrude":
-            return self._part_extrude(args)
-        elif operation == "revolve":
-            return self._part_revolve(args)
-        else:
-            return f"Unknown Part operation: {operation}"
+        GUI-SAFE: All operations are queued to the GUI thread to prevent crashes
+        from NSWindow/Qt threading violations.
+        """
+        operation = args.get('operation', '')
+        part_op_id = f"part_{operation}_{int(time.time() * 1000)}"
+        
+        if DEBUG_ENABLED:
+            _log_operation(
+                operation=f"PART_OP_START:{part_op_id}",
+                parameters=args
+            )
+        
+        # Define the actual work to run on GUI thread
+        def part_operation_task():
+            task_start = time.time()
+            
+            if DEBUG_ENABLED:
+                _log_operation(
+                    operation=f"PART_OP_TASK_START:{part_op_id}",
+                    parameters={"thread": "GUI", "operation": operation}
+                )
+            
+            try:
+                # Route to appropriate Part method
+                if operation == "box":
+                    result = self._create_box(args)
+                elif operation == "cylinder":
+                    result = self._create_cylinder(args)
+                elif operation == "sphere":
+                    result = self._create_sphere(args)
+                elif operation == "cone":
+                    result = self._create_cone(args)
+                elif operation == "torus":
+                    result = self._create_torus(args)
+                elif operation == "wedge":
+                    result = self._create_wedge(args)
+                # Boolean operations
+                elif operation == "fuse":
+                    result = self._fuse_objects(args)
+                elif operation == "cut":
+                    result = self._cut_objects(args)
+                elif operation == "common":
+                    result = self._common_objects(args)
+                elif operation == "section":
+                    result = self._part_section(args)
+                # Transform operations
+                elif operation == "move":
+                    result = self._move_object(args)
+                elif operation == "rotate":
+                    result = self._rotate_object(args)
+                elif operation == "scale":
+                    result = self._part_scale_object(args)
+                elif operation == "mirror":
+                    result = self._part_mirror_object(args)
+                # Advanced creation
+                elif operation == "loft":
+                    result = self._loft_profiles(args)
+                elif operation == "sweep":
+                    result = self._sweep_path(args)
+                elif operation == "extrude":
+                    result = self._part_extrude(args)
+                elif operation == "revolve":
+                    result = self._part_revolve(args)
+                else:
+                    result = f"Unknown Part operation: {operation}"
+                
+                if DEBUG_ENABLED:
+                    task_duration = time.time() - task_start
+                    _log_operation(
+                        operation=f"PART_OP_TASK_DONE:{part_op_id}",
+                        parameters={"duration_ms": int(task_duration * 1000)},
+                        result=result[:200] if len(str(result)) > 200 else result
+                    )
+                
+                return {"success": True, "result": result}
+                
+            except Exception as e:
+                import traceback
+                if DEBUG_ENABLED:
+                    _log_operation(
+                        operation=f"PART_OP_TASK_FAIL:{part_op_id}",
+                        error=e,
+                        parameters={"traceback": traceback.format_exc()}
+                    )
+                return {"error": f"Part operation failed: {e}"}
+        
+        # Queue task for GUI thread execution
+        if DEBUG_ENABLED:
+            _log_operation(
+                operation=f"PART_OP_QUEUE:{part_op_id}",
+                parameters={"queue_size": gui_task_queue.qsize()}
+            )
+        
+        gui_task_queue.put(part_operation_task)
+        
+        # Wait for result with timeout
+        start_time = time.time()
+        timeout_seconds = 30  # Allow longer for complex operations
+        
+        while time.time() - start_time < timeout_seconds:
+            try:
+                result = gui_response_queue.get_nowait()
+                
+                if DEBUG_ENABLED:
+                    _log_operation(
+                        operation=f"PART_OP_RESULT:{part_op_id}",
+                        parameters={"wait_ms": int((time.time() - start_time) * 1000)}
+                    )
+                
+                if isinstance(result, dict):
+                    if "error" in result:
+                        return result["error"]
+                    elif "success" in result:
+                        return result["result"]
+                return str(result)
+                
+            except queue.Empty:
+                time.sleep(0.05)  # 50ms polling
+                continue
+        
+        if DEBUG_ENABLED:
+            _log_operation(
+                operation=f"PART_OP_TIMEOUT:{part_op_id}",
+                parameters={"timeout_seconds": timeout_seconds}
+            )
+        
+        return f"Part operation timeout - GUI thread may be busy"
 
     def _handle_view_control(self, args: Dict[str, Any]) -> str:
         """Smart dispatcher for all view and document control operations"""
