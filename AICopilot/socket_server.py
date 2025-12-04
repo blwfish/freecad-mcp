@@ -2181,200 +2181,56 @@ class FreeCADSocketServer:
             return f"Error calculating mass properties: {e}"
     
     def _get_screenshot_gui_safe(self, args: Dict[str, Any]) -> str:
-        """Take screenshot of current view using GUI-safe thread queue
+        """Screenshot functionality is DISABLED - returns clear error message
         
-        FULLY INSTRUMENTED - logs all steps for crash debugging
+        Screenshots are not practical over MCP due to prohibitive data size and cost:
+        - Even 1920x1080 screenshots generate ~2MB of base64 data (~3M tokens, $9 cost)
+        - 4K/5K displays generate 8-20MB of data (11-21M tokens, $35-$63 cost)
+        - Data size exceeds Claude's entire 190K token context window by 15-110x
+        - Would consume entire conversation budget on a single image
+        
+        Use FreeCAD's native screenshot features instead:
+        - GUI: View → Save Picture...
+        - Python: Gui.activeDocument().activeView().saveImage('path.png', width, height)
+        
+        For automation, save screenshots to a shared directory accessible to both
+        FreeCAD and Claude, then reference the file path in conversation.
         """
-        screenshot_id = f"screenshot_{int(time.time() * 1000)}"
-        
-        if DEBUG_ENABLED:
-            _log_operation(
-                operation=f"SCREENSHOT_START:{screenshot_id}",
-                parameters=args
-            )
-        
-        try:
-            if not FreeCADGui.ActiveDocument:
-                if DEBUG_ENABLED:
-                    _log_operation(
-                        operation=f"SCREENSHOT_FAIL:{screenshot_id}",
-                        result="No active document"
-                    )
-                return "No active document for screenshot"
-                
-            import tempfile
-            import base64
-            
-            width = args.get('width', 800)
-            height = args.get('height', 600)
-            
-            if DEBUG_ENABLED:
-                _log_operation(
-                    operation=f"SCREENSHOT_SETUP:{screenshot_id}",
-                    parameters={"width": width, "height": height}
-                )
-            
-            # Define GUI task with internal logging
-            def screenshot_task():
-                task_start = time.time()
-                
-                if DEBUG_ENABLED:
-                    _log_operation(
-                        operation=f"SCREENSHOT_TASK_START:{screenshot_id}",
-                        parameters={"thread": "GUI"}
-                    )
-                
-                try:
-                    view = FreeCADGui.ActiveDocument.ActiveView
-                    if not view:
-                        if DEBUG_ENABLED:
-                            _log_operation(
-                                operation=f"SCREENSHOT_TASK_FAIL:{screenshot_id}",
-                                result="No active view"
-                            )
-                        return {"error": "No active view"}
-                    
-                    if DEBUG_ENABLED:
-                        _log_operation(
-                            operation=f"SCREENSHOT_VIEW_OK:{screenshot_id}",
-                            parameters={"view_type": str(type(view))}
-                        )
-                    
-                    # Create temporary file
-                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                        tmp_path = tmp.name
-                    
-                    if DEBUG_ENABLED:
-                        _log_operation(
-                            operation=f"SCREENSHOT_TMPFILE:{screenshot_id}",
-                            parameters={"path": tmp_path}
-                        )
-                    
-                    # THE CRITICAL CALL - this is likely where crashes happen
-                    if DEBUG_ENABLED:
-                        _log_operation(
-                            operation=f"SCREENSHOT_SAVEIMAGE_START:{screenshot_id}",
-                            parameters={"path": tmp_path, "width": width, "height": height}
-                        )
-                    
-                    view.saveImage(tmp_path, width, height, "White")
-                    
-                    if DEBUG_ENABLED:
-                        _log_operation(
-                            operation=f"SCREENSHOT_SAVEIMAGE_DONE:{screenshot_id}",
-                            parameters={"path": tmp_path}
-                        )
-                    
-                    # Verify file was created
-                    if not os.path.exists(tmp_path):
-                        if DEBUG_ENABLED:
-                            _log_operation(
-                                operation=f"SCREENSHOT_TASK_FAIL:{screenshot_id}",
-                                result="saveImage did not create file"
-                            )
-                        return {"error": "saveImage did not create file"}
-                    
-                    file_size = os.path.getsize(tmp_path)
-                    if DEBUG_ENABLED:
-                        _log_operation(
-                            operation=f"SCREENSHOT_FILE_OK:{screenshot_id}",
-                            parameters={"size_bytes": file_size}
-                        )
-                    
-                    # Convert to base64
-                    with open(tmp_path, 'rb') as f:
-                        image_data = base64.b64encode(f.read()).decode('utf-8')
-                    
-                    if DEBUG_ENABLED:
-                        _log_operation(
-                            operation=f"SCREENSHOT_ENCODED:{screenshot_id}",
-                            parameters={"base64_len": len(image_data)}
-                        )
-                    
-                    # Cleanup
-                    os.unlink(tmp_path)
-                    
-                    task_duration = time.time() - task_start
-                    if DEBUG_ENABLED:
-                        _log_operation(
-                            operation=f"SCREENSHOT_TASK_DONE:{screenshot_id}",
-                            parameters={"duration_ms": int(task_duration * 1000)}
-                        )
-                    
-                    return {
-                        "success": True,
-                        "image": f"data:image/png;base64,{image_data}",
-                        "width": width,
-                        "height": height
-                    }
-                    
-                except Exception as e:
-                    if DEBUG_ENABLED:
-                        import traceback
-                        _log_operation(
-                            operation=f"SCREENSHOT_TASK_EXCEPTION:{screenshot_id}",
-                            error=e,
-                            parameters={"traceback": traceback.format_exc()}
-                        )
-                    return {"error": f"Screenshot task failed: {e}"}
-            
-            # Queue task and wait for result
-            if DEBUG_ENABLED:
-                _log_operation(
-                    operation=f"SCREENSHOT_QUEUE:{screenshot_id}",
-                    parameters={"queue_size": gui_task_queue.qsize()}
-                )
-            
-            gui_task_queue.put(screenshot_task)
-            
-            # Wait for result with timeout
-            start_time = time.time()
-            timeout_seconds = 10
-            
-            while time.time() - start_time < timeout_seconds:
-                try:
-                    result = gui_response_queue.get_nowait()
-                    
-                    if DEBUG_ENABLED:
-                        _log_operation(
-                            operation=f"SCREENSHOT_RESULT:{screenshot_id}",
-                            parameters={
-                                "wait_ms": int((time.time() - start_time) * 1000),
-                                "result_type": type(result).__name__
-                            }
-                        )
-                    
-                    if isinstance(result, dict):
-                        if "error" in result:
-                            return f"Error taking screenshot: {result['error']}"
-                        elif "success" in result:
-                            return json.dumps({
-                                "image": result["image"],
-                                "width": result["width"],
-                                "height": result["height"]
-                            })
-                    break
-                except queue.Empty:
-                    time.sleep(0.1)
-                    continue
-            
-            if DEBUG_ENABLED:
-                _log_operation(
-                    operation=f"SCREENSHOT_TIMEOUT:{screenshot_id}",
-                    parameters={"timeout_seconds": timeout_seconds}
-                )
-            
-            return "Screenshot timeout - GUI thread may be busy"
-            
-        except Exception as e:
-            if DEBUG_ENABLED:
-                import traceback
-                _log_operation(
-                    operation=f"SCREENSHOT_SETUP_EXCEPTION:{screenshot_id}",
-                    error=e,
-                    parameters={"traceback": traceback.format_exc()}
-                )
-            return f"Error in screenshot setup: {e}"
+        return json.dumps({
+            "success": False,
+            "error": "Screenshot not supported over MCP",
+            "message": (
+                "Screenshots are not practical over MCP due to data size limitations.\n\n"
+                "COST ANALYSIS:\n"
+                "  • 1920x1080 (HD):  ~2MB base64 → ~3M tokens → $8.85\n"
+                "  • 3840x2160 (4K):  ~8MB base64 → ~12M tokens → $35.39\n"
+                "  • 5120x2880 (5K):  ~15MB base64 → ~21M tokens → $62.91\n\n"
+                "These sizes exceed Claude's 190K token context window by 15-110x.\n"
+                "Even if technically possible, a single screenshot would consume\n"
+                "your entire conversation budget and cost $9-$63.\n\n"
+                "ALTERNATIVES - Use FreeCAD's native screenshot features:\n"
+                "  • From GUI: View menu → Save Picture...\n"
+                "  • From Python: Gui.activeDocument().activeView().saveImage('path.png', 1920, 1080)\n"
+                "  • From MCP: Use execute_python tool to call saveImage()\n\n"
+                "For automation: Save screenshots to a shared directory, then reference\n"
+                "the file path in conversation. Claude can then view the file if needed."
+            ),
+            "alternatives": {
+                "gui_menu": "View → Save Picture...",
+                "python_command": "Gui.activeDocument().activeView().saveImage('/path/to/screenshot.png', width, height)",
+                "mcp_command": "Use execute_python tool to call the saveImage() method",
+                "cost_examples": {
+                    "1080p": "$8.85 and 3M tokens",
+                    "4K": "$35.39 and 12M tokens", 
+                    "5K": "$62.91 and 21M tokens"
+                }
+            },
+            "technical_details": {
+                "context_window": "190K tokens",
+                "1080p_ratio": "15x over limit",
+                "5K_ratio": "110x over limit"
+            }
+        })
     
     def _set_view_gui_safe(self, args: Dict[str, Any]) -> str:
         """Set view orientation using GUI-safe thread queue"""
