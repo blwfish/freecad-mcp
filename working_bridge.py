@@ -15,25 +15,34 @@ from typing import Any
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Import message framing for v2.1.1 protocol
+from mcp_bridge_framing import send_message, receive_message
+
 # Initialize debugging infrastructure (optional - works without it)
 try:
-    from freecad_debug import get_debugger, debug_decorator
-    from freecad_health import get_monitor
+    from freecad_debug import init_debugger, debug_deccorator
+    from freecad_health import init_monitor
     import logging
     
-    debugger = get_debugger()
-    monitor = get_monitor()
+    # Initialize with file-only logging (no console output for MCP)
+    debugger = init_debugger(
+        log_dir="/tmp/freecad_mcp_debug",
+        level=logging.DEBUG,
+        enable_console=False,  # CRITICAL: No console output for MCP!
+        enable_file=True
+    )
+    monitor = init_monitor()
+    
+    # Log startup to file only
     debugger.logger.info("="*80)
     debugger.logger.info("FreeCAD MCP Bridge Starting with Debug Infrastructure")
     debugger.logger.info("="*80)
     DEBUG_ENABLED = True
 except ImportError:
-    # Debugging modules not available - continue without them
     debugger = None
     monitor = None
     DEBUG_ENABLED = False
     
-    # Create no-op decorator if debug not available
     def debug_decorator(*args, **kwargs):
         def decorator(func):
             return func
@@ -75,13 +84,18 @@ async def main():
                 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 sock.connect(socket_path)
             
-            # Send command
+            # Send command with length-prefixed protocol (v2.1.1)
             command = json.dumps({"tool": tool_name, "args": args})
-            sock.send(command.encode('utf-8'))
+            if not send_message(sock, command):
+                sock.close()
+                return json.dumps({"error": "Failed to send command to FreeCAD"})
             
-            # Receive response
-            response = sock.recv(8192).decode('utf-8')
+            # Receive response with length-prefixed protocol (v2.1.1)
+            response = receive_message(sock, timeout=30.0)
             sock.close()
+            
+            if response is None:
+                return json.dumps({"error": "Failed to receive response from FreeCAD (timeout or connection error)"})
             
             # Check if this is a selection workflow response
             try:

@@ -1,10 +1,10 @@
 # FreeCAD Socket Server for MCP Communication
 # Runs inside FreeCAD to receive commands from external MCP bridge
 #
-# Version: 2.1.1
+# Version: 2.1.2
 # Requires: freecad_debug >= 1.1.0, freecad_health >= 1.0.1
 
-__version__ = "2.1.1"
+__version__ = "2.1.2"
 REQUIRED_VERSIONS = {
     "freecad_debug": ">=1.1.0",
     "freecad_health": ">=1.0.1",
@@ -516,8 +516,7 @@ class FreeCADSocketServer:
                     
         except Exception as e:
             # Log error but don't crash - allow server to continue
-            FreeCAD.Console.PrintError(f"Client handler error: {e}
-")
+            FreeCAD.Console.PrintError(f"Client handler error: {e}\n")
             if DEBUG_ENABLED:
                 import traceback
                 _log_operation(
@@ -555,10 +554,8 @@ class FreeCADSocketServer:
             except json.JSONDecodeError as json_err:
                 # Malformed JSON - return error instead of crashing
                 error_msg = f"Invalid JSON: {json_err}"
-                FreeCAD.Console.PrintError(f"{error_msg}
-")
-                FreeCAD.Console.PrintError(f"Command preview: {command_str[:200]}...
-")
+                FreeCAD.Console.PrintError(f"{error_msg}\n")
+                FreeCAD.Console.PrintError(f"Command preview: {command_str[:200]}...\n")
                 
                 if DEBUG_ENABLED:
                     _log_operation(
