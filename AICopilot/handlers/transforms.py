@@ -10,6 +10,9 @@ class TransformsHandler(BaseHandler):
 
     def move_object(self, args: Dict[str, Any]) -> str:
         """Move an object to new position."""
+        import time
+        start_time = time.time()
+
         try:
             object_name = args.get('object_name', '')
             x = args.get('x', 0)
@@ -18,11 +21,11 @@ class TransformsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return self.log_and_return("move_object", args, error=Exception("No active document"))
 
             obj = self.get_object(object_name, doc)
             if not obj:
-                return f"Object not found: {object_name}"
+                return self.log_and_return("move_object", args, error=Exception(f"Object not found: {object_name}"))
 
             # Move object
             obj.Placement.Base = FreeCAD.Vector(
@@ -32,10 +35,13 @@ class TransformsHandler(BaseHandler):
             )
             self.recompute(doc)
 
-            return f"Moved {object_name} by ({x}, {y}, {z})"
+            result = f"Moved {object_name} by ({x}, {y}, {z})"
+            duration = time.time() - start_time
+            return self.log_and_return("move_object", args, result=result, duration=duration)
 
         except Exception as e:
-            return f"Error moving object: {e}"
+            duration = time.time() - start_time
+            return self.log_and_return("move_object", args, error=e, duration=duration)
 
     def rotate_object(self, args: Dict[str, Any]) -> str:
         """Rotate an object around axis."""

@@ -96,20 +96,6 @@ class GlobalAIService:
         FreeCAD.Console.PrintMessage("✅ AI Copilot Service stopped\n")
 
 # ============================================================================
-# AUTO-START: Initialize AI service when FreeCAD GUI loads
-# ============================================================================
-try:
-    # Initialize immediately after class definition
-    if not hasattr(FreeCAD, '__ai_global_service'):
-        service = GlobalAIService()
-        if service.start():
-            FreeCAD.Console.PrintMessage("🚀 FreeCAD AI Copilot ready! Works from any workbench.\n")
-        else:
-            FreeCAD.Console.PrintError("⚠️  AI Copilot failed to start\n")
-except Exception as e:
-    FreeCAD.Console.PrintError(f"AI Copilot auto-start failed: {e}\n")
-
-# ============================================================================
 # AI COPILOT WORKBENCH - Optional UI Panel
 # Service runs globally, but this workbench provides management tools
 # ============================================================================
@@ -232,4 +218,21 @@ class AICopilotWorkbench(FreeCADGui.Workbench):
 # Register the workbench
 FreeCADGui.addWorkbench(AICopilotWorkbench())
 
-# Test: New workflow active
+# ============================================================================
+# AUTO-START: Initialize AI service when FreeCAD GUI loads
+# ============================================================================
+
+# Simple approach: Just start immediately
+# FreeCAD's InitGui.py runs AFTER GUI is initialized, so we don't need delays
+try:
+    if not hasattr(FreeCAD, '__ai_global_service'):
+        FreeCAD.Console.PrintMessage("🚀 Starting FreeCAD AI Copilot...\n")
+        service = GlobalAIService()
+        if service.start():
+            FreeCAD.Console.PrintMessage("✅ FreeCAD AI Copilot ready! Works from any workbench.\n")
+        else:
+            FreeCAD.Console.PrintError("❌ AI Copilot failed to start\n")
+except Exception as e:
+    FreeCAD.Console.PrintError(f"❌ AI Copilot auto-start failed: {e}\n")
+    import traceback
+    FreeCAD.Console.PrintError(f"{traceback.format_exc()}\n")
