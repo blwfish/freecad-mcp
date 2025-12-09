@@ -11,7 +11,13 @@ class CAMOpsHandler(BaseHandler):
     def create_job(self, args: Dict[str, Any]) -> str:
         """Create a new CAM Job."""
         try:
-            import Path
+            # FreeCAD 1.0+ uses new module structure
+            from Path.Main.Job import Create as CreateJob
+            try:
+                from Path.Main.Gui.Job import ViewProvider
+                has_gui = True
+            except ImportError:
+                has_gui = False
 
             doc = self.get_document()
             if not doc:
@@ -20,7 +26,11 @@ class CAMOpsHandler(BaseHandler):
             job_name = args.get('name', 'Job')
             base_object = args.get('base_object', '')
 
-            job = Path.Job.Create(job_name, [], None)
+            job = CreateJob(job_name, [], None)
+
+            # Set up ViewProvider for GUI mode
+            if has_gui and hasattr(job, 'ViewObject'):
+                job.ViewObject.Proxy = ViewProvider(job.ViewObject)
 
             if base_object:
                 obj = self.get_object(base_object, doc)
@@ -42,7 +52,8 @@ class CAMOpsHandler(BaseHandler):
     def setup_stock(self, args: Dict[str, Any]) -> str:
         """Setup stock for CAM job."""
         try:
-            import Path
+            # FreeCAD 1.0+ uses new module structure
+            from Path.Main.Stock import CreateBox, CreateFromBase
 
             doc = self.get_document()
             if not doc:
@@ -60,12 +71,12 @@ class CAMOpsHandler(BaseHandler):
                 return f"Error: Job '{job_name}' not found"
 
             if stock_type == 'CreateBox':
-                job.Stock = Path.Stock.CreateBox(job)
+                job.Stock = CreateBox(job)
                 job.Stock.Length = length
                 job.Stock.Width = width
                 job.Stock.Height = height
             elif stock_type == 'FromBase':
-                job.Stock = Path.Stock.CreateFromBase(job)
+                job.Stock = CreateFromBase(job)
                 extent_x = args.get('extent_x', 10)
                 extent_y = args.get('extent_y', 10)
                 extent_z = args.get('extent_z', 10)
@@ -85,8 +96,12 @@ class CAMOpsHandler(BaseHandler):
     def profile(self, args: Dict[str, Any]) -> str:
         """Create a profile (contour) operation."""
         try:
-            import Path
-            import PathScripts.PathProfile as PathProfile
+            # Try new FreeCAD 1.0+ structure first, fall back to old PathScripts
+            try:
+                from Path.Op.Profile import Create as CreateProfile
+            except ImportError:
+                import PathScripts.PathProfile as PathProfileModule
+                CreateProfile = PathProfileModule.Create
 
             doc = self.get_document()
             if not doc:
@@ -100,7 +115,7 @@ class CAMOpsHandler(BaseHandler):
             if not job:
                 return f"Error: Job '{job_name}' not found. Create a CAM job first."
 
-            obj = PathProfile.Create(name)
+            obj = CreateProfile(name)
             job.Operations.Group += [obj]
 
             if base_object:
@@ -126,8 +141,12 @@ class CAMOpsHandler(BaseHandler):
     def pocket(self, args: Dict[str, Any]) -> str:
         """Create a pocket operation."""
         try:
-            import Path
-            import PathScripts.PathPocket as PathPocket
+            # Try new FreeCAD 1.0+ structure first, fall back to old PathScripts
+            try:
+                from Path.Op.Pocket import Create as CreatePocket
+            except ImportError:
+                import PathScripts.PathPocket as PathPocketModule
+                CreatePocket = PathPocketModule.Create
 
             doc = self.get_document()
             if not doc:
@@ -141,7 +160,7 @@ class CAMOpsHandler(BaseHandler):
             if not job:
                 return f"Error: Job '{job_name}' not found. Create a CAM job first."
 
-            obj = PathPocket.Create(name)
+            obj = CreatePocket(name)
             job.Operations.Group += [obj]
 
             if base_object:
@@ -167,8 +186,12 @@ class CAMOpsHandler(BaseHandler):
     def drilling(self, args: Dict[str, Any]) -> str:
         """Create a drilling operation."""
         try:
-            import Path
-            import PathScripts.PathDrilling as PathDrilling
+            # Try new FreeCAD 1.0+ structure first, fall back to old PathScripts
+            try:
+                from Path.Op.Drilling import Create as CreateDrilling
+            except ImportError:
+                import PathScripts.PathDrilling as PathDrillingModule
+                CreateDrilling = PathDrillingModule.Create
 
             doc = self.get_document()
             if not doc:
@@ -181,7 +204,7 @@ class CAMOpsHandler(BaseHandler):
             if not job:
                 return f"Error: Job '{job_name}' not found. Create a CAM job first."
 
-            obj = PathDrilling.Create(name)
+            obj = CreateDrilling(name)
             job.Operations.Group += [obj]
 
             if 'depth' in args:
@@ -204,8 +227,12 @@ class CAMOpsHandler(BaseHandler):
     def adaptive(self, args: Dict[str, Any]) -> str:
         """Create an adaptive clearing operation."""
         try:
-            import Path
-            import PathScripts.PathAdaptive as PathAdaptive
+            # Try new FreeCAD 1.0+ structure first, fall back to old PathScripts
+            try:
+                from Path.Op.Adaptive import Create as CreateAdaptive
+            except ImportError:
+                import PathScripts.PathAdaptive as PathAdaptiveModule
+                CreateAdaptive = PathAdaptiveModule.Create
 
             doc = self.get_document()
             if not doc:
@@ -218,7 +245,7 @@ class CAMOpsHandler(BaseHandler):
             if not job:
                 return f"Error: Job '{job_name}' not found. Create a CAM job first."
 
-            obj = PathAdaptive.Create(name)
+            obj = CreateAdaptive(name)
             job.Operations.Group += [obj]
 
             if 'stepover' in args:
@@ -340,8 +367,13 @@ class CAMOpsHandler(BaseHandler):
     def post_process(self, args: Dict[str, Any]) -> str:
         """Post-process CAM job to generate G-code."""
         try:
-            import Path
-            import PathScripts.PathPost as PathPost
+            # Try new FreeCAD 1.0+ structure first, fall back to old PathScripts
+            try:
+                from Path.Post import Processor
+                # For FreeCAD 1.0+, the API might be different
+                PathPost = Processor
+            except ImportError:
+                import PathScripts.PathPost as PathPost
 
             doc = self.get_document()
             if not doc:
@@ -382,8 +414,7 @@ class CAMOpsHandler(BaseHandler):
 
             job = self.get_object(job_name, doc) if job_name else None
             if not job:
-                # List all jobs
-                import Path
+                # List all jobs - look for Path::FeaturePython objects with Operations
                 jobs = [obj for obj in doc.Objects if hasattr(obj, 'Operations')]
                 if not jobs:
                     return "No CAM jobs found in document"

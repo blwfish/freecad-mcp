@@ -235,12 +235,40 @@ cam_operations(
 - G-code post-processor options: grbl, linuxcnc, smoothie, etc.
 - Always inspect and simulate toolpaths before machining
 
+## FreeCAD 1.0+ Compatibility
+
+The CAM operations handler has been updated to support FreeCAD 1.0+ with the new module structure:
+
+- **Old Path workbench** (FreeCAD < 1.0): Used `Path.Job.Create()` and `PathScripts.*`
+- **New CAM workbench** (FreeCAD 1.0+): Uses `Path.Main.*`, `Path.Op.*`, `Path.Tool.*`
+
+The handler automatically detects and uses the correct import structure for both versions.
+
+### Module Structure Changes
+
+| Old (Path) | New (CAM) |
+|------------|-----------|
+| `Path.Job.Create()` | `Path.Main.Job.Create()` |
+| `Path.Stock.CreateBox()` | `Path.Main.Stock.CreateBox()` |
+| `PathScripts.PathProfile` | `Path.Op.Profile` |
+| `PathScripts.PathPocket` | `Path.Op.Pocket` |
+| `PathScripts.PathDrilling` | `Path.Op.Drilling` |
+| `PathScripts.PathAdaptive` | `Path.Op.Adaptive` |
+| `PathScripts.PathPost` | `Path.Post.Processor` |
+
+The code includes fallback support for older FreeCAD versions.
+
 ## Error Handling
 
 If you see "Path (CAM) module not available", ensure:
 1. FreeCAD is installed with CAM workbench
-2. You're running FreeCAD 1.0 or later
+2. You're running FreeCAD 1.0 or later for the latest features
 3. The CAM workbench is enabled in Preferences
+
+### Common Import Errors (Fixed)
+
+- ✅ `ImportError: cannot import name 'Job' from 'Path'` - Fixed by using `Path.Main.Job`
+- ✅ Module structure incompatibility between versions - Fixed with fallback imports
 
 ## Resources
 

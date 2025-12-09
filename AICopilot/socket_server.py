@@ -4058,7 +4058,13 @@ class FreeCADSocketServer:
     def _cam_create_job(self, args: Dict[str, Any]) -> str:
         """Create a new CAM Job"""
         try:
-            import Path
+            # FreeCAD 1.0+ uses new module structure
+            from Path.Main.Job import Create as CreateJob
+            try:
+                from Path.Main.Gui.Job import ViewProvider
+                has_gui = True
+            except ImportError:
+                has_gui = False
 
             doc = FreeCAD.ActiveDocument
             if not doc:
@@ -4068,7 +4074,11 @@ class FreeCADSocketServer:
             base_object = args.get('base_object', '')
 
             # Create the job
-            job = Path.Job.Create(job_name, [], None)
+            job = CreateJob(job_name, [], None)
+
+            # Set up ViewProvider for GUI mode
+            if has_gui and hasattr(job, 'ViewObject'):
+                job.ViewObject.Proxy = ViewProvider(job.ViewObject)
 
             # If base object specified, add it to the job
             if base_object:
@@ -4091,7 +4101,8 @@ class FreeCADSocketServer:
     def _cam_setup_stock(self, args: Dict[str, Any]) -> str:
         """Setup stock for CAM job"""
         try:
-            import Path
+            # FreeCAD 1.0+ uses new module structure
+            from Path.Main.Stock import CreateBox, CreateFromBase
 
             doc = FreeCAD.ActiveDocument
             if not doc:
@@ -4112,12 +4123,12 @@ class FreeCADSocketServer:
 
             # Set stock parameters
             if stock_type == 'CreateBox':
-                job.Stock = Path.Stock.CreateBox(job)
+                job.Stock = CreateBox(job)
                 job.Stock.Length = length
                 job.Stock.Width = width
                 job.Stock.Height = height
             elif stock_type == 'FromBase':
-                job.Stock = Path.Stock.CreateFromBase(job)
+                job.Stock = CreateFromBase(job)
                 extent_x = args.get('extent_x', 10)
                 extent_y = args.get('extent_y', 10)
                 extent_z = args.get('extent_z', 10)
@@ -4137,7 +4148,12 @@ class FreeCADSocketServer:
     def _cam_profile(self, args: Dict[str, Any]) -> str:
         """Create a profile (contour) operation"""
         try:
-            import Path, PathScripts.PathProfile as PathProfile
+            # Try new FreeCAD 1.0+ structure first, fall back to old PathScripts
+            try:
+                from Path.Op.Profile import Create as CreateProfile
+            except ImportError:
+                import PathScripts.PathProfile as PathProfileModule
+                CreateProfile = PathProfileModule.Create
 
             doc = FreeCAD.ActiveDocument
             if not doc:
@@ -4153,7 +4169,7 @@ class FreeCADSocketServer:
                 return f"Error: Job '{job_name}' not found. Create a CAM job first."
 
             # Create profile operation
-            obj = PathProfile.Create(name)
+            obj = CreateProfile(name)
             job.Operations.Group += [obj]
 
             # Set base geometry if specified
@@ -4181,7 +4197,12 @@ class FreeCADSocketServer:
     def _cam_pocket(self, args: Dict[str, Any]) -> str:
         """Create a pocket operation"""
         try:
-            import Path, PathScripts.PathPocket as PathPocket
+            # Try new FreeCAD 1.0+ structure first, fall back to old PathScripts
+            try:
+                from Path.Op.Pocket import Create as CreatePocket
+            except ImportError:
+                import PathScripts.PathPocket as PathPocketModule
+                CreatePocket = PathPocketModule.Create
 
             doc = FreeCAD.ActiveDocument
             if not doc:
@@ -4197,7 +4218,7 @@ class FreeCADSocketServer:
                 return f"Error: Job '{job_name}' not found. Create a CAM job first."
 
             # Create pocket operation
-            obj = PathPocket.Create(name)
+            obj = CreatePocket(name)
             job.Operations.Group += [obj]
 
             # Set base geometry if specified
@@ -4225,7 +4246,12 @@ class FreeCADSocketServer:
     def _cam_drilling(self, args: Dict[str, Any]) -> str:
         """Create a drilling operation"""
         try:
-            import Path, PathScripts.PathDrilling as PathDrilling
+            # Try new FreeCAD 1.0+ structure first, fall back to old PathScripts
+            try:
+                from Path.Op.Drilling import Create as CreateDrilling
+            except ImportError:
+                import PathScripts.PathDrilling as PathDrillingModule
+                CreateDrilling = PathDrillingModule.Create
 
             doc = FreeCAD.ActiveDocument
             if not doc:
@@ -4240,7 +4266,7 @@ class FreeCADSocketServer:
                 return f"Error: Job '{job_name}' not found. Create a CAM job first."
 
             # Create drilling operation
-            obj = PathDrilling.Create(name)
+            obj = CreateDrilling(name)
             job.Operations.Group += [obj]
 
             # Set parameters
@@ -4264,7 +4290,12 @@ class FreeCADSocketServer:
     def _cam_adaptive(self, args: Dict[str, Any]) -> str:
         """Create an adaptive clearing operation"""
         try:
-            import Path, PathScripts.PathAdaptive as PathAdaptive
+            # Try new FreeCAD 1.0+ structure first, fall back to old PathScripts
+            try:
+                from Path.Op.Adaptive import Create as CreateAdaptive
+            except ImportError:
+                import PathScripts.PathAdaptive as PathAdaptiveModule
+                CreateAdaptive = PathAdaptiveModule.Create
 
             doc = FreeCAD.ActiveDocument
             if not doc:
@@ -4279,7 +4310,7 @@ class FreeCADSocketServer:
                 return f"Error: Job '{job_name}' not found. Create a CAM job first."
 
             # Create adaptive operation
-            obj = PathAdaptive.Create(name)
+            obj = CreateAdaptive(name)
             job.Operations.Group += [obj]
 
             # Set parameters
@@ -4402,7 +4433,13 @@ class FreeCADSocketServer:
     def _cam_post_process(self, args: Dict[str, Any]) -> str:
         """Post-process CAM job to generate G-code"""
         try:
-            import Path, PathScripts.PathPost as PathPost
+            # Try new FreeCAD 1.0+ structure first, fall back to old PathScripts
+            try:
+                from Path.Post import Processor
+                # For FreeCAD 1.0+, the API might be different
+                PathPost = Processor
+            except ImportError:
+                import PathScripts.PathPost as PathPost
 
             doc = FreeCAD.ActiveDocument
             if not doc:
