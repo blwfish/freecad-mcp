@@ -11,9 +11,9 @@ from .base import BaseHandler
 class DocumentOpsHandler(BaseHandler):
     """Handler for document and object management operations."""
 
-    def __init__(self, server=None, gui_task_queue=None, gui_response_queue=None):
+    def __init__(self, server=None, gui_task_queue=None, gui_response_queue=None, log_operation=None, capture_state=None):
         """Initialize with optional GUI queues for thread-safe operations."""
-        super().__init__(server)
+        super().__init__(server, log_operation, capture_state)
         self.gui_task_queue = gui_task_queue
         self.gui_response_queue = gui_response_queue
 

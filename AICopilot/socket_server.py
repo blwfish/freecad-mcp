@@ -344,20 +344,20 @@ class FreeCADSocketServer:
         self.server_thread = None
         self.selector = UniversalSelector()
 
-        # Initialize handlers (pass self for access to selector and other resources)
-        self.primitives = PrimitivesHandler(self)
-        self.boolean_ops = BooleanOpsHandler(self)
-        self.transforms = TransformsHandler(self)
-        self.sketch_ops = SketchOpsHandler(self)
-        self.partdesign_ops = PartDesignOpsHandler(self)
-        self.part_ops = PartOpsHandler(self)
-        self.cam_ops = CAMOpsHandler(self)
-        self.draft_ops = DraftOpsHandler(self)
+        # Initialize handlers (pass self for access to selector and debug functions)
+        self.primitives = PrimitivesHandler(self, _log_operation, _capture_state)
+        self.boolean_ops = BooleanOpsHandler(self, _log_operation, _capture_state)
+        self.transforms = TransformsHandler(self, _log_operation, _capture_state)
+        self.sketch_ops = SketchOpsHandler(self, _log_operation, _capture_state)
+        self.partdesign_ops = PartDesignOpsHandler(self, _log_operation, _capture_state)
+        self.part_ops = PartOpsHandler(self, _log_operation, _capture_state)
+        self.cam_ops = CAMOpsHandler(self, _log_operation, _capture_state)
+        self.draft_ops = DraftOpsHandler(self, _log_operation, _capture_state)
         # GUI-sensitive handlers need task queues for thread safety
-        self.view_ops = ViewOpsHandler(self, gui_task_queue, gui_response_queue)
-        self.document_ops = DocumentOpsHandler(self, gui_task_queue, gui_response_queue)
-        self.measurement_ops = MeasurementOpsHandler(self)
-        self.spreadsheet_ops = SpreadsheetOpsHandler(self)
+        self.view_ops = ViewOpsHandler(self, gui_task_queue, gui_response_queue, _log_operation, _capture_state)
+        self.document_ops = DocumentOpsHandler(self, gui_task_queue, gui_response_queue, _log_operation, _capture_state)
+        self.measurement_ops = MeasurementOpsHandler(self, _log_operation, _capture_state)
+        self.spreadsheet_ops = SpreadsheetOpsHandler(self, _log_operation, _capture_state)
 
         FreeCAD.Console.PrintMessage("Socket server initialized with modular handlers\n")
 
@@ -594,6 +594,8 @@ class FreeCADSocketServer:
             return self._handle_spreadsheet_operations(args)
         elif tool_name == "execute_python":
             return self._execute_python(args)
+        elif tool_name == "get_debug_logs":
+            return self._get_debug_logs(args)
 
         return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
@@ -809,3 +811,53 @@ class FreeCADSocketServer:
                 time.sleep(0.05)
 
         return json.dumps({"error": "Python execution timeout - GUI thread may be busy"})
+
+    def _get_debug_logs(self, args: Dict[str, Any]) -> str:
+        """Retrieve recent debug logs for Claude Desktop to analyze."""
+        import os
+        import glob
+
+        try:
+            log_dir = "/tmp/freecad_mcp_debug"
+            count = args.get('count', 20)  # Number of recent log entries
+            operation_filter = args.get('operation', None)  # Optional filter by operation name
+
+            if not os.path.exists(log_dir):
+                return json.dumps({
+                    "result": "No debug logs available (logging may be disabled)"
+                })
+
+            # Find most recent log file
+            log_files = glob.glob(os.path.join(log_dir, "*.jsonl"))
+            if not log_files:
+                return json.dumps({
+                    "result": "No log files found in /tmp/freecad_mcp_debug/"
+                })
+
+            latest_log = max(log_files, key=os.path.getmtime)
+
+            # Read last N lines (recent entries)
+            entries = []
+            with open(latest_log, 'r') as f:
+                lines = f.readlines()
+                for line in lines[-count:]:
+                    try:
+                        entry = json.loads(line)
+                        if operation_filter:
+                            if entry.get('operation') == operation_filter:
+                                entries.append(entry)
+                        else:
+                            entries.append(entry)
+                    except json.JSONDecodeError:
+                        continue
+
+            return json.dumps({
+                "result": f"Retrieved {len(entries)} log entries from {os.path.basename(latest_log)}",
+                "log_file": latest_log,
+                "entries": entries
+            })
+
+        except Exception as e:
+            return json.dumps({
+                "error": f"Failed to retrieve debug logs: {e}"
+            })

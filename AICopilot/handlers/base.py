@@ -2,7 +2,8 @@
 
 import FreeCAD
 import FreeCADGui
-from typing import Dict, Any
+import time
+from typing import Dict, Any, Optional, Callable
 
 
 class BaseHandler:
@@ -11,19 +12,63 @@ class BaseHandler:
     Provides common utilities and document access patterns.
     """
 
-    def __init__(self, server=None):
+    def __init__(self, server=None, log_operation: Optional[Callable] = None, capture_state: Optional[Callable] = None):
         """Initialize handler with optional reference to server.
 
         Args:
             server: Reference to FreeCADSocketServer for accessing shared resources
                    like selector, gui_task_queue, etc.
+            log_operation: Debug logging function (optional)
+            capture_state: State capture function (optional)
         """
         self.server = server
+        self._log_operation = log_operation or self._noop_log
+        self._capture_state = capture_state or self._noop_capture
+
+    def _noop_log(self, *args, **kwargs):
+        """No-op fallback if debug not available"""
+        pass
+
+    def _noop_capture(self):
+        """No-op fallback if debug not available"""
+        return {}
 
     @property
     def selector(self):
         """Access the selection manager from the server."""
         return self.server.selector if self.server else None
+
+    def log_and_return(self, operation: str, parameters: Dict, result: str = None, error: Exception = None, duration: float = None):
+        """Helper to log operation and return result/error.
+
+        Args:
+            operation: Operation name
+            parameters: Operation parameters
+            result: Success result string
+            error: Error exception if failed
+            duration: Operation duration in seconds
+
+        Returns:
+            result string if success, error string if failed
+        """
+        self._log_operation(
+            operation=operation,
+            parameters=parameters,
+            result=result,
+            error=error,
+            duration=duration
+        )
+
+        if error:
+            # Also capture state on errors for debugging
+            state = self._capture_state()
+            self._log_operation(
+                operation=f"{operation}_error_state",
+                parameters=parameters,
+                result=state
+            )
+            return f"Error in {operation}: {error}"
+        return result
 
     def get_document(self, create_if_missing: bool = False) -> FreeCAD.Document:
         """Get active document, optionally creating one if missing.
