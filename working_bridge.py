@@ -324,6 +324,71 @@ async def main():
                     }
                 ),
                 types.Tool(
+                    name="cam_operations",
+                    description="Smart dispatcher for CAM (Path) workbench - CNC toolpath generation and machining operations",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "description": "CAM operation to perform",
+                                "enum": [
+                                    # Job management (2)
+                                    "create_job", "setup_stock",
+                                    # Primary milling operations (12)
+                                    "profile", "pocket", "adaptive", "face", "helix", "slot",
+                                    "engrave", "vcarve", "deburr", "surface", "waterline", "pocket_3d",
+                                    # Drilling operations (2)
+                                    "drilling", "thread_milling",
+                                    # Dressup operations (7)
+                                    "dogbone", "lead_in_out", "ramp_entry", "tag", "axis_map",
+                                    "drag_knife", "z_correct",
+                                    # Tool management (2)
+                                    "create_tool", "tool_controller",
+                                    # Utility operations (3)
+                                    "simulate", "post_process", "inspect"
+                                ]
+                            },
+                            # Job parameters
+                            "job_name": {"type": "string", "description": "CAM job name"},
+                            "base_object": {"type": "string", "description": "Base 3D object for CAM operations"},
+                            # Stock parameters
+                            "stock_type": {"type": "string", "description": "Stock type", "enum": ["CreateBox", "CreateCylinder", "FromBase"], "default": "CreateBox"},
+                            "length": {"type": "number", "description": "Stock length", "default": 100},
+                            "width": {"type": "number", "description": "Stock width", "default": 100},
+                            "height": {"type": "number", "description": "Stock height", "default": 50},
+                            "extent_x": {"type": "number", "description": "Stock extent in X", "default": 10},
+                            "extent_y": {"type": "number", "description": "Stock extent in Y", "default": 10},
+                            "extent_z": {"type": "number", "description": "Stock extent in Z", "default": 10},
+                            # Operation parameters
+                            "cut_side": {"type": "string", "description": "Cut side for profile", "enum": ["Outside", "Inside"]},
+                            "direction": {"type": "string", "description": "Cut direction", "enum": ["CW", "CCW"]},
+                            "stepdown": {"type": "number", "description": "Stepdown depth"},
+                            "stepover": {"type": "number", "description": "Stepover percentage"},
+                            "cut_mode": {"type": "string", "description": "Cutting mode", "enum": ["Climb", "Conventional"]},
+                            # Drilling parameters
+                            "depth": {"type": "number", "description": "Drilling depth"},
+                            "retract_height": {"type": "number", "description": "Retract height"},
+                            "peck_depth": {"type": "number", "description": "Peck drilling depth"},
+                            "dwell_time": {"type": "number", "description": "Dwell time in seconds"},
+                            # Tool parameters
+                            "tool_type": {"type": "string", "description": "Tool type", "enum": ["endmill", "ballend", "bullnose", "chamfer", "drill"], "default": "endmill"},
+                            "tool_name": {"type": "string", "description": "Tool name"},
+                            "diameter": {"type": "number", "description": "Tool diameter", "default": 6.0},
+                            "spindle_speed": {"type": "number", "description": "Spindle speed in RPM", "default": 10000},
+                            "feed_rate": {"type": "number", "description": "Feed rate in mm/min", "default": 1000},
+                            # Post-processing parameters
+                            "output_file": {"type": "string", "description": "Output G-code file path"},
+                            "post_processor": {"type": "string", "description": "Post processor name", "default": "grbl"},
+                            # Adaptive parameters
+                            "tolerance": {"type": "number", "description": "Adaptive tolerance"},
+                            # General
+                            "name": {"type": "string", "description": "Name for the operation"}
+                        },
+                        "required": ["operation"]
+                    }
+                ),
+                types.Tool(
                     name="execute_python",
                     description="Execute arbitrary Python code in FreeCAD context for power users and advanced operations",
                     inputSchema={
@@ -401,8 +466,8 @@ async def main():
             )]
             
         # Route smart dispatcher tools to socket with enhanced routing
-        elif name in ["partdesign_operations", "part_operations", 
-                      "view_control", "execute_python"]:
+        elif name in ["partdesign_operations", "part_operations",
+                      "view_control", "cam_operations", "execute_python"]:
             args = arguments or {}
             
             # Check if this is a continuation from interactive selection

@@ -680,6 +680,8 @@ class FreeCADSocketServer:
             return self._handle_partdesign_operations(args)
         elif tool_name == "part_operations":
             return self._handle_part_operations(args)
+        elif tool_name == "cam_operations":
+            return self._handle_cam_operations(args)
         elif tool_name == "execute_python":
             return self._execute_python(args)
         
@@ -3313,6 +3315,81 @@ class FreeCADSocketServer:
         else:
             return f"Unknown view control operation: {operation}"
 
+    def _handle_cam_operations(self, args: Dict[str, Any]) -> str:
+        """Smart dispatcher for all CAM (Path) workbench operations"""
+        operation = args.get('operation', '')
+
+        # Job management
+        if operation == "create_job":
+            return self._cam_create_job(args)
+        elif operation == "setup_stock":
+            return self._cam_setup_stock(args)
+
+        # Primary milling operations
+        elif operation == "profile":
+            return self._cam_profile(args)
+        elif operation == "pocket":
+            return self._cam_pocket(args)
+        elif operation == "adaptive":
+            return self._cam_adaptive(args)
+        elif operation == "face":
+            return self._cam_face(args)
+        elif operation == "helix":
+            return self._cam_helix(args)
+        elif operation == "slot":
+            return self._cam_slot(args)
+        elif operation == "engrave":
+            return self._cam_engrave(args)
+        elif operation == "vcarve":
+            return self._cam_vcarve(args)
+        elif operation == "deburr":
+            return self._cam_deburr(args)
+        elif operation == "surface":
+            return self._cam_surface(args)
+        elif operation == "waterline":
+            return self._cam_waterline(args)
+        elif operation == "pocket_3d":
+            return self._cam_pocket_3d(args)
+
+        # Drilling operations
+        elif operation == "drilling":
+            return self._cam_drilling(args)
+        elif operation == "thread_milling":
+            return self._cam_thread_milling(args)
+
+        # Dressup operations (path modifications)
+        elif operation == "dogbone":
+            return self._cam_dogbone(args)
+        elif operation == "lead_in_out":
+            return self._cam_lead_in_out(args)
+        elif operation == "ramp_entry":
+            return self._cam_ramp_entry(args)
+        elif operation == "tag":
+            return self._cam_tag(args)
+        elif operation == "axis_map":
+            return self._cam_axis_map(args)
+        elif operation == "drag_knife":
+            return self._cam_drag_knife(args)
+        elif operation == "z_correct":
+            return self._cam_z_correct(args)
+
+        # Tool management
+        elif operation == "create_tool":
+            return self._cam_create_tool(args)
+        elif operation == "tool_controller":
+            return self._cam_tool_controller(args)
+
+        # Utility operations
+        elif operation == "simulate":
+            return self._cam_simulate(args)
+        elif operation == "post_process":
+            return self._cam_post_process(args)
+        elif operation == "inspect":
+            return self._cam_inspect(args)
+
+        else:
+            return f"Unknown CAM operation: {operation}"
+
     # ===================================================================
     # PLACEHOLDER IMPLEMENTATIONS FOR MISSING OPERATIONS
     # ===================================================================
@@ -3712,7 +3789,440 @@ class FreeCADSocketServer:
     def _partdesign_rectangular_pattern(self, args: Dict[str, Any]) -> str:
         """PartDesign rectangular pattern - placeholder implementation"""
         return "PartDesign rectangular pattern - implementation needed"
-            
+
+    # ===================================================================
+    # CAM WORKBENCH OPERATIONS
+    # ===================================================================
+
+    def _cam_create_job(self, args: Dict[str, Any]) -> str:
+        """Create a new CAM Job"""
+        try:
+            import Path
+
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "Error: No active document"
+
+            job_name = args.get('name', 'Job')
+            base_object = args.get('base_object', '')
+
+            # Create the job
+            job = Path.Job.Create(job_name, [], None)
+
+            # If base object specified, add it to the job
+            if base_object:
+                obj = doc.getObject(base_object)
+                if obj:
+                    job.Model.Group = [obj]
+                    job.recompute()
+                    return f"✓ Created CAM Job '{job.Name}' with base object '{base_object}'"
+                else:
+                    return f"⚠ Created CAM Job '{job.Name}' but base object '{base_object}' not found"
+
+            doc.recompute()
+            return f"✓ Created CAM Job '{job.Name}'"
+
+        except ImportError:
+            return "Error: Path (CAM) module not available. Please install FreeCAD with CAM workbench support."
+        except Exception as e:
+            return f"Error creating CAM job: {e}"
+
+    def _cam_setup_stock(self, args: Dict[str, Any]) -> str:
+        """Setup stock for CAM job"""
+        try:
+            import Path
+
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "Error: No active document"
+
+            job_name = args.get('job_name', '')
+            stock_type = args.get('stock_type', 'CreateBox')  # CreateBox, CreateCylinder, FromBase
+
+            # Stock dimensions
+            length = args.get('length', 100)
+            width = args.get('width', 100)
+            height = args.get('height', 50)
+
+            # Find the job
+            job = doc.getObject(job_name) if job_name else None
+            if not job:
+                return f"Error: Job '{job_name}' not found"
+
+            # Set stock parameters
+            if stock_type == 'CreateBox':
+                job.Stock = Path.Stock.CreateBox(job)
+                job.Stock.Length = length
+                job.Stock.Width = width
+                job.Stock.Height = height
+            elif stock_type == 'FromBase':
+                job.Stock = Path.Stock.CreateFromBase(job)
+                extent_x = args.get('extent_x', 10)
+                extent_y = args.get('extent_y', 10)
+                extent_z = args.get('extent_z', 10)
+                job.Stock.ExtXneg = extent_x
+                job.Stock.ExtXpos = extent_x
+                job.Stock.ExtYneg = extent_y
+                job.Stock.ExtYpos = extent_y
+                job.Stock.ExtZneg = 0
+                job.Stock.ExtZpos = extent_z
+
+            job.recompute()
+            return f"✓ Setup stock for job '{job_name}' using {stock_type}"
+
+        except Exception as e:
+            return f"Error setting up stock: {e}"
+
+    def _cam_profile(self, args: Dict[str, Any]) -> str:
+        """Create a profile (contour) operation"""
+        try:
+            import Path, PathScripts.PathProfile as PathProfile
+
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "Error: No active document"
+
+            job_name = args.get('job_name', '')
+            name = args.get('name', 'Profile')
+            base_object = args.get('base_object', '')
+
+            # Find the job
+            job = doc.getObject(job_name) if job_name else None
+            if not job:
+                return f"Error: Job '{job_name}' not found. Create a CAM job first."
+
+            # Create profile operation
+            obj = PathProfile.Create(name)
+            job.Operations.Group += [obj]
+
+            # Set base geometry if specified
+            if base_object:
+                base = doc.getObject(base_object)
+                if base:
+                    obj.Base = [(base, [])]
+
+            # Set common parameters
+            if 'cut_side' in args:
+                obj.Side = args['cut_side']  # 'Outside', 'Inside'
+            if 'direction' in args:
+                obj.Direction = args['direction']  # 'CW', 'CCW'
+            if 'stepdown' in args:
+                obj.StepDown = args['stepdown']
+
+            job.recompute()
+            return f"✓ Created Profile operation '{obj.Name}' in job '{job_name}'"
+
+        except ImportError:
+            return "Error: PathProfile module not available"
+        except Exception as e:
+            return f"Error creating profile operation: {e}"
+
+    def _cam_pocket(self, args: Dict[str, Any]) -> str:
+        """Create a pocket operation"""
+        try:
+            import Path, PathScripts.PathPocket as PathPocket
+
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "Error: No active document"
+
+            job_name = args.get('job_name', '')
+            name = args.get('name', 'Pocket')
+            base_object = args.get('base_object', '')
+
+            # Find the job
+            job = doc.getObject(job_name) if job_name else None
+            if not job:
+                return f"Error: Job '{job_name}' not found. Create a CAM job first."
+
+            # Create pocket operation
+            obj = PathPocket.Create(name)
+            job.Operations.Group += [obj]
+
+            # Set base geometry if specified
+            if base_object:
+                base = doc.getObject(base_object)
+                if base:
+                    obj.Base = [(base, [])]
+
+            # Set common parameters
+            if 'stepover' in args:
+                obj.StepOver = args['stepover']
+            if 'stepdown' in args:
+                obj.StepDown = args['stepdown']
+            if 'cut_mode' in args:
+                obj.CutMode = args['cut_mode']  # 'Climb', 'Conventional'
+
+            job.recompute()
+            return f"✓ Created Pocket operation '{obj.Name}' in job '{job_name}'"
+
+        except ImportError:
+            return "Error: PathPocket module not available"
+        except Exception as e:
+            return f"Error creating pocket operation: {e}"
+
+    def _cam_drilling(self, args: Dict[str, Any]) -> str:
+        """Create a drilling operation"""
+        try:
+            import Path, PathScripts.PathDrilling as PathDrilling
+
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "Error: No active document"
+
+            job_name = args.get('job_name', '')
+            name = args.get('name', 'Drilling')
+
+            # Find the job
+            job = doc.getObject(job_name) if job_name else None
+            if not job:
+                return f"Error: Job '{job_name}' not found. Create a CAM job first."
+
+            # Create drilling operation
+            obj = PathDrilling.Create(name)
+            job.Operations.Group += [obj]
+
+            # Set parameters
+            if 'depth' in args:
+                obj.FinalDepth = args['depth']
+            if 'retract_height' in args:
+                obj.RetractHeight = args['retract_height']
+            if 'peck_depth' in args:
+                obj.PeckDepth = args['peck_depth']
+            if 'dwell_time' in args:
+                obj.DwellTime = args['dwell_time']
+
+            job.recompute()
+            return f"✓ Created Drilling operation '{obj.Name}' in job '{job_name}'"
+
+        except ImportError:
+            return "Error: PathDrilling module not available"
+        except Exception as e:
+            return f"Error creating drilling operation: {e}"
+
+    def _cam_adaptive(self, args: Dict[str, Any]) -> str:
+        """Create an adaptive clearing operation"""
+        try:
+            import Path, PathScripts.PathAdaptive as PathAdaptive
+
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "Error: No active document"
+
+            job_name = args.get('job_name', '')
+            name = args.get('name', 'Adaptive')
+
+            # Find the job
+            job = doc.getObject(job_name) if job_name else None
+            if not job:
+                return f"Error: Job '{job_name}' not found. Create a CAM job first."
+
+            # Create adaptive operation
+            obj = PathAdaptive.Create(name)
+            job.Operations.Group += [obj]
+
+            # Set parameters
+            if 'stepover' in args:
+                obj.StepOver = args['stepover']
+            if 'tolerance' in args:
+                obj.Tolerance = args['tolerance']
+
+            job.recompute()
+            return f"✓ Created Adaptive operation '{obj.Name}' in job '{job_name}'"
+
+        except ImportError:
+            return "Error: PathAdaptive module not available"
+        except Exception as e:
+            return f"Error creating adaptive operation: {e}"
+
+    def _cam_face(self, args: Dict[str, Any]) -> str:
+        """Create a face milling operation"""
+        return self._cam_placeholder_operation("Face Milling", args)
+
+    def _cam_helix(self, args: Dict[str, Any]) -> str:
+        """Create a helix operation"""
+        return self._cam_placeholder_operation("Helix", args)
+
+    def _cam_slot(self, args: Dict[str, Any]) -> str:
+        """Create a slot milling operation"""
+        return self._cam_placeholder_operation("Slot Milling", args)
+
+    def _cam_engrave(self, args: Dict[str, Any]) -> str:
+        """Create an engrave operation"""
+        return self._cam_placeholder_operation("Engrave", args)
+
+    def _cam_vcarve(self, args: Dict[str, Any]) -> str:
+        """Create a V-carve operation"""
+        return self._cam_placeholder_operation("V-Carve", args)
+
+    def _cam_deburr(self, args: Dict[str, Any]) -> str:
+        """Create a deburr operation"""
+        return self._cam_placeholder_operation("Deburr", args)
+
+    def _cam_surface(self, args: Dict[str, Any]) -> str:
+        """Create a surface milling operation"""
+        return self._cam_placeholder_operation("Surface Milling", args)
+
+    def _cam_waterline(self, args: Dict[str, Any]) -> str:
+        """Create a waterline operation"""
+        return self._cam_placeholder_operation("Waterline", args)
+
+    def _cam_pocket_3d(self, args: Dict[str, Any]) -> str:
+        """Create a 3D pocket operation"""
+        return self._cam_placeholder_operation("3D Pocket", args)
+
+    def _cam_thread_milling(self, args: Dict[str, Any]) -> str:
+        """Create a thread milling operation"""
+        return self._cam_placeholder_operation("Thread Milling", args)
+
+    def _cam_dogbone(self, args: Dict[str, Any]) -> str:
+        """Add dogbone dressup to a path"""
+        return self._cam_placeholder_dressup("Dogbone", args)
+
+    def _cam_lead_in_out(self, args: Dict[str, Any]) -> str:
+        """Add lead-in/lead-out to a path"""
+        return self._cam_placeholder_dressup("Lead In/Out", args)
+
+    def _cam_ramp_entry(self, args: Dict[str, Any]) -> str:
+        """Add ramp entry to a path"""
+        return self._cam_placeholder_dressup("Ramp Entry", args)
+
+    def _cam_tag(self, args: Dict[str, Any]) -> str:
+        """Add holding tags to a path"""
+        return self._cam_placeholder_dressup("Tag", args)
+
+    def _cam_axis_map(self, args: Dict[str, Any]) -> str:
+        """Add axis mapping to a path"""
+        return self._cam_placeholder_dressup("Axis Map", args)
+
+    def _cam_drag_knife(self, args: Dict[str, Any]) -> str:
+        """Add drag knife compensation to a path"""
+        return self._cam_placeholder_dressup("Drag Knife", args)
+
+    def _cam_z_correct(self, args: Dict[str, Any]) -> str:
+        """Add Z-axis correction to a path"""
+        return self._cam_placeholder_dressup("Z-Correction", args)
+
+    def _cam_create_tool(self, args: Dict[str, Any]) -> str:
+        """Create a tool bit"""
+        try:
+            tool_type = args.get('tool_type', 'endmill')
+            diameter = args.get('diameter', 6.0)
+            name = args.get('name', f'{tool_type}_{diameter}mm')
+
+            return f"ℹ Tool creation: Please use FreeCAD's Tool Library manager (CAM → Tool Library Editor) to create tool '{name}' ({tool_type}, {diameter}mm diameter)"
+
+        except Exception as e:
+            return f"Error: {e}"
+
+    def _cam_tool_controller(self, args: Dict[str, Any]) -> str:
+        """Create a tool controller"""
+        try:
+            job_name = args.get('job_name', '')
+            tool_name = args.get('tool_name', '')
+            spindle_speed = args.get('spindle_speed', 10000)
+            feed_rate = args.get('feed_rate', 1000)
+
+            return f"ℹ Tool controller setup: Please add tool controller in job '{job_name}' with spindle speed {spindle_speed} RPM and feed rate {feed_rate} mm/min"
+
+        except Exception as e:
+            return f"Error: {e}"
+
+    def _cam_simulate(self, args: Dict[str, Any]) -> str:
+        """Simulate CAM operations"""
+        try:
+            job_name = args.get('job_name', '')
+
+            return f"ℹ Simulation: Please use CAM → Simulate (or click Simulate button) to run simulation for job '{job_name}'"
+
+        except Exception as e:
+            return f"Error: {e}"
+
+    def _cam_post_process(self, args: Dict[str, Any]) -> str:
+        """Post-process CAM job to generate G-code"""
+        try:
+            import Path, PathScripts.PathPost as PathPost
+
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "Error: No active document"
+
+            job_name = args.get('job_name', '')
+            output_file = args.get('output_file', '')
+            post_processor = args.get('post_processor', 'grbl')
+
+            # Find the job
+            job = doc.getObject(job_name) if job_name else None
+            if not job:
+                return f"Error: Job '{job_name}' not found"
+
+            # Set default output file if not specified
+            if not output_file:
+                output_file = f"/tmp/{job_name}.gcode"
+
+            # Post process
+            postlist = PathPost.buildPostList(job)
+            if not postlist:
+                return "Error: No operations to post-process"
+
+            gcode = PathPost.exportGCode(postlist, job, output_file)
+
+            return f"✓ Generated G-code for job '{job_name}' → {output_file}"
+
+        except ImportError:
+            return "Error: PathPost module not available"
+        except Exception as e:
+            return f"Error post-processing: {e}"
+
+    def _cam_inspect(self, args: Dict[str, Any]) -> str:
+        """Inspect CAM job and operations"""
+        try:
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "Error: No active document"
+
+            job_name = args.get('job_name', '')
+
+            # Find the job
+            job = doc.getObject(job_name) if job_name else None
+            if not job:
+                # List all jobs
+                import Path
+                jobs = [obj for obj in doc.Objects if hasattr(obj, 'Operations')]
+                if not jobs:
+                    return "No CAM jobs found in document"
+
+                result = f"Found {len(jobs)} CAM job(s):\n"
+                for j in jobs:
+                    ops = j.Operations.Group if hasattr(j, 'Operations') else []
+                    result += f"  • {j.Name}: {len(ops)} operation(s)\n"
+                return result
+
+            # Inspect specific job
+            ops = job.Operations.Group if hasattr(job, 'Operations') else []
+            result = f"Job '{job_name}':\n"
+            result += f"  Operations: {len(ops)}\n"
+            for i, op in enumerate(ops, 1):
+                result += f"    {i}. {op.Name} ({op.TypeId})\n"
+
+            return result
+
+        except Exception as e:
+            return f"Error inspecting job: {e}"
+
+    def _cam_placeholder_operation(self, operation_name: str, args: Dict[str, Any]) -> str:
+        """Placeholder for CAM operations not yet implemented"""
+        job_name = args.get('job_name', '')
+        name = args.get('name', operation_name)
+
+        return f"ℹ {operation_name} operation: This operation is available in FreeCAD but not yet automated via MCP. Please create '{name}' operation manually in job '{job_name}' using the CAM workbench UI."
+
+    def _cam_placeholder_dressup(self, dressup_name: str, args: Dict[str, Any]) -> str:
+        """Placeholder for CAM dressup operations not yet implemented"""
+        operation = args.get('operation', '')
+
+        return f"ℹ {dressup_name} dressup: This dressup is available in FreeCAD but not yet automated via MCP. Please apply '{dressup_name}' dressup to operation '{operation}' manually using the CAM workbench UI."
+
     def stop_server(self):
         """Stop the socket server"""
         self.is_running = False
