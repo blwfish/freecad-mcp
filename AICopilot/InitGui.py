@@ -96,20 +96,6 @@ class GlobalAIService:
         FreeCAD.Console.PrintMessage("✅ AI Copilot Service stopped\n")
 
 # ============================================================================
-# AUTO-START: Initialize AI service when FreeCAD GUI loads
-# ============================================================================
-try:
-    # Initialize immediately after class definition
-    if not hasattr(FreeCAD, '__ai_global_service'):
-        service = GlobalAIService()
-        if service.start():
-            FreeCAD.Console.PrintMessage("🚀 FreeCAD AI Copilot ready! Works from any workbench.\n")
-        else:
-            FreeCAD.Console.PrintError("⚠️  AI Copilot failed to start\n")
-except Exception as e:
-    FreeCAD.Console.PrintError(f"AI Copilot auto-start failed: {e}\n")
-
-# ============================================================================
 # AI COPILOT WORKBENCH - Optional UI Panel
 # Service runs globally, but this workbench provides management tools
 # ============================================================================
@@ -232,4 +218,34 @@ class AICopilotWorkbench(FreeCADGui.Workbench):
 # Register the workbench
 FreeCADGui.addWorkbench(AICopilotWorkbench())
 
-# Test: New workflow active
+# ============================================================================
+# AUTO-START: Initialize AI service when FreeCAD GUI loads
+# ============================================================================
+
+# Store reference to GlobalAIService in FreeCAD module namespace
+# (FreeCAD executes InitGui.py in __main__ scope with weird scoping, so we store globally)
+FreeCAD.__GlobalAIService_class = GlobalAIService
+
+def delayed_start():
+    """Start AI service after FreeCAD GUI is fully initialized"""
+    try:
+        if not hasattr(FreeCAD, '__ai_global_service'):
+            # Retrieve the class from FreeCAD namespace
+            GlobalAIService = FreeCAD.__GlobalAIService_class
+            service = GlobalAIService()
+            if service.start():
+                FreeCAD.Console.PrintMessage("🚀 FreeCAD AI Copilot ready! Works from any workbench.\n")
+            else:
+                FreeCAD.Console.PrintError("⚠️  AI Copilot failed to start\n")
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"AI Copilot auto-start failed: {e}\n")
+        import traceback
+        FreeCAD.Console.PrintError(f"{traceback.format_exc()}\n")
+
+# Delay start by 2 seconds to ensure FreeCAD GUI is fully initialized
+try:
+    from PySide import QtCore
+    QtCore.QTimer.singleShot(2000, delayed_start)
+    FreeCAD.Console.PrintMessage("⏳ AI Copilot will start in 2 seconds...\n")
+except Exception as e:
+    FreeCAD.Console.PrintError(f"Failed to schedule AI Copilot start: {e}\n")

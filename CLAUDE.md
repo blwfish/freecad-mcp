@@ -1,5 +1,7 @@
 # FreeCAD MCP Integration - Native Command Workflow
 
+**⚠️ IMPORTANT: See `.claude-project-config.md` for critical development info (paths, versions, architecture)!**
+
 ## New Modal Command System
 
 **Direct FreeCAD command triggering - No complex back-and-forth!**
