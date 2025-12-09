@@ -27,28 +27,8 @@ from PySide import QtCore
 # Platform-specific socket handling
 IS_WINDOWS = platform.system() == "Windows"
 
-# Version validation (fail fast on startup)
-try:
-    from mcp_versions import (
-        register_component,
-        declare_requirements,
-        validate_all,
-        get_status,
-    )
-    register_component("socket_server", __version__)
-    declare_requirements("socket_server", REQUIRED_VERSIONS)
-    valid, error = validate_all()
-    if not valid:
-        FreeCAD.Console.PrintError(f"❌ Version validation failed: {error}\n")
-        FreeCAD.Console.PrintError("Component status:\n")
-        FreeCAD.Console.PrintError(json.dumps(get_status(), indent=2) + "\n")
-        sys.exit(1)
-    FreeCAD.Console.PrintMessage(f"✓ socket_server v{__version__} validated\n")
-except ImportError as e:
-    FreeCAD.Console.PrintWarning(f"ℹ Version system not available (optional): {e}\n")
-
 # =============================================================================
-# MCP Debug Infrastructure (Optional)
+# MCP Debug Infrastructure (Optional) - IMPORT FIRST so they can register
 # =============================================================================
 DEBUG_ENABLED = False
 _debugger = None
@@ -93,6 +73,28 @@ except Exception as e:
     FreeCAD.Console.PrintError(f"❌ MCP Debug modules broken: {e}\n")
     FreeCAD.Console.PrintError("   Fix or remove freecad_debug.py/freecad_health.py\n")
     sys.exit(1)
+
+# =============================================================================
+# Version Validation (after debug modules register themselves)
+# =============================================================================
+try:
+    from mcp_versions import (
+        register_component,
+        declare_requirements,
+        validate_all,
+        get_status,
+    )
+    register_component("socket_server", __version__)
+    declare_requirements("socket_server", REQUIRED_VERSIONS)
+    valid, error = validate_all()
+    if not valid:
+        FreeCAD.Console.PrintError(f"❌ Version validation failed: {error}\n")
+        FreeCAD.Console.PrintError("Component status:\n")
+        FreeCAD.Console.PrintError(json.dumps(get_status(), indent=2) + "\n")
+        sys.exit(1)
+    FreeCAD.Console.PrintMessage(f"✓ socket_server v{__version__} validated\n")
+except ImportError as e:
+    FreeCAD.Console.PrintWarning(f"ℹ Version system not available (optional): {e}\n")
 
 # =============================================================================
 # Modular Handlers
