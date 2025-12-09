@@ -226,9 +226,24 @@ FreeCADGui.addWorkbench(AICopilotWorkbench())
 # (FreeCAD executes InitGui.py in __main__ scope with weird scoping, so we store globally)
 FreeCAD.__GlobalAIService_class = GlobalAIService
 
-def delayed_start():
-    """Start AI service after FreeCAD GUI is fully initialized"""
+def check_and_start():
+    """Check if FreeCAD GUI is ready, then start service (NO RACE CONDITIONS!)"""
     try:
+        # Check if GUI is truly ready by checking for main window
+        if FreeCADGui.getMainWindow() is None:
+            # GUI not ready yet, try again in 100ms
+            from PySide import QtCore
+            QtCore.QTimer.singleShot(100, check_and_start)
+            return
+
+        # Check GuiUp flag as secondary confirmation
+        if not hasattr(FreeCAD, 'GuiUp') or not FreeCAD.GuiUp:
+            # GUI still initializing, try again in 100ms
+            from PySide import QtCore
+            QtCore.QTimer.singleShot(100, check_and_start)
+            return
+
+        # GUI is fully ready, start service
         if not hasattr(FreeCAD, '__ai_global_service'):
             # Retrieve the class from FreeCAD namespace
             GlobalAIService = FreeCAD.__GlobalAIService_class
@@ -242,10 +257,10 @@ def delayed_start():
         import traceback
         FreeCAD.Console.PrintError(f"{traceback.format_exc()}\n")
 
-# Delay start by 2 seconds to ensure FreeCAD GUI is fully initialized
+# Poll for GUI readiness (checks every 100ms until ready - NO RACE CONDITIONS!)
 try:
     from PySide import QtCore
-    QtCore.QTimer.singleShot(2000, delayed_start)
-    FreeCAD.Console.PrintMessage("⏳ AI Copilot will start in 2 seconds...\n")
+    QtCore.QTimer.singleShot(100, check_and_start)
+    FreeCAD.Console.PrintMessage("⏳ AI Copilot waiting for FreeCAD GUI...\n")
 except Exception as e:
     FreeCAD.Console.PrintError(f"Failed to schedule AI Copilot start: {e}\n")
