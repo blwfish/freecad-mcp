@@ -211,3 +211,90 @@ class SketchOpsHandler(BaseHandler):
 
         except Exception as e:
             return f"Error closing sketch: {e}"
+
+    def verify_sketch(self, args: Dict[str, Any]) -> str:
+        """Verify sketch validity for extrusion/pad operations."""
+        try:
+            sketch_name = args.get('sketch_name', '')
+
+            doc = self.get_document()
+            if not doc:
+                return "No active document"
+
+            sketch = self.get_object(sketch_name, doc)
+            if not sketch:
+                return f"Sketch not found: {sketch_name}"
+
+            if sketch.TypeId != 'Sketcher::SketchObject':
+                return f"Object {sketch_name} is not a sketch (type: {sketch.TypeId})"
+
+            results = []
+
+            # Basic info
+            geo_count = sketch.GeometryCount
+            constraint_count = sketch.ConstraintCount
+            results.append(f"Geometry elements: {geo_count}")
+            results.append(f"Constraints: {constraint_count}")
+
+            # Check if fully constrained
+            dof = sketch.solve()
+            if dof == 0:
+                results.append("Fully constrained: Yes")
+            elif dof > 0:
+                results.append(f"Under-constrained: {dof} degrees of freedom remaining")
+            else:
+                results.append("Over-constrained or conflicting constraints")
+
+            # Check for open wires
+            if hasattr(sketch, 'Shape') and sketch.Shape:
+                shape = sketch.Shape
+                wire_count = len(shape.Wires)
+                results.append(f"Wires: {wire_count}")
+
+                # Check if wires are closed
+                closed_wires = 0
+                open_wires = 0
+                for wire in shape.Wires:
+                    if wire.isClosed():
+                        closed_wires += 1
+                    else:
+                        open_wires += 1
+
+                if closed_wires > 0:
+                    results.append(f"Closed wires (valid for extrusion): {closed_wires}")
+                if open_wires > 0:
+                    results.append(f"Open wires (cannot extrude): {open_wires}")
+
+                # Check if can make face
+                if wire_count > 0 and closed_wires > 0:
+                    try:
+                        import Part
+                        face = Part.Face(shape.Wires[0])
+                        results.append("Can create face: Yes")
+                        results.append(f"Face area: {face.Area:.2f} mm²")
+                    except Exception as e:
+                        results.append(f"Can create face: No - {e}")
+            else:
+                results.append("No valid shape generated from sketch")
+
+            # Check for construction geometry
+            construction_count = 0
+            for i in range(geo_count):
+                if sketch.getConstruction(i):
+                    construction_count += 1
+            if construction_count > 0:
+                results.append(f"Construction geometry: {construction_count} (not used in extrusion)")
+
+            # Overall verdict
+            if dof == 0 and closed_wires > 0 and open_wires == 0:
+                verdict = "VALID - Ready for pad/pocket/extrusion"
+            elif closed_wires > 0:
+                verdict = "USABLE - Has closed profile but may have issues"
+            else:
+                verdict = "INVALID - No closed profile for solid operations"
+            results.append(f"\nVerdict: {verdict}")
+
+            return f"Sketch verification for {sketch_name}:\n  " + "\n  ".join(results)
+
+        except Exception as e:
+            return f"Error verifying sketch: {e}"

@@ -318,3 +318,103 @@ class PartOpsHandler(BaseHandler):
 
         except Exception as e:
             return f"Error creating sweep: {e}"
+
+    def compound(self, args: Dict[str, Any]) -> str:
+        """Create a compound from multiple objects (non-boolean grouping)."""
+        try:
+            objects = args.get('objects', [])
+            name = args.get('name', 'Compound')
+
+            if len(objects) < 2:
+                return "Need at least 2 objects for compound"
+
+            doc = self.get_document()
+            if not doc:
+                return "No active document"
+
+            import Part
+
+            shapes = []
+            for obj_name in objects:
+                obj = self.get_object(obj_name, doc)
+                if obj and hasattr(obj, 'Shape'):
+                    shapes.append(obj.Shape)
+                else:
+                    return f"Object not found or has no shape: {obj_name}"
+
+            compound_shape = Part.makeCompound(shapes)
+            compound_obj = doc.addObject("Part::Feature", name)
+            compound_obj.Shape = compound_shape
+
+            self.recompute(doc)
+
+            return f"Created compound: {compound_obj.Name} from {len(objects)} objects"
+
+        except Exception as e:
+            return f"Error creating compound: {e}"
+
+    def check_geometry(self, args: Dict[str, Any]) -> str:
+        """Check geometry validity of an object (BRep check)."""
+        try:
+            object_name = args.get('object_name', '')
+            run_bop_check = args.get('run_bop_check', False)
+
+            doc = self.get_document()
+            if not doc:
+                return "No active document"
+
+            obj = self.get_object(object_name, doc)
+            if not obj:
+                return f"Object not found: {object_name}"
+
+            if not hasattr(obj, 'Shape'):
+                return f"Object {object_name} has no Shape property"
+
+            shape = obj.Shape
+            results = []
+
+            # Basic validity check
+            is_valid = shape.isValid()
+            results.append(f"Valid: {is_valid}")
+
+            # Check if closed (watertight)
+            if hasattr(shape, 'isClosed'):
+                results.append(f"Closed (watertight): {shape.isClosed()}")
+
+            # Check for solids
+            results.append(f"Solids: {len(shape.Solids)}")
+            results.append(f"Shells: {len(shape.Shells)}")
+            results.append(f"Faces: {len(shape.Faces)}")
+            results.append(f"Edges: {len(shape.Edges)}")
+            results.append(f"Vertices: {len(shape.Vertexes)}")
+
+            # Check for degenerate edges
+            degen_edges = 0
+            for edge in shape.Edges:
+                if edge.Length < 1e-7:
+                    degen_edges += 1
+            if degen_edges > 0:
+                results.append(f"Degenerate edges (near-zero length): {degen_edges}")
+
+            # Check for self-intersection (expensive)
+            if run_bop_check:
+                try:
+                    shape.check(True)  # Raises exception if invalid
+                    results.append("BOP check: Passed")
+                except Exception as e:
+                    results.append(f"BOP check: Failed - {e}")
+
+            # Volume sanity check
+            if shape.Solids:
+                vol = shape.Volume
+                if vol < 0:
+                    results.append(f"Warning: Negative volume ({vol:.2f}) - normals may be inverted")
+                elif vol == 0:
+                    results.append("Warning: Zero volume")
+                else:
+                    results.append(f"Volume: {vol:.2f} mm³")
+
+            return f"Geometry check for {object_name}:\n  " + "\n  ".join(results)
+
+        except Exception as e:
+            return f"Error checking geometry: {e}"

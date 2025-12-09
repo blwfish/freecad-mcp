@@ -777,6 +777,8 @@ class FreeCADSocketServer:
         # Sketch Operations
         elif tool_name == "create_sketch":
             return self.sketch_ops.create_sketch(args)
+        elif tool_name == "sketch_verify":
+            return self.sketch_ops.verify_sketch(args)
 
         # PartDesign Operations
         elif tool_name == "pad_sketch":
@@ -821,6 +823,10 @@ class FreeCADSocketServer:
             return self.part_ops.scale_object(args)
         elif tool_name == "part_section":
             return self.part_ops.section(args)
+        elif tool_name == "part_compound":
+            return self.part_ops.compound(args)
+        elif tool_name == "part_check_geometry":
+            return self.part_ops.check_geometry(args)
 
         # Measurement/Analysis
         elif tool_name == "measure_distance":
