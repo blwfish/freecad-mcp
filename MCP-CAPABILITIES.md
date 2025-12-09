@@ -99,6 +99,48 @@ Example:
 }
 ```
 
+### Debug and Troubleshooting
+
+#### `get_debug_logs`
+**Query operation logs for debugging and error analysis**
+
+When operations fail or behave unexpectedly, use this tool to retrieve detailed debug logs:
+
+- **Parameters**:
+  - `count` (optional, default 20): Number of recent log entries to retrieve
+  - `operation` (optional): Filter by specific operation name (e.g., "move_object", "create_box")
+
+- **Returns**: Array of log entries with:
+  - `timestamp`: When operation occurred
+  - `operation`: Operation name
+  - `parameters`: Input parameters
+  - `result`: Success message or error details
+  - `duration`: Operation duration in seconds
+  - `state`: FreeCAD state snapshot (on errors)
+
+- **Use when**:
+  - Operation fails and you need to know why
+  - User reports unexpected behavior
+  - Need to see exact parameters passed to operations
+  - Investigating performance issues
+
+- **Example**:
+```json
+{
+  "tool": "get_debug_logs",
+  "args": {
+    "count": 10,
+    "operation": "move_object"
+  }
+}
+```
+
+**Note**: Debug logs are stored in `/tmp/freecad_mcp_debug/operations_YYYYMMDD.json` (one file per day, JSON Lines format). The system automatically logs:
+- All operation calls with parameters
+- Success/failure results
+- Error states with full FreeCAD context
+- Operation timing information
+
 ## Universal Selector System
 
 **Important**: Operations like `fillet` and `chamfer` use a **human-in-the-loop** workflow:
@@ -186,6 +228,7 @@ Tools return JSON responses:
 - Work with the user in a human-in-the-loop workflow
 - Generate CAM toolpaths
 - Manage documents
+- Query debug logs to troubleshoot operations
 
 ### ❌ You CANNOT:
 - Control the user's mouse/keyboard directly
@@ -202,12 +245,14 @@ Tools return JSON responses:
 5. **Use execute_python** for complex queries or operations not covered by tools
 6. **Ask the user** if you need them to select something specific
 7. **Use modal workflow** for operations like fillet, chamfer, hole - it's more natural
+8. **Query debug logs** when operations fail - use `get_debug_logs` to see exactly what happened
 
 ## Server Version
 
-**Current**: v3.4.0 (2024-12-09)
-- Clean handler-based architecture
-- 742 lines (down from 4,541)
+**Current**: v3.4.2 (2024-12-09)
+- Clean handler-based architecture with debug integration
+- GUI threading fully resolved (no race conditions)
+- Debug logging infrastructure for operation tracing
 - All operations properly routed to modular handlers
 
 ## Troubleshooting
@@ -224,6 +269,6 @@ Tools return JSON responses:
 
 ---
 
-**Remember**: You're a powerful CAD assistant with full programmatic access to FreeCAD. Use it well!
+**Remember**: You're a powerful CAD assistant with full programmatic access to FreeCAD. Use it well! When operations fail, use `get_debug_logs` to see exactly what happened.
 
-**Last Updated**: 2024-12-09
+**Last Updated**: 2024-12-09 (v3.4.2 - added debug logging)

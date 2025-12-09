@@ -54,7 +54,8 @@ try:
     _debugger = init_debugger(
         log_dir="/tmp/freecad_mcp_debug",
         enable_console=False,
-        enable_file=True
+        enable_file=True,
+        lean_logging=False  # Full logging for Claude Desktop to query
     )
     _monitor = init_monitor()
 
@@ -827,8 +828,8 @@ class FreeCADSocketServer:
                     "result": "No debug logs available (logging may be disabled)"
                 })
 
-            # Find most recent log file
-            log_files = glob.glob(os.path.join(log_dir, "*.jsonl"))
+            # Find most recent log file (operations_*.json format from freecad_debug.py)
+            log_files = glob.glob(os.path.join(log_dir, "operations_*.json"))
             if not log_files:
                 return json.dumps({
                     "result": "No log files found in /tmp/freecad_mcp_debug/"
