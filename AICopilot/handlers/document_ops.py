@@ -233,3 +233,102 @@ class DocumentOpsHandler(BaseHandler):
             return f"Executed command: {command}"
         except Exception as e:
             return f"Error running command: {e}"
+
+    def create_group(self, args: Dict[str, Any]) -> str:
+        """Create a document group for organizing objects."""
+        try:
+            name = args.get('name', 'Group')
+            objects = args.get('objects', [])
+
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+
+            group = doc.addObject("App::DocumentObjectGroup", name)
+
+            # Add objects to group if specified
+            added = []
+            for obj_name in objects:
+                obj = doc.getObject(obj_name)
+                if obj:
+                    group.addObject(obj)
+                    added.append(obj_name)
+
+            doc.recompute()
+
+            if added:
+                return f"Created group: {group.Name} with {len(added)} objects"
+            else:
+                return f"Created empty group: {group.Name}"
+
+        except Exception as e:
+            return f"Error creating group: {e}"
+
+    def make_link(self, args: Dict[str, Any]) -> str:
+        """Create an App::Link to an object (lightweight reference)."""
+        try:
+            object_name = args.get('object_name', '')
+            name = args.get('name', '')
+            x = args.get('x', 0)
+            y = args.get('y', 0)
+            z = args.get('z', 0)
+
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+
+            obj = doc.getObject(object_name)
+            if not obj:
+                return f"Object not found: {object_name}"
+
+            # Create link
+            link_name = name if name else f"{object_name}_Link"
+            link = doc.addObject("App::Link", link_name)
+            link.LinkedObject = obj
+
+            # Set position if specified
+            if x != 0 or y != 0 or z != 0:
+                link.Placement.Base = FreeCAD.Vector(x, y, z)
+
+            doc.recompute()
+
+            return f"Created link: {link.Name} -> {object_name}"
+
+        except Exception as e:
+            return f"Error creating link: {e}"
+
+    def make_link_array(self, args: Dict[str, Any]) -> str:
+        """Create a link array (array using App::Link for efficiency)."""
+        try:
+            object_name = args.get('object_name', '')
+            count = args.get('count', 3)
+            interval_x = args.get('interval_x', 50)
+            interval_y = args.get('interval_y', 0)
+            interval_z = args.get('interval_z', 0)
+
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+
+            obj = doc.getObject(object_name)
+            if not obj:
+                return f"Object not found: {object_name}"
+
+            # Create multiple links
+            links = []
+            for i in range(1, count):  # Start from 1, original is at 0
+                link = doc.addObject("App::Link", f"{object_name}_Link{i}")
+                link.LinkedObject = obj
+                link.Placement.Base = FreeCAD.Vector(
+                    interval_x * i,
+                    interval_y * i,
+                    interval_z * i
+                )
+                links.append(link.Name)
+
+            doc.recompute()
+
+            return f"Created link array: {count} instances of {object_name} (original + {len(links)} links)"
+
+        except Exception as e:
+            return f"Error creating link array: {e}"

@@ -140,6 +140,7 @@ try:
         PartDesignOpsHandler,
         PartOpsHandler,
         CAMOpsHandler,
+        DraftOpsHandler,
         ViewOpsHandler,
         DocumentOpsHandler,
         MeasurementOpsHandler,
@@ -450,6 +451,7 @@ class FreeCADSocketServer:
             self.partdesign_ops = PartDesignOpsHandler(self)
             self.part_ops = PartOpsHandler(self)
             self.cam_ops = CAMOpsHandler(self)
+            self.draft_ops = DraftOpsHandler(self)
             self.view_ops = ViewOpsHandler(self, gui_task_queue, gui_response_queue)
             self.document_ops = DocumentOpsHandler(self, gui_task_queue, gui_response_queue)
             self.measurement_ops = MeasurementOpsHandler(self)
@@ -463,6 +465,7 @@ class FreeCADSocketServer:
             self.partdesign_ops = None
             self.part_ops = None
             self.cam_ops = None
+            self.draft_ops = None
             self.view_ops = None
             self.document_ops = None
             self.measurement_ops = None
@@ -873,6 +876,24 @@ class FreeCADSocketServer:
             return self.document_ops.undo(args)
         elif tool_name == "redo":
             return self.document_ops.redo(args)
+        elif tool_name == "create_group":
+            return self.document_ops.create_group(args)
+        elif tool_name == "make_link":
+            return self.document_ops.make_link(args)
+        elif tool_name == "make_link_array":
+            return self.document_ops.make_link_array(args)
+
+        # Draft Operations
+        elif tool_name == "draft_clone":
+            return self.draft_ops.clone(args)
+        elif tool_name == "draft_array":
+            return self.draft_ops.array(args)
+        elif tool_name == "draft_polar_array":
+            return self.draft_ops.polar_array(args)
+        elif tool_name == "draft_path_array":
+            return self.draft_ops.path_array(args)
+        elif tool_name == "draft_point_array":
+            return self.draft_ops.point_array(args)
 
         # Special handlers
         elif tool_name == "ai_agent":
