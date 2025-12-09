@@ -1,0 +1,235 @@
+# Document operation handlers for FreeCAD MCP
+
+import json
+import queue
+import FreeCAD
+import FreeCADGui
+from typing import Dict, Any
+from .base import BaseHandler
+
+
+class DocumentOpsHandler(BaseHandler):
+    """Handler for document and object management operations."""
+
+    def __init__(self, server=None, gui_task_queue=None, gui_response_queue=None):
+        """Initialize with optional GUI queues for thread-safe operations."""
+        super().__init__(server)
+        self.gui_task_queue = gui_task_queue
+        self.gui_response_queue = gui_response_queue
+
+    def create_document(self, args: Dict[str, Any]) -> str:
+        """Create a new document using GUI-safe thread queue."""
+        try:
+            name = args.get('document_name', args.get('name', 'Unnamed'))
+
+            def create_doc_task():
+                try:
+                    doc = FreeCAD.newDocument(name)
+                    doc.recompute()
+                    FreeCAD.Console.PrintMessage(f"Document '{name}' created via GUI-safe MCP.\n")
+                    return f"Document '{name}' created successfully"
+                except Exception as e:
+                    return f"Error creating document: {e}"
+
+            if self.gui_task_queue and self.gui_response_queue:
+                self.gui_task_queue.put(create_doc_task)
+
+                try:
+                    result = self.gui_response_queue.get(timeout=5.0)
+                    return result
+                except queue.Empty:
+                    return "Timeout waiting for document creation"
+            else:
+                # Direct creation if no queue available
+                doc = FreeCAD.newDocument(name)
+                doc.recompute()
+                return f"Document '{name}' created successfully"
+
+        except Exception as e:
+            return f"Error in create_document: {e}"
+
+    def open_document(self, args: Dict[str, Any]) -> str:
+        """Open a document."""
+        try:
+            filename = args.get('filename', '')
+            doc = FreeCAD.openDocument(filename)
+            return f"Opened document: {doc.Name}"
+        except Exception as e:
+            return f"Error opening document: {e}"
+
+    def save_document(self, args: Dict[str, Any]) -> str:
+        """Save the current document."""
+        try:
+            filename = args.get('filename', '')
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document to save"
+
+            if filename:
+                doc.saveAs(filename)
+                return f"Document saved as: {filename}"
+            else:
+                doc.save()
+                return f"Document saved: {doc.Name}"
+        except Exception as e:
+            return f"Error saving document: {e}"
+
+    def list_objects(self, args: Dict[str, Any]) -> str:
+        """List all objects in active document."""
+        try:
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+
+            objects = []
+            for obj in doc.Objects:
+                objects.append({
+                    "name": obj.Name,
+                    "type": obj.TypeId,
+                    "label": obj.Label
+                })
+
+            return json.dumps(objects)
+
+        except Exception as e:
+            return f"Error listing objects: {e}"
+
+    def select_object(self, args: Dict[str, Any]) -> str:
+        """Select an object."""
+        try:
+            object_name = args.get('object_name', '')
+            doc_name = args.get('doc_name', '')
+
+            if not doc_name:
+                doc = FreeCAD.ActiveDocument
+                doc_name = doc.Name if doc else ""
+
+            if not doc_name:
+                return "No document specified or active"
+
+            FreeCADGui.Selection.addSelection(doc_name, object_name)
+            return f"Selected object: {object_name}"
+        except Exception as e:
+            return f"Error selecting object: {e}"
+
+    def clear_selection(self, args: Dict[str, Any]) -> str:
+        """Clear all selections."""
+        try:
+            FreeCADGui.Selection.clearSelection()
+            return "Selection cleared"
+        except Exception as e:
+            return f"Error clearing selection: {e}"
+
+    def get_selection(self, args: Dict[str, Any]) -> str:
+        """Get current selection."""
+        try:
+            selected = FreeCADGui.Selection.getSelectionEx()
+            selection_info = []
+
+            for sel in selected:
+                selection_info.append({
+                    "document": sel.DocumentName,
+                    "object": sel.ObjectName,
+                    "sub_elements": sel.SubElementNames
+                })
+
+            return json.dumps(selection_info)
+        except Exception as e:
+            return f"Error getting selection: {e}"
+
+    def hide_object(self, args: Dict[str, Any]) -> str:
+        """Hide an object."""
+        try:
+            object_name = args.get('object_name', '')
+            doc = FreeCAD.ActiveDocument
+
+            if not doc:
+                return "No active document"
+
+            obj = doc.getObject(object_name)
+            if not obj:
+                return f"Object not found: {object_name}"
+
+            obj.ViewObject.Visibility = False
+            return f"Hidden object: {object_name}"
+        except Exception as e:
+            return f"Error hiding object: {e}"
+
+    def show_object(self, args: Dict[str, Any]) -> str:
+        """Show an object."""
+        try:
+            object_name = args.get('object_name', '')
+            doc = FreeCAD.ActiveDocument
+
+            if not doc:
+                return "No active document"
+
+            obj = doc.getObject(object_name)
+            if not obj:
+                return f"Object not found: {object_name}"
+
+            obj.ViewObject.Visibility = True
+            return f"Shown object: {object_name}"
+        except Exception as e:
+            return f"Error showing object: {e}"
+
+    def delete_object(self, args: Dict[str, Any]) -> str:
+        """Delete an object."""
+        try:
+            object_name = args.get('object_name', '')
+            doc = FreeCAD.ActiveDocument
+
+            if not doc:
+                return "No active document"
+
+            obj = doc.getObject(object_name)
+            if not obj:
+                return f"Object not found: {object_name}"
+
+            doc.removeObject(object_name)
+            doc.recompute()
+            return f"Deleted object: {object_name}"
+        except Exception as e:
+            return f"Error deleting object: {e}"
+
+    def undo(self, args: Dict[str, Any]) -> str:
+        """Undo last operation."""
+        try:
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+
+            FreeCADGui.runCommand("Std_Undo")
+            return "Undo completed"
+        except Exception as e:
+            return f"Error undoing: {e}"
+
+    def redo(self, args: Dict[str, Any]) -> str:
+        """Redo last undone operation."""
+        try:
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+
+            FreeCADGui.runCommand("Std_Redo")
+            return "Redo completed"
+        except Exception as e:
+            return f"Error redoing: {e}"
+
+    def activate_workbench(self, args: Dict[str, Any]) -> str:
+        """Activate specified workbench."""
+        try:
+            workbench_name = args.get('workbench_name', '')
+            FreeCADGui.activateWorkbench(workbench_name)
+            return f"Activated workbench: {workbench_name}"
+        except Exception as e:
+            return f"Error activating workbench: {e}"
+
+    def run_command(self, args: Dict[str, Any]) -> str:
+        """Run a FreeCAD GUI command."""
+        try:
+            command = args.get('command', '')
+            FreeCADGui.runCommand(command)
+            return f"Executed command: {command}"
+        except Exception as e:
+            return f"Error running command: {e}"

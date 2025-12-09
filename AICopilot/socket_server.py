@@ -1,10 +1,10 @@
 # FreeCAD Socket Server for MCP Communication
 # Runs inside FreeCAD to receive commands from external MCP bridge
 #
-# Version: 2.1.1
+# Version: 3.0.0 - Refactored with modular handlers
 # Requires: freecad_debug >= 1.1.0, freecad_health >= 1.0.1
 
-__version__ = "2.1.1"
+__version__ = "3.0.0"
 REQUIRED_VERSIONS = {
     "freecad_debug": ">=1.1.0",
     "freecad_health": ">=1.0.1",
@@ -126,6 +126,29 @@ except ImportError:
 #     FreeCAD.Console.PrintWarning(f"Could not import FreeCADReActAgent: {e}\n")
 #     FreeCADReActAgent = None
 FreeCADReActAgent = None  # Temporarily disabled
+
+# =============================================================================
+# Modular Handlers (v3.0.0)
+# =============================================================================
+# Import operation handlers from handlers/ module
+try:
+    from handlers import (
+        PrimitivesHandler,
+        BooleanOpsHandler,
+        TransformsHandler,
+        SketchOpsHandler,
+        PartDesignOpsHandler,
+        PartOpsHandler,
+        CAMOpsHandler,
+        ViewOpsHandler,
+        DocumentOpsHandler,
+        MeasurementOpsHandler,
+    )
+    HANDLERS_AVAILABLE = True
+    FreeCAD.Console.PrintMessage("✓ Modular handlers loaded successfully\n")
+except ImportError as e:
+    HANDLERS_AVAILABLE = False
+    FreeCAD.Console.PrintWarning(f"⚠ Modular handlers not available, using legacy methods: {e}\n")
 
 # GUI task queue for thread-safe document operations
 gui_task_queue = queue.Queue()
@@ -417,7 +440,33 @@ class FreeCADSocketServer:
         
         # Initialize universal selection system
         self.selector = UniversalSelector()
-        
+
+        # Initialize modular handlers (v3.0.0)
+        if HANDLERS_AVAILABLE:
+            self.primitives = PrimitivesHandler(self)
+            self.boolean_ops = BooleanOpsHandler(self)
+            self.transforms = TransformsHandler(self)
+            self.sketch_ops = SketchOpsHandler(self)
+            self.partdesign_ops = PartDesignOpsHandler(self)
+            self.part_ops = PartOpsHandler(self)
+            self.cam_ops = CAMOpsHandler(self)
+            self.view_ops = ViewOpsHandler(self, gui_task_queue, gui_response_queue)
+            self.document_ops = DocumentOpsHandler(self, gui_task_queue, gui_response_queue)
+            self.measurement_ops = MeasurementOpsHandler(self)
+            FreeCAD.Console.PrintMessage("✓ All operation handlers initialized\n")
+        else:
+            # Set handlers to None for legacy fallback
+            self.primitives = None
+            self.boolean_ops = None
+            self.transforms = None
+            self.sketch_ops = None
+            self.partdesign_ops = None
+            self.part_ops = None
+            self.cam_ops = None
+            self.view_ops = None
+            self.document_ops = None
+            self.measurement_ops = None
+
         # Initialize the ReAct agent
         if FreeCADReActAgent:
             self.agent = FreeCADReActAgent(self)
@@ -516,8 +565,7 @@ class FreeCADSocketServer:
                     
         except Exception as e:
             # Log error but don't crash - allow server to continue
-            FreeCAD.Console.PrintError(f"Client handler error: {e}
-")
+            FreeCAD.Console.PrintError(f"Client handler error: {e}\n")
             if DEBUG_ENABLED:
                 import traceback
                 _log_operation(
@@ -555,10 +603,8 @@ class FreeCADSocketServer:
             except json.JSONDecodeError as json_err:
                 # Malformed JSON - return error instead of crashing
                 error_msg = f"Invalid JSON: {json_err}"
-                FreeCAD.Console.PrintError(f"{error_msg}
-")
-                FreeCAD.Console.PrintError(f"Command preview: {command_str[:200]}...
-")
+                FreeCAD.Console.PrintError(f"{error_msg}\n")
+                FreeCAD.Console.PrintError(f"Command preview: {command_str[:200]}...\n")
                 
                 if DEBUG_ENABLED:
                     _log_operation(
@@ -669,12 +715,175 @@ class FreeCADSocketServer:
             })
             
     def _execute_tool(self, tool_name: str, args: Dict[str, Any]) -> str:
-        """Execute the requested tool with Phase 1 smart dispatcher support"""
-        
+        """Execute the requested tool with modular handler support (v3.0.0)
+
+        Routes tool calls to modular handlers when available, with fallback
+        to legacy methods for backward compatibility.
+        """
+
+        # Use modular handlers if available (v3.0.0)
+        if HANDLERS_AVAILABLE:
+            return self._execute_tool_with_handlers(tool_name, args)
+        else:
+            return self._execute_tool_legacy(tool_name, args)
+
+    def _execute_tool_with_handlers(self, tool_name: str, args: Dict[str, Any]) -> str:
+        """Execute tool using modular handlers (v3.0.0)"""
+
+        # Smart dispatcher tools - route to aggregate handlers
+        if tool_name == "view_control":
+            return self._handle_view_control(args)
+        elif tool_name == "partdesign_operations":
+            return self._handle_partdesign_operations(args)
+        elif tool_name == "part_operations":
+            return self._handle_part_operations(args)
+        elif tool_name == "cam_operations":
+            return self._handle_cam_operations(args)
+        elif tool_name == "execute_python":
+            return self._execute_python(args)
+
+        # Primitives
+        elif tool_name == "create_box":
+            return self.primitives.create_box(args)
+        elif tool_name == "create_cylinder":
+            return self.primitives.create_cylinder(args)
+        elif tool_name == "create_sphere":
+            return self.primitives.create_sphere(args)
+        elif tool_name == "create_cone":
+            return self.primitives.create_cone(args)
+        elif tool_name == "create_torus":
+            return self.primitives.create_torus(args)
+        elif tool_name == "create_wedge":
+            return self.primitives.create_wedge(args)
+
+        # Boolean Operations
+        elif tool_name == "fuse_objects":
+            return self.boolean_ops.fuse_objects(args)
+        elif tool_name == "cut_objects":
+            return self.boolean_ops.cut_objects(args)
+        elif tool_name == "common_objects":
+            return self.boolean_ops.common_objects(args)
+
+        # Transformations
+        elif tool_name == "move_object":
+            return self.transforms.move_object(args)
+        elif tool_name == "rotate_object":
+            return self.transforms.rotate_object(args)
+        elif tool_name == "copy_object":
+            return self.transforms.copy_object(args)
+        elif tool_name == "array_object":
+            return self.transforms.array_object(args)
+
+        # Sketch Operations
+        elif tool_name == "create_sketch":
+            return self.sketch_ops.create_sketch(args)
+
+        # PartDesign Operations
+        elif tool_name == "pad_sketch":
+            return self.partdesign_ops.pad_sketch(args)
+        elif tool_name == "fillet_edges":
+            return self.partdesign_ops.fillet_edges(args)
+        elif tool_name == "chamfer_edges":
+            return self.partdesign_ops.chamfer_edges(args)
+        elif tool_name == "draft_faces":
+            return self.partdesign_ops.draft_faces(args)
+        elif tool_name == "hole_wizard":
+            return self.partdesign_ops.hole_wizard(args)
+        elif tool_name == "linear_pattern":
+            return self.partdesign_ops.linear_pattern(args)
+        elif tool_name == "mirror_feature":
+            return self.partdesign_ops.mirror_feature(args)
+        elif tool_name == "revolution":
+            return self.partdesign_ops.revolution(args)
+        elif tool_name == "loft_profiles":
+            return self.partdesign_ops.loft_profiles(args)
+        elif tool_name == "sweep_path":
+            return self.partdesign_ops.sweep_path(args)
+        elif tool_name == "shell_solid":
+            return self.partdesign_ops.shell_solid(args)
+        elif tool_name == "create_rib":
+            return self.partdesign_ops.create_rib(args)
+        elif tool_name == "create_helix":
+            return self.partdesign_ops.create_helix(args)
+        elif tool_name == "polar_pattern":
+            return self.partdesign_ops.polar_pattern(args)
+        elif tool_name == "add_thickness":
+            return self.partdesign_ops.add_thickness(args)
+
+        # Part Operations
+        elif tool_name == "part_extrude":
+            return self.part_ops.extrude(args)
+        elif tool_name == "part_revolve":
+            return self.part_ops.revolve(args)
+        elif tool_name == "part_mirror":
+            return self.part_ops.mirror_object(args)
+        elif tool_name == "part_scale":
+            return self.part_ops.scale_object(args)
+        elif tool_name == "part_section":
+            return self.part_ops.section(args)
+
+        # Measurement/Analysis
+        elif tool_name == "measure_distance":
+            return self.measurement_ops.measure_distance(args)
+        elif tool_name == "get_volume":
+            return self.measurement_ops.get_volume(args)
+        elif tool_name == "get_bounding_box":
+            return self.measurement_ops.get_bounding_box(args)
+        elif tool_name == "get_mass_properties":
+            return self.measurement_ops.get_mass_properties(args)
+
+        # View Operations
+        elif tool_name == "get_screenshot":
+            return self.view_ops.get_screenshot(args)
+        elif tool_name == "set_view":
+            return self.view_ops.set_view_gui_safe(args)
+        elif tool_name == "fit_all":
+            return self.view_ops.fit_all(args)
+
+        # Document Operations
+        elif tool_name == "list_all_objects":
+            return self.document_ops.list_objects(args)
+        elif tool_name == "activate_workbench":
+            return self.document_ops.activate_workbench(args)
+        elif tool_name == "run_command":
+            return self.document_ops.run_command(args)
+        elif tool_name == "save_document":
+            return self.document_ops.save_document(args)
+        elif tool_name == "open_document":
+            return self.document_ops.open_document(args)
+        elif tool_name == "select_object":
+            return self.document_ops.select_object(args)
+        elif tool_name == "clear_selection":
+            return self.document_ops.clear_selection(args)
+        elif tool_name == "get_selection":
+            return self.document_ops.get_selection(args)
+        elif tool_name == "hide_object":
+            return self.document_ops.hide_object(args)
+        elif tool_name == "show_object":
+            return self.document_ops.show_object(args)
+        elif tool_name == "delete_object":
+            return self.document_ops.delete_object(args)
+        elif tool_name == "undo":
+            return self.document_ops.undo(args)
+        elif tool_name == "redo":
+            return self.document_ops.redo(args)
+
+        # Special handlers
+        elif tool_name == "ai_agent":
+            return self._ai_agent(args)
+        elif tool_name == "continue_selection":
+            return self._continue_selection(args)
+
+        else:
+            return f"Unknown tool: {tool_name}"
+
+    def _execute_tool_legacy(self, tool_name: str, args: Dict[str, Any]) -> str:
+        """Legacy tool execution (fallback when handlers not available)"""
+
         # Handle view_control with GUI-safe operations
         if tool_name == "view_control":
             return self._handle_view_control(args)
-        
+
         # Handle other smart dispatcher tools
         elif tool_name == "partdesign_operations":
             return self._handle_partdesign_operations(args)
@@ -684,7 +893,7 @@ class FreeCADSocketServer:
             return self._handle_cam_operations(args)
         elif tool_name == "execute_python":
             return self._execute_python(args)
-        
+
         # Legacy individual tool routing (for backward compatibility)
         # Map tool names to implementations
         elif tool_name == "create_box":
@@ -740,8 +949,6 @@ class FreeCADSocketServer:
             return self._loft_profiles(args)
         elif tool_name == "sweep_path":
             return self._sweep_path(args)
-        elif tool_name == "draft_faces":
-            return self._draft_faces(args)
         elif tool_name == "shell_solid":
             return self._shell_solid(args)
         elif tool_name == "create_rib":
@@ -768,8 +975,6 @@ class FreeCADSocketServer:
             return self._list_all_objects(args)
         elif tool_name == "activate_workbench":
             return self._activate_workbench(args)
-        elif tool_name == "execute_python":
-            return self._execute_python(args)
         # GUI Control Tools
         elif tool_name == "run_command":
             return self._run_command(args)
