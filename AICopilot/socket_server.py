@@ -144,6 +144,7 @@ try:
         ViewOpsHandler,
         DocumentOpsHandler,
         MeasurementOpsHandler,
+        SpreadsheetOpsHandler,
     )
     HANDLERS_AVAILABLE = True
     FreeCAD.Console.PrintMessage("✓ Modular handlers loaded successfully\n")
@@ -455,6 +456,7 @@ class FreeCADSocketServer:
             self.view_ops = ViewOpsHandler(self, gui_task_queue, gui_response_queue)
             self.document_ops = DocumentOpsHandler(self, gui_task_queue, gui_response_queue)
             self.measurement_ops = MeasurementOpsHandler(self)
+            self.spreadsheet_ops = SpreadsheetOpsHandler(self)
             FreeCAD.Console.PrintMessage("✓ All operation handlers initialized\n")
         else:
             # Set handlers to None for legacy fallback
@@ -469,6 +471,7 @@ class FreeCADSocketServer:
             self.view_ops = None
             self.document_ops = None
             self.measurement_ops = None
+            self.spreadsheet_ops = None
 
         # Initialize the ReAct agent
         if FreeCADReActAgent:
@@ -894,6 +897,32 @@ class FreeCADSocketServer:
             return self.draft_ops.path_array(args)
         elif tool_name == "draft_point_array":
             return self.draft_ops.point_array(args)
+
+        # Spreadsheet Operations
+        elif tool_name == "create_spreadsheet":
+            return self.spreadsheet_ops.create_spreadsheet(args)
+        elif tool_name == "spreadsheet_set_cell":
+            return self.spreadsheet_ops.set_cell(args)
+        elif tool_name == "spreadsheet_get_cell":
+            return self.spreadsheet_ops.get_cell(args)
+        elif tool_name == "spreadsheet_set_alias":
+            return self.spreadsheet_ops.set_alias(args)
+        elif tool_name == "spreadsheet_get_alias":
+            return self.spreadsheet_ops.get_alias(args)
+        elif tool_name == "spreadsheet_clear_cell":
+            return self.spreadsheet_ops.clear_cell(args)
+        elif tool_name == "spreadsheet_set_range":
+            return self.spreadsheet_ops.set_cell_range(args)
+        elif tool_name == "spreadsheet_get_range":
+            return self.spreadsheet_ops.get_cell_range(args)
+        elif tool_name == "spreadsheet_bind_property":
+            return self.spreadsheet_ops.bind_property(args)
+        elif tool_name == "spreadsheet_list_aliases":
+            return self.spreadsheet_ops.list_aliases(args)
+        elif tool_name == "spreadsheet_import_csv":
+            return self.spreadsheet_ops.import_csv(args)
+        elif tool_name == "spreadsheet_export_csv":
+            return self.spreadsheet_ops.export_csv(args)
 
         # Special handlers
         elif tool_name == "ai_agent":
