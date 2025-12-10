@@ -108,21 +108,18 @@ class CAMToolsHandler(BaseHandler):
         """
         start_time = time.time()
         try:
-            # FreeCAD 1.0+ uses new module structure
-            try:
-                from Path.Tool.Library import ToolLibrary
-            except ImportError:
-                return "Error: Path.Tool module not available. Requires FreeCAD 1.0+"
-
             doc = self.get_document()
             if not doc:
                 return "Error: No active document"
 
             # Find all tool bits in the document
+            # In FreeCAD 1.2+, tool bits are Part::FeaturePython with a ToolBit proxy
             tools = []
             for obj in doc.Objects:
-                if obj.TypeId == "Path::ToolBit":
-                    tools.append(obj)
+                if obj.TypeId == "Part::FeaturePython" and hasattr(obj, 'Proxy'):
+                    # Check if it's a ToolBit by looking for ToolBit-specific attributes
+                    if hasattr(obj, 'ShapeID') or hasattr(obj, 'ToolBitID'):
+                        tools.append(obj)
 
             if not tools:
                 result = "No tools found in document. Use create_tool to add tools."
@@ -132,12 +129,10 @@ class CAMToolsHandler(BaseHandler):
             for i, tool in enumerate(tools, 1):
                 diameter = tool.Diameter if hasattr(tool, 'Diameter') else 'N/A'
                 tool_type = tool.BitShape if hasattr(tool, 'BitShape') else 'unknown'
-                result += f"  {i}. {tool.Label} ({tool_type}, ⌀{diameter})\n"
+                result += f"  {i}. {tool.Label} ({tool_type}, D={diameter})\n"
 
             return self.log_and_return("list_tools", args, result=result, duration=time.time() - start_time)
 
-        except ImportError as e:
-            return self.log_and_return("list_tools", args, error=e, duration=time.time() - start_time)
         except Exception as e:
             return self.log_and_return("list_tools", args, error=e, duration=time.time() - start_time)
 
@@ -167,7 +162,8 @@ class CAMToolsHandler(BaseHandler):
                 error = Exception(f"Tool '{tool_name}' not found")
                 return self.log_and_return("get_tool", args, error=error, duration=time.time() - start_time)
 
-            if tool.TypeId != "Path::ToolBit":
+            # In FreeCAD 1.2+, tool bits are Part::FeaturePython
+            if tool.TypeId != "Part::FeaturePython" or not (hasattr(tool, 'ShapeID') or hasattr(tool, 'ToolBitID')):
                 error = Exception(f"Object '{tool_name}' is not a tool bit (type: {tool.TypeId})")
                 return self.log_and_return("get_tool", args, error=error, duration=time.time() - start_time)
 
@@ -217,7 +213,8 @@ class CAMToolsHandler(BaseHandler):
             if not tool:
                 return f"Error: Tool '{tool_name}' not found"
 
-            if tool.TypeId != "Path::ToolBit":
+            # In FreeCAD 1.2+, tool bits are Part::FeaturePython
+            if tool.TypeId != "Part::FeaturePython" or not (hasattr(tool, 'ShapeID') or hasattr(tool, 'ToolBitID')):
                 return f"Error: Object '{tool_name}' is not a tool bit"
 
             # Update parameters if provided

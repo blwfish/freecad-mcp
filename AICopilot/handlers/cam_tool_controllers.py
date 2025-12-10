@@ -64,7 +64,8 @@ class CAMToolControllersHandler(BaseHandler):
                 error = Exception(f"Tool '{tool_name}' not found")
                 return self.log_and_return("add_tool_controller", args, error=error, duration=time.time() - start_time)
 
-            if tool.TypeId != "Path::ToolBit":
+            # In FreeCAD 1.2+, tool bits are Part::FeaturePython
+            if tool.TypeId != "Part::FeaturePython" or not (hasattr(tool, 'ShapeID') or hasattr(tool, 'ToolBitID')):
                 error = Exception(f"Object '{tool_name}' is not a tool bit")
                 return self.log_and_return("add_tool_controller", args, error=error, duration=time.time() - start_time)
 
