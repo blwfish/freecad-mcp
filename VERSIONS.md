@@ -1,16 +1,36 @@
 # Version History
 
-## Current Versions (2024-12-09)
+## Current Versions (2025-12-10)
 
 | Component | Version | Lines | Status |
 |-----------|---------|-------|--------|
-| socket_server.py | 3.4.0 | 742 | ✅ Active - Clean handler-based |
+| socket_server.py | 4.0.0 | 742 | ✅ Active - CAM CRUD + FC 1.2 |
 | freecad_debug.py | 1.1.0 | - | ✅ Active |
 | freecad_health.py | 1.0.1 | - | ✅ Active |
 
 ## socket_server.py Version History
 
-### v3.4.0 (2024-12-09) - **CURRENT**
+### v4.0.0 (2025-12-10) - **CURRENT**
+- **Major**: FreeCAD 1.2.0 CAM API compatibility + Complete CRUD operations
+- **Breaking Changes**:
+  - Tool creation API changed (Factory.CreateBit → ToolBit.from_shape_id)
+  - TypeId changed (Path::ToolBit → Part::FeaturePython)
+- **New Features**:
+  - 20 new CAM CRUD operations (tools, controllers, operations, jobs)
+  - Complete regression testing framework (P0-P3 priorities)
+  - Console mode support (FreeCAD.GuiUp check in InitGui.py)
+  - Test mode (FREECAD_MCP_TEST_MODE environment variable)
+- **New Handlers**:
+  - cam_tools.py (5 operations)
+  - cam_tool_controllers.py (5 operations)
+  - cam_ops.py enhanced (10 new operations)
+- **Documentation**:
+  - CAM_CRUD_OPERATIONS.md
+  - CAM_API_CHANGES_FC12.md
+  - README_TESTING.md
+- **Testing**: Manual regression testing caught 4 critical bugs before release
+
+### v3.4.0 (2024-12-09)
 - **Lines**: 742 (down from 4,541)
 - **Size**: 27KB (down from 182KB)
 - **Change**: Complete clean rewrite with proper handler architecture
@@ -52,9 +72,10 @@
 **ALWAYS increment from the CURRENT version in this file!**
 
 ### When to bump MAJOR (X.0.0)
-- Breaking API changes
+- Breaking API changes (✅ v4.0.0: Tool creation API changed)
 - Complete architecture rewrites
 - Incompatible changes to handler interface
+- TypeId changes that affect existing code
 
 ### When to bump MINOR (3.X.0)
 - New features added
@@ -87,4 +108,4 @@ Archived versions are in `archive/` with descriptive names:
 - `socket_server_v3.0.0_bloated.py` - The 4,541 line monster
 - `socket_server_v2.1.2_root_unused.py` - Old root-level version
 
-**Last Updated**: 2024-12-09
+**Last Updated**: 2025-12-10
