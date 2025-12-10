@@ -60,7 +60,8 @@ try:
     _debugger = init_debugger(
         log_dir="/tmp/freecad_mcp_debug",
         enable_console=False,
-        enable_file=True
+        enable_file=True,
+        lean_logging=False  # Full logging for Claude Desktop to query
     )
     _monitor = init_monitor()
 
