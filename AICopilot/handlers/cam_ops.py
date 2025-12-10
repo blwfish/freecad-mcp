@@ -27,7 +27,7 @@ class CAMOpsHandler(BaseHandler):
             job_name = args.get('name', 'Job')
             base_object = args.get('base_object', '')
 
-            # Prepare model list
+            # Prepare model list - MUST be a list, not individual objects
             model_list = []
             if base_object:
                 obj = self.get_object(base_object, doc)
@@ -36,15 +36,19 @@ class CAMOpsHandler(BaseHandler):
                 else:
                     return f"Error: Base object '{base_object}' not found. Please create the base model first."
 
-            # Create job with model list (can be empty for manual setup later)
-            job = CreateJob(job_name, model_list, doc)
+            # Create job programmatically WITHOUT GUI dialog
+            # The Create function signature is: Create(name, base, templateFile=None)
+            # where 'base' is a list of base objects
+            job = CreateJob(job_name, model_list, None)
 
             # Set up ViewProvider for GUI mode
-            if has_gui and hasattr(job, 'ViewObject'):
+            if has_gui and hasattr(job, 'ViewObject') and job.ViewObject:
                 try:
                     job.ViewObject.Proxy = ViewProvider(job.ViewObject)
-                except Exception:
-                    pass  # ViewProvider setup is optional
+                    job.ViewObject.addExtension("Gui::ViewProviderGroupExtensionPython")
+                except Exception as e:
+                    # ViewProvider setup is optional, just log if it fails
+                    pass
 
             self.recompute(doc)
 
