@@ -20,6 +20,7 @@ print("\n1. Testing FreeCAD imports...")
 try:
     import FreeCAD
     print(f"   [PASS] FreeCAD {FreeCAD.Version()[0]}.{FreeCAD.Version()[1]}.{FreeCAD.Version()[2]} (build {FreeCAD.Version()[3]})")
+    print(f"   [INFO] Console mode: FreeCAD.GuiUp = {FreeCAD.GuiUp}")
 except Exception as e:
     print(f"   [FAIL] Failed to import FreeCAD: {e}")
     sys.exit(1)
@@ -66,12 +67,14 @@ except Exception as e:
     print(f"   [FAIL] Path.Main.Job.Create: {e}")
     cam_modules_failed += 1
 
+# NOTE: Path.Tool.Bit.Factory no longer exists in FreeCAD 1.2
+# Replaced with ToolBit.from_shape_id()
 try:
-    from Path.Tool.Bit import Factory
-    print("   [PASS] Path.Tool.Bit.Factory")
+    from Path.Tool.Bit import ToolBit
+    print("   [PASS] Path.Tool.Bit.ToolBit")
     cam_modules_passed += 1
 except Exception as e:
-    print(f"   [FAIL] Path.Tool.Bit.Factory: {e}")
+    print(f"   [FAIL] Path.Tool.Bit.ToolBit: {e}")
     cam_modules_failed += 1
 
 try:

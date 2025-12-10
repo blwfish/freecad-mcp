@@ -4,13 +4,23 @@
 
 | Component | Version | Lines | Status |
 |-----------|---------|-------|--------|
-| socket_server.py | 4.0.0 | 742 | ✅ Active - CAM CRUD + FC 1.2 |
+| socket_server.py | 4.0.1 | 742 | ✅ Active - Console mode support |
+| handlers/base.py | 1.1.0 | 103 | ✅ Active - Console mode support |
 | freecad_debug.py | 1.1.0 | - | ✅ Active |
 | freecad_health.py | 1.0.1 | - | ✅ Active |
 
 ## socket_server.py Version History
 
-### v4.0.0 (2025-12-10) - **CURRENT**
+### v4.0.1 (2025-12-10) - **CURRENT**
+- **Patch**: Console mode support (freecadcmd compatibility)
+- **Changes**:
+  - Conditional FreeCADGui import (uses FreeCAD.GuiUp check)
+  - Conditional QtCore import (only when GUI available)
+  - Guards around all GUI-dependent code
+  - handlers/base.py also updated for console mode
+- **Testing**: Automated test suite now functional
+
+### v4.0.0 (2025-12-10)
 - **Major**: FreeCAD 1.2.0 CAM API compatibility + Complete CRUD operations
 - **Breaking Changes**:
   - Tool creation API changed (Factory.CreateBit → ToolBit.from_shape_id)

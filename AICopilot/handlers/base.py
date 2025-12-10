@@ -1,9 +1,14 @@
 # Base handler class for FreeCAD MCP operations
 
 import FreeCAD
-import FreeCADGui
 import time
 from typing import Dict, Any, Optional, Callable
+
+# Conditional GUI import (not available in console mode)
+if FreeCAD.GuiUp:
+    import FreeCADGui
+else:
+    FreeCADGui = None
 
 
 class BaseHandler:

@@ -1,17 +1,16 @@
 # FreeCAD Socket Server for MCP Communication
 # Runs inside FreeCAD to receive commands from external MCP bridge
 #
-# Version: 3.4.1 - Fixed GUI threading for all operations + delayed startup
+# Version: 4.0.1 - Console mode support (FreeCAD.GuiUp checks)
 # Requires: freecad_debug >= 1.1.0, freecad_health >= 1.0.1
 
-__version__ = "3.4.1"
+__version__ = "4.0.1"
 REQUIRED_VERSIONS = {
     "freecad_debug": ">=1.1.0",
     "freecad_health": ">=1.0.1",
 }
 
 import FreeCAD
-import FreeCADGui
 import socket
 import threading
 import json
@@ -22,7 +21,14 @@ import platform
 import struct
 import sys
 from typing import Dict, Any, List, Optional
-from PySide import QtCore
+
+# Conditional GUI imports (not available in console mode)
+if FreeCAD.GuiUp:
+    import FreeCADGui
+    from PySide import QtCore
+else:
+    FreeCADGui = None
+    QtCore = None
 
 # Platform-specific socket handling
 IS_WINDOWS = platform.system() == "Windows"
@@ -141,7 +147,9 @@ def process_gui_tasks():
         except Exception as e:
             gui_response_queue.put(f"GUI task error: {e}")
 
-    QtCore.QTimer.singleShot(100, process_gui_tasks)
+    # Only schedule next iteration if GUI is available
+    if QtCore:
+        QtCore.QTimer.singleShot(100, process_gui_tasks)
 
 # =============================================================================
 # Message Framing Protocol (v2.1.1)
@@ -230,7 +238,8 @@ class UniversalSelector:
         operation_id = f"{tool_name}_{int(time.time() * 1000)}"
 
         try:
-            FreeCADGui.Selection.clearSelection()
+            if FreeCADGui:
+                FreeCADGui.Selection.clearSelection()
         except:
             pass
 
@@ -263,6 +272,8 @@ class UniversalSelector:
             return None
 
         try:
+            if not FreeCADGui:
+                return {"error": "FreeCAD GUI not available"}
             selection = FreeCADGui.Selection.getSelectionEx()
         except:
             return {"error": "Could not access FreeCAD selection"}
@@ -314,6 +325,9 @@ class UniversalSelector:
     def _highlight_elements(self, object_name: str, element_type: str):
         """Highlight relevant elements in FreeCAD GUI"""
         try:
+            if not FreeCADGui:
+                return
+
             doc = FreeCAD.ActiveDocument
             if not doc:
                 return
@@ -391,7 +405,9 @@ class FreeCADSocketServer:
             self.server_thread = threading.Thread(target=self._server_loop, daemon=True)
             self.server_thread.start()
 
-            QtCore.QTimer.singleShot(100, process_gui_tasks)
+            # Only start GUI task processing if GUI is available
+            if QtCore:
+                QtCore.QTimer.singleShot(100, process_gui_tasks)
 
             return True
 
