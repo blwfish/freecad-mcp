@@ -108,6 +108,8 @@ try:
         PartDesignOpsHandler,
         PartOpsHandler,
         CAMOpsHandler,
+        CAMToolsHandler,
+        CAMToolControllersHandler,
         DraftOpsHandler,
         ViewOpsHandler,
         DocumentOpsHandler,
@@ -352,6 +354,8 @@ class FreeCADSocketServer:
         self.partdesign_ops = PartDesignOpsHandler(self, _log_operation, _capture_state)
         self.part_ops = PartOpsHandler(self, _log_operation, _capture_state)
         self.cam_ops = CAMOpsHandler(self, _log_operation, _capture_state)
+        self.cam_tools = CAMToolsHandler(self, _log_operation, _capture_state)
+        self.cam_tool_controllers = CAMToolControllersHandler(self, _log_operation, _capture_state)
         self.draft_ops = DraftOpsHandler(self, _log_operation, _capture_state)
         # GUI-sensitive handlers need task queues for thread safety
         self.view_ops = ViewOpsHandler(self, gui_task_queue, gui_response_queue, _log_operation, _capture_state)
@@ -588,6 +592,10 @@ class FreeCADSocketServer:
             return self._handle_view_control(args)
         elif tool_name == "cam_operations":
             return self._handle_cam_operations(args)
+        elif tool_name == "cam_tools":
+            return self._handle_cam_tools(args)
+        elif tool_name == "cam_tool_controllers":
+            return self._handle_cam_tool_controllers(args)
         elif tool_name == "draft_operations":
             return self._handle_draft_operations(args)
         elif tool_name == "spreadsheet_operations":
@@ -734,6 +742,34 @@ class FreeCADSocketServer:
                 return json.dumps({"error": f"CAM {operation} error: {e}"})
 
         return json.dumps({"error": f"Unknown CAM operation: {operation}"})
+
+    def _handle_cam_tools(self, args: Dict[str, Any]) -> str:
+        """Route CAM tool operations to handler"""
+        operation = args.get("operation", "")
+        method = getattr(self.cam_tools, operation, None)
+
+        if method:
+            try:
+                result = method(args)
+                return json.dumps({"result": result})
+            except Exception as e:
+                return json.dumps({"error": f"CAM tools {operation} error: {e}"})
+
+        return json.dumps({"error": f"Unknown CAM tools operation: {operation}"})
+
+    def _handle_cam_tool_controllers(self, args: Dict[str, Any]) -> str:
+        """Route CAM tool controller operations to handler"""
+        operation = args.get("operation", "")
+        method = getattr(self.cam_tool_controllers, operation, None)
+
+        if method:
+            try:
+                result = method(args)
+                return json.dumps({"result": result})
+            except Exception as e:
+                return json.dumps({"error": f"CAM tool controllers {operation} error: {e}"})
+
+        return json.dumps({"error": f"Unknown CAM tool controllers operation: {operation}"})
 
     def _handle_draft_operations(self, args: Dict[str, Any]) -> str:
         """Route Draft operations to handler"""

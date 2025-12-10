@@ -9,6 +9,8 @@ from .sketch_ops import SketchOpsHandler
 from .partdesign_ops import PartDesignOpsHandler
 from .part_ops import PartOpsHandler
 from .cam_ops import CAMOpsHandler
+from .cam_tools import CAMToolsHandler
+from .cam_tool_controllers import CAMToolControllersHandler
 from .draft_ops import DraftOpsHandler
 from .view_ops import ViewOpsHandler
 from .document_ops import DocumentOpsHandler
@@ -24,6 +26,8 @@ __all__ = [
     'PartDesignOpsHandler',
     'PartOpsHandler',
     'CAMOpsHandler',
+    'CAMToolsHandler',
+    'CAMToolControllersHandler',
     'DraftOpsHandler',
     'ViewOpsHandler',
     'DocumentOpsHandler',

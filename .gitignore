@@ -45,6 +45,7 @@ env/
 freecad_screenshot.png
 *.sock
 *.log
+tests/results/
 
 # Database
 *.db

@@ -333,8 +333,8 @@ async def main():
                                 "type": "string",
                                 "description": "CAM operation to perform",
                                 "enum": [
-                                    # Job management (2)
-                                    "create_job", "setup_stock",
+                                    # Job management (5)
+                                    "create_job", "setup_stock", "configure_job", "inspect_job", "job_status", "delete_job",
                                     # Primary milling operations (12)
                                     "profile", "pocket", "adaptive", "face", "helix", "slot",
                                     "engrave", "vcarve", "deburr", "surface", "waterline", "pocket_3d",
@@ -343,10 +343,12 @@ async def main():
                                     # Dressup operations (7)
                                     "dogbone", "lead_in_out", "ramp_entry", "tag", "axis_map",
                                     "drag_knife", "z_correct",
-                                    # Tool management (2)
+                                    # Operation management (4)
+                                    "list_operations", "get_operation", "configure_operation", "delete_operation",
+                                    # Tool management (2) - deprecated, use cam_tools and cam_tool_controllers instead
                                     "create_tool", "tool_controller",
-                                    # Utility operations (3)
-                                    "simulate", "post_process", "inspect"
+                                    # Utility operations (4)
+                                    "simulate", "simulate_job", "post_process", "export_gcode", "inspect"
                                 ]
                             },
                             # Job parameters
@@ -384,6 +386,56 @@ async def main():
                             "tolerance": {"type": "number", "description": "Adaptive tolerance"},
                             # General
                             "name": {"type": "string", "description": "Name for the operation"}
+                        },
+                        "required": ["operation"]
+                    }
+                ),
+                types.Tool(
+                    name="cam_tools",
+                    description="CAM Tool Library Management - CRUD operations for cutting tools",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "description": "Tool library operation",
+                                "enum": ["create_tool", "list_tools", "get_tool", "update_tool", "delete_tool"]
+                            },
+                            "tool_name": {"type": "string", "description": "Name of the tool"},
+                            "tool_type": {
+                                "type": "string",
+                                "description": "Type of tool",
+                                "enum": ["endmill", "ballend", "bullnose", "chamfer", "drill", "v-bit"],
+                                "default": "endmill"
+                            },
+                            "diameter": {"type": "number", "description": "Tool diameter in mm", "default": 6.0},
+                            "flute_length": {"type": "number", "description": "Cutting edge length in mm"},
+                            "shank_diameter": {"type": "number", "description": "Shank diameter in mm"},
+                            "material": {"type": "string", "description": "Tool material (HSS, Carbide, etc.)"},
+                            "number_of_flutes": {"type": "integer", "description": "Number of flutes"},
+                            "name": {"type": "string", "description": "Tool name (for create operation)"}
+                        },
+                        "required": ["operation"]
+                    }
+                ),
+                types.Tool(
+                    name="cam_tool_controllers",
+                    description="CAM Tool Controller Management - CRUD operations for tool controllers (link tools to jobs with speeds/feeds)",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "description": "Tool controller operation",
+                                "enum": ["add_tool_controller", "list_tool_controllers", "get_tool_controller", "update_tool_controller", "remove_tool_controller"]
+                            },
+                            "job_name": {"type": "string", "description": "CAM job name"},
+                            "tool_name": {"type": "string", "description": "Name of the tool bit to use"},
+                            "controller_name": {"type": "string", "description": "Name for the tool controller"},
+                            "spindle_speed": {"type": "number", "description": "Spindle speed in RPM", "default": 10000},
+                            "feed_rate": {"type": "number", "description": "Horizontal feed rate in mm/min", "default": 1000},
+                            "vertical_feed_rate": {"type": "number", "description": "Vertical (plunge) feed rate in mm/min"},
+                            "tool_number": {"type": "integer", "description": "Tool number for G-code", "default": 1}
                         },
                         "required": ["operation"]
                     }
@@ -467,7 +519,7 @@ async def main():
             
         # Route smart dispatcher tools to socket with enhanced routing
         elif name in ["partdesign_operations", "part_operations",
-                      "view_control", "cam_operations", "execute_python"]:
+                      "view_control", "cam_operations", "cam_tools", "cam_tool_controllers", "execute_python"]:
             args = arguments or {}
             
             # Check if this is a continuation from interactive selection

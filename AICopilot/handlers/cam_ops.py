@@ -1,6 +1,7 @@
 # CAM workbench operation handlers for FreeCAD MCP
 
 import FreeCAD
+import time
 from typing import Dict, Any
 from .base import BaseHandler
 
@@ -436,6 +437,547 @@ class CAMOpsHandler(BaseHandler):
 
         except Exception as e:
             return f"Error inspecting job: {e}"
+
+    def list_operations(self, args: Dict[str, Any]) -> str:
+        """List all operations in a CAM job with detailed information.
+
+        Args:
+            job_name: Name of the CAM job
+
+        Returns:
+            Formatted list of operations with parameters
+        """
+        start_time = time.time()
+        try:
+            doc = self.get_document()
+            if not doc:
+                error = Exception("No active document")
+                return self.log_and_return("list_operations", args, error=error, duration=time.time() - start_time)
+
+            job_name = args.get('job_name', '')
+            if not job_name:
+                error = Exception("job_name parameter required")
+                return self.log_and_return("list_operations", args, error=error, duration=time.time() - start_time)
+
+            job = self.get_object(job_name, doc)
+            if not job:
+                error = Exception(f"Job '{job_name}' not found")
+                return self.log_and_return("list_operations", args, error=error, duration=time.time() - start_time)
+
+            if not hasattr(job, 'Operations'):
+                error = Exception(f"Job '{job_name}' does not have operations")
+                return self.log_and_return("list_operations", args, error=error, duration=time.time() - start_time)
+
+            ops = job.Operations.Group
+            if not ops:
+                result = f"No operations found in job '{job_name}'"
+                return self.log_and_return("list_operations", args, result=result, duration=time.time() - start_time)
+
+            result = f"Operations in job '{job_name}' ({len(ops)}):\n"
+            for i, op in enumerate(ops, 1):
+                result += f"\n  {i}. {op.Label} ({op.TypeId})\n"
+
+                # Show common parameters
+                if hasattr(op, 'ToolController') and op.ToolController:
+                    result += f"     Tool Controller: {op.ToolController.Label}\n"
+                if hasattr(op, 'StepDown'):
+                    result += f"     Step Down: {op.StepDown}\n"
+                if hasattr(op, 'StepOver'):
+                    result += f"     Step Over: {op.StepOver}%\n"
+                if hasattr(op, 'CutMode'):
+                    result += f"     Cut Mode: {op.CutMode}\n"
+                if hasattr(op, 'Side'):
+                    result += f"     Side: {op.Side}\n"
+                if hasattr(op, 'Direction'):
+                    result += f"     Direction: {op.Direction}\n"
+
+            return self.log_and_return("list_operations", args, result=result, duration=time.time() - start_time)
+
+        except Exception as e:
+            return self.log_and_return("list_operations", args, error=e, duration=time.time() - start_time)
+
+    def get_operation(self, args: Dict[str, Any]) -> str:
+        """Get detailed information about a specific CAM operation.
+
+        Args:
+            job_name: Name of the CAM job
+            operation_name: Name of the operation
+
+        Returns:
+            Detailed operation information
+        """
+        start_time = time.time()
+        try:
+            doc = self.get_document()
+            if not doc:
+                error = Exception("No active document")
+                return self.log_and_return("get_operation", args, error=error, duration=time.time() - start_time)
+
+            job_name = args.get('job_name', '')
+            operation_name = args.get('operation_name', '')
+
+            if not job_name:
+                error = Exception("job_name parameter required")
+                return self.log_and_return("get_operation", args, error=error, duration=time.time() - start_time)
+            if not operation_name:
+                error = Exception("operation_name parameter required")
+                return self.log_and_return("get_operation", args, error=error, duration=time.time() - start_time)
+
+            operation = self.get_object(operation_name, doc)
+            if not operation:
+                error = Exception(f"Operation '{operation_name}' not found")
+                return self.log_and_return("get_operation", args, error=error, duration=time.time() - start_time)
+
+            result = f"Operation: {operation.Label}\n"
+            result += f"  Type: {operation.TypeId}\n"
+
+            # Show all relevant properties
+            if hasattr(operation, 'ToolController') and operation.ToolController:
+                tc = operation.ToolController
+                result += f"  Tool Controller: {tc.Label}\n"
+                if hasattr(tc, 'Tool') and tc.Tool:
+                    result += f"    Tool: {tc.Tool.Label}\n"
+                if hasattr(tc, 'SpindleSpeed'):
+                    result += f"    Spindle Speed: {tc.SpindleSpeed} RPM\n"
+                if hasattr(tc, 'HorizFeed'):
+                    result += f"    Feed Rate: {tc.HorizFeed} mm/min\n"
+
+            if hasattr(operation, 'Base'):
+                result += f"  Base Object: {operation.Base}\n"
+            if hasattr(operation, 'StepDown'):
+                result += f"  Step Down: {operation.StepDown} mm\n"
+            if hasattr(operation, 'StepOver'):
+                result += f"  Step Over: {operation.StepOver}%\n"
+            if hasattr(operation, 'CutMode'):
+                result += f"  Cut Mode: {operation.CutMode}\n"
+            if hasattr(operation, 'Side'):
+                result += f"  Cut Side: {operation.Side}\n"
+            if hasattr(operation, 'Direction'):
+                result += f"  Direction: {operation.Direction}\n"
+            if hasattr(operation, 'StartDepth'):
+                result += f"  Start Depth: {operation.StartDepth}\n"
+            if hasattr(operation, 'FinalDepth'):
+                result += f"  Final Depth: {operation.FinalDepth}\n"
+            if hasattr(operation, 'SafeHeight'):
+                result += f"  Safe Height: {operation.SafeHeight}\n"
+            if hasattr(operation, 'ClearanceHeight'):
+                result += f"  Clearance Height: {operation.ClearanceHeight}\n"
+
+            return self.log_and_return("get_operation", args, result=result, duration=time.time() - start_time)
+
+        except Exception as e:
+            return self.log_and_return("get_operation", args, error=e, duration=time.time() - start_time)
+
+    def configure_operation(self, args: Dict[str, Any]) -> str:
+        """Configure/update parameters of an existing CAM operation.
+
+        Args:
+            job_name: Name of the CAM job
+            operation_name: Name of the operation
+            stepdown: Step down value (optional)
+            stepover: Step over percentage (optional)
+            cut_mode: Cut mode - "Climb" or "Conventional" (optional)
+            cut_side: Cut side - "Inside" or "Outside" (optional)
+            direction: Direction - "CW" or "CCW" (optional)
+            tool_controller: Name of tool controller to use (optional)
+
+        Returns:
+            Success/error message
+        """
+        start_time = time.time()
+        try:
+            doc = self.get_document()
+            if not doc:
+                error = Exception("No active document")
+                return self.log_and_return("configure_operation", args, error=error, duration=time.time() - start_time)
+
+            job_name = args.get('job_name', '')
+            operation_name = args.get('operation_name', '')
+
+            if not job_name:
+                error = Exception("job_name parameter required")
+                return self.log_and_return("configure_operation", args, error=error, duration=time.time() - start_time)
+            if not operation_name:
+                error = Exception("operation_name parameter required")
+                return self.log_and_return("configure_operation", args, error=error, duration=time.time() - start_time)
+
+            operation = self.get_object(operation_name, doc)
+            if not operation:
+                error = Exception(f"Operation '{operation_name}' not found")
+                return self.log_and_return("configure_operation", args, error=error, duration=time.time() - start_time)
+
+            # Update parameters if provided
+            updates = []
+
+            if 'stepdown' in args and hasattr(operation, 'StepDown'):
+                operation.StepDown = args['stepdown']
+                updates.append(f"stepdown: {args['stepdown']}mm")
+
+            if 'stepover' in args and hasattr(operation, 'StepOver'):
+                operation.StepOver = args['stepover']
+                updates.append(f"stepover: {args['stepover']}%")
+
+            if 'cut_mode' in args and hasattr(operation, 'CutMode'):
+                operation.CutMode = args['cut_mode']
+                updates.append(f"cut_mode: {args['cut_mode']}")
+
+            if 'cut_side' in args and hasattr(operation, 'Side'):
+                operation.Side = args['cut_side']
+                updates.append(f"cut_side: {args['cut_side']}")
+
+            if 'direction' in args and hasattr(operation, 'Direction'):
+                operation.Direction = args['direction']
+                updates.append(f"direction: {args['direction']}")
+
+            if 'tool_controller' in args and hasattr(operation, 'ToolController'):
+                tc = self.get_object(args['tool_controller'], doc)
+                if tc:
+                    operation.ToolController = tc
+                    updates.append(f"tool_controller: {args['tool_controller']}")
+                else:
+                    error = Exception(f"Tool controller '{args['tool_controller']}' not found")
+                    return self.log_and_return("configure_operation", args, error=error, duration=time.time() - start_time)
+
+            if not updates:
+                error = Exception("No parameters to update. Provide stepdown, stepover, cut_mode, cut_side, direction, or tool_controller.")
+                return self.log_and_return("configure_operation", args, error=error, duration=time.time() - start_time)
+
+            self.recompute(doc)
+            result = f"Updated operation '{operation_name}': {', '.join(updates)}"
+            return self.log_and_return("configure_operation", args, result=result, duration=time.time() - start_time)
+
+        except Exception as e:
+            return self.log_and_return("configure_operation", args, error=e, duration=time.time() - start_time)
+
+    def delete_operation(self, args: Dict[str, Any]) -> str:
+        """Delete an operation from a CAM job.
+
+        Args:
+            job_name: Name of the CAM job
+            operation_name: Name of the operation to delete
+
+        Returns:
+            Success/error message
+        """
+        start_time = time.time()
+        try:
+            doc = self.get_document()
+            if not doc:
+                error = Exception("No active document")
+                return self.log_and_return("delete_operation", args, error=error, duration=time.time() - start_time)
+
+            job_name = args.get('job_name', '')
+            operation_name = args.get('operation_name', '')
+
+            if not job_name:
+                error = Exception("job_name parameter required")
+                return self.log_and_return("delete_operation", args, error=error, duration=time.time() - start_time)
+            if not operation_name:
+                error = Exception("operation_name parameter required")
+                return self.log_and_return("delete_operation", args, error=error, duration=time.time() - start_time)
+
+            job = self.get_object(job_name, doc)
+            if not job:
+                error = Exception(f"Job '{job_name}' not found")
+                return self.log_and_return("delete_operation", args, error=error, duration=time.time() - start_time)
+
+            operation = self.get_object(operation_name, doc)
+            if not operation:
+                error = Exception(f"Operation '{operation_name}' not found")
+                return self.log_and_return("delete_operation", args, error=error, duration=time.time() - start_time)
+
+            # Remove from job's operations
+            if hasattr(job, 'Operations'):
+                ops = list(job.Operations.Group)
+                if operation in ops:
+                    ops.remove(operation)
+                    job.Operations.Group = ops
+
+            # Delete the operation object
+            doc.removeObject(operation.Name)
+            result = f"Deleted operation '{operation_name}' from job '{job_name}'"
+            return self.log_and_return("delete_operation", args, result=result, duration=time.time() - start_time)
+
+        except Exception as e:
+            return self.log_and_return("delete_operation", args, error=e, duration=time.time() - start_time)
+
+    def configure_job(self, args: Dict[str, Any]) -> str:
+        """Configure job parameters.
+
+        Args:
+            job_name: Name of the CAM job
+            stock_type: Stock type (optional)
+            output_file: Output G-code file path (optional)
+            post_processor: Post processor name (optional)
+
+        Returns:
+            Success/error message
+        """
+        start_time = time.time()
+        try:
+            doc = self.get_document()
+            if not doc:
+                error = Exception("No active document")
+                return self.log_and_return("configure_job", args, error=error, duration=time.time() - start_time)
+
+            job_name = args.get('job_name', '')
+            if not job_name:
+                error = Exception("job_name parameter required")
+                return self.log_and_return("configure_job", args, error=error, duration=time.time() - start_time)
+
+            job = self.get_object(job_name, doc)
+            if not job:
+                error = Exception(f"Job '{job_name}' not found")
+                return self.log_and_return("configure_job", args, error=error, duration=time.time() - start_time)
+
+            updates = []
+
+            if 'output_file' in args:
+                job.OutputFile = args['output_file']
+                updates.append(f"output_file: {args['output_file']}")
+
+            if 'post_processor' in args:
+                job.PostProcessor = args['post_processor']
+                updates.append(f"post_processor: {args['post_processor']}")
+
+            if 'stock_type' in args:
+                # Stock type changes require setup_stock operation
+                result = f"To change stock type, use the setup_stock operation instead"
+                return self.log_and_return("configure_job", args, result=result, duration=time.time() - start_time)
+
+            if not updates:
+                error = Exception("No parameters to update. Provide output_file or post_processor.")
+                return self.log_and_return("configure_job", args, error=error, duration=time.time() - start_time)
+
+            self.recompute(doc)
+            result = f"Updated job '{job_name}': {', '.join(updates)}"
+            return self.log_and_return("configure_job", args, result=result, duration=time.time() - start_time)
+
+        except Exception as e:
+            return self.log_and_return("configure_job", args, error=e, duration=time.time() - start_time)
+
+    def inspect_job(self, args: Dict[str, Any]) -> str:
+        """Get complete job structure and status.
+
+        Args:
+            job_name: Name of the CAM job
+
+        Returns:
+            Detailed job information including operations, tools, and status
+        """
+        start_time = time.time()
+        try:
+            doc = self.get_document()
+            if not doc:
+                error = Exception("No active document")
+                return self.log_and_return("inspect_job", args, error=error, duration=time.time() - start_time)
+
+            job_name = args.get('job_name', '')
+            if not job_name:
+                error = Exception("job_name parameter required")
+                return self.log_and_return("inspect_job", args, error=error, duration=time.time() - start_time)
+
+            job = self.get_object(job_name, doc)
+            if not job:
+                error = Exception(f"Job '{job_name}' not found")
+                return self.log_and_return("inspect_job", args, error=error, duration=time.time() - start_time)
+
+            result = f"CAM Job: {job.Label}\n"
+            result += f"{'=' * 50}\n\n"
+
+            # Base model
+            if hasattr(job, 'Model') and job.Model.Group:
+                result += f"Base Model:\n"
+                for obj in job.Model.Group:
+                    result += f"  - {obj.Label}\n"
+                result += "\n"
+
+            # Stock
+            if hasattr(job, 'Stock') and job.Stock:
+                result += f"Stock: {job.Stock.TypeId}\n"
+                if hasattr(job.Stock, 'Length'):
+                    result += f"  Dimensions: {job.Stock.Length} x {job.Stock.Width} x {job.Stock.Height}\n"
+                result += "\n"
+
+            # Tool controllers
+            if hasattr(job, 'Tools') and job.Tools.Group:
+                result += f"Tool Controllers ({len(job.Tools.Group)}):\n"
+                for tc in job.Tools.Group:
+                    tool_name = tc.Tool.Label if hasattr(tc, 'Tool') and tc.Tool else 'None'
+                    speed = tc.SpindleSpeed if hasattr(tc, 'SpindleSpeed') else 'N/A'
+                    result += f"  - {tc.Label}: {tool_name} @ {speed} RPM\n"
+                result += "\n"
+            else:
+                result += "Tool Controllers: None\n\n"
+
+            # Operations
+            if hasattr(job, 'Operations') and job.Operations.Group:
+                result += f"Operations ({len(job.Operations.Group)}):\n"
+                for i, op in enumerate(job.Operations.Group, 1):
+                    tc_name = op.ToolController.Label if hasattr(op, 'ToolController') and op.ToolController else 'None'
+                    result += f"  {i}. {op.Label} ({op.TypeId})\n"
+                    result += f"     Tool Controller: {tc_name}\n"
+                result += "\n"
+            else:
+                result += "Operations: None\n\n"
+
+            # Output configuration
+            if hasattr(job, 'OutputFile'):
+                result += f"Output File: {job.OutputFile}\n"
+            if hasattr(job, 'PostProcessor'):
+                result += f"Post Processor: {job.PostProcessor}\n"
+
+            # Status
+            result += f"\nStatus:\n"
+            ready = True
+            issues = []
+
+            if not hasattr(job, 'Tools') or not job.Tools.Group:
+                ready = False
+                issues.append("No tool controllers defined")
+
+            if not hasattr(job, 'Operations') or not job.Operations.Group:
+                ready = False
+                issues.append("No operations defined")
+
+            if ready:
+                result += "  ✓ Ready for post-processing\n"
+            else:
+                result += "  ✗ Not ready:\n"
+                for issue in issues:
+                    result += f"    - {issue}\n"
+
+            return self.log_and_return("inspect_job", args, result=result, duration=time.time() - start_time)
+
+        except Exception as e:
+            return self.log_and_return("inspect_job", args, error=e, duration=time.time() - start_time)
+
+    def job_status(self, args: Dict[str, Any]) -> str:
+        """Quick status check of a CAM job.
+
+        Args:
+            job_name: Name of the CAM job
+
+        Returns:
+            Quick status summary
+        """
+        start_time = time.time()
+        try:
+            doc = self.get_document()
+            if not doc:
+                error = Exception("No active document")
+                return self.log_and_return("job_status", args, error=error, duration=time.time() - start_time)
+
+            job_name = args.get('job_name', '')
+            if not job_name:
+                error = Exception("job_name parameter required")
+                return self.log_and_return("job_status", args, error=error, duration=time.time() - start_time)
+
+            job = self.get_object(job_name, doc)
+            if not job:
+                error = Exception(f"Job '{job_name}' not found")
+                return self.log_and_return("job_status", args, error=error, duration=time.time() - start_time)
+
+            num_tools = len(job.Tools.Group) if hasattr(job, 'Tools') and job.Tools.Group else 0
+            num_ops = len(job.Operations.Group) if hasattr(job, 'Operations') and job.Operations.Group else 0
+
+            ready = num_tools > 0 and num_ops > 0
+
+            result = f"Job '{job_name}': {num_ops} operation(s), {num_tools} tool(s)"
+            if ready:
+                result += " - Ready for export"
+            else:
+                result += " - Not ready"
+
+            return self.log_and_return("job_status", args, result=result, duration=time.time() - start_time)
+
+        except Exception as e:
+            return self.log_and_return("job_status", args, error=e, duration=time.time() - start_time)
+
+    def simulate_job(self, args: Dict[str, Any]) -> str:
+        """Run CAM simulation and return status.
+
+        Args:
+            job_name: Name of the CAM job
+
+        Returns:
+            Simulation instructions (manual UI required)
+        """
+        start_time = time.time()
+        try:
+            job_name = args.get('job_name', '')
+            if not job_name:
+                error = Exception("job_name parameter required")
+                return self.log_and_return("simulate_job", args, error=error, duration=time.time() - start_time)
+
+            result = f"Simulation: Please use CAM -> Simulate (or click Simulate button) to run simulation for job '{job_name}'"
+            return self.log_and_return("simulate_job", args, result=result, duration=time.time() - start_time)
+
+        except Exception as e:
+            return self.log_and_return("simulate_job", args, error=e, duration=time.time() - start_time)
+
+    def export_gcode(self, args: Dict[str, Any]) -> str:
+        """Generate G-code (alias for post_process).
+
+        Args:
+            job_name: Name of the CAM job
+            output_file: Output file path
+            post_processor: Post processor name (optional)
+
+        Returns:
+            Success/error message
+        """
+        start_time = time.time()
+        try:
+            result = self.post_process(args)
+            # Log this as export_gcode even though it delegates to post_process
+            return self.log_and_return("export_gcode", args, result=result, duration=time.time() - start_time)
+        except Exception as e:
+            return self.log_and_return("export_gcode", args, error=e, duration=time.time() - start_time)
+
+    def delete_job(self, args: Dict[str, Any]) -> str:
+        """Delete a CAM job.
+
+        Args:
+            job_name: Name of the CAM job to delete
+
+        Returns:
+            Success/error message
+        """
+        start_time = time.time()
+        try:
+            doc = self.get_document()
+            if not doc:
+                error = Exception("No active document")
+                return self.log_and_return("delete_job", args, error=error, duration=time.time() - start_time)
+
+            job_name = args.get('job_name', '')
+            if not job_name:
+                error = Exception("job_name parameter required")
+                return self.log_and_return("delete_job", args, error=error, duration=time.time() - start_time)
+
+            job = self.get_object(job_name, doc)
+            if not job:
+                error = Exception(f"Job '{job_name}' not found")
+                return self.log_and_return("delete_job", args, error=error, duration=time.time() - start_time)
+
+            # Remove all operations first
+            if hasattr(job, 'Operations') and job.Operations.Group:
+                for op in list(job.Operations.Group):
+                    doc.removeObject(op.Name)
+
+            # Remove all tool controllers
+            if hasattr(job, 'Tools') and job.Tools.Group:
+                for tc in list(job.Tools.Group):
+                    doc.removeObject(tc.Name)
+
+            # Remove the job itself
+            doc.removeObject(job.Name)
+            result = f"Deleted job '{job_name}' and all associated operations and tool controllers"
+            return self.log_and_return("delete_job", args, result=result, duration=time.time() - start_time)
+
+        except Exception as e:
+            return self.log_and_return("delete_job", args, error=e, duration=time.time() - start_time)
 
     def _placeholder_operation(self, operation_name: str, args: Dict[str, Any]) -> str:
         """Placeholder for CAM operations not yet implemented."""
