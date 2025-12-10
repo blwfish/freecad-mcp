@@ -27,23 +27,31 @@ class CAMOpsHandler(BaseHandler):
             job_name = args.get('name', 'Job')
             base_object = args.get('base_object', '')
 
-            job = CreateJob(job_name, [], None)
-
-            # Set up ViewProvider for GUI mode
-            if has_gui and hasattr(job, 'ViewObject'):
-                job.ViewObject.Proxy = ViewProvider(job.ViewObject)
-
+            # Prepare model list
+            model_list = []
             if base_object:
                 obj = self.get_object(base_object, doc)
                 if obj:
-                    job.Model.Group = [obj]
-                    job.recompute()
-                    return f"Created CAM Job '{job.Name}' with base object '{base_object}'"
+                    model_list = [obj]
                 else:
-                    return f"Created CAM Job '{job.Name}' but base object '{base_object}' not found"
+                    return f"Error: Base object '{base_object}' not found. Please create the base model first."
+
+            # Create job with model list (can be empty for manual setup later)
+            job = CreateJob(job_name, model_list, doc)
+
+            # Set up ViewProvider for GUI mode
+            if has_gui and hasattr(job, 'ViewObject'):
+                try:
+                    job.ViewObject.Proxy = ViewProvider(job.ViewObject)
+                except Exception:
+                    pass  # ViewProvider setup is optional
 
             self.recompute(doc)
-            return f"Created CAM Job '{job.Name}'"
+
+            if model_list:
+                return f"Created CAM Job '{job.Name}' with base object '{base_object}'"
+            else:
+                return f"Created CAM Job '{job.Name}' (no base object specified)"
 
         except ImportError:
             return "Error: Path (CAM) module not available. Please install FreeCAD with CAM workbench support."

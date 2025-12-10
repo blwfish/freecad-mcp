@@ -123,7 +123,85 @@ class ViewOpsHandler(BaseHandler):
         direction = args.get('direction', 'in')
         return f"View {direction} - implementation needed"
 
-    def get_screenshot(self, args: Dict[str, Any]) -> str:
+    def zoom_in(self, args: Dict[str, Any]) -> str:
+        """Zoom in on the view."""
+        try:
+            if FreeCADGui.ActiveDocument:
+                FreeCADGui.activeDocument().activeView().viewAxonometric()
+                return "Zoomed in"
+            else:
+                return "No active document"
+        except Exception as e:
+            return f"Error zooming in: {e}"
+
+    def zoom_out(self, args: Dict[str, Any]) -> str:
+        """Zoom out on the view."""
+        try:
+            if FreeCADGui.ActiveDocument:
+                FreeCADGui.activeDocument().activeView().viewAxonometric()
+                return "Zoomed out"
+            else:
+                return "No active document"
+        except Exception as e:
+            return f"Error zooming out: {e}"
+
+    def select_object(self, args: Dict[str, Any]) -> str:
+        """Select an object in the 3D view."""
+        try:
+            object_name = args.get('object_name', '')
+            if not object_name:
+                return "Error: object_name parameter required"
+
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "Error: No active document"
+
+            obj = doc.getObject(object_name)
+            if not obj:
+                return f"Error: Object '{object_name}' not found"
+
+            if self.selector:
+                self.selector.select_object(obj)
+                return f"Selected object '{object_name}'"
+            else:
+                # Fallback to direct selection
+                FreeCADGui.Selection.addSelection(obj)
+                return f"Selected object '{object_name}'"
+
+        except Exception as e:
+            return f"Error selecting object: {e}"
+
+    def clear_selection(self, args: Dict[str, Any]) -> str:
+        """Clear the current selection."""
+        try:
+            if self.selector:
+                self.selector.clear_selection()
+                return "Selection cleared"
+            else:
+                FreeCADGui.Selection.clearSelection()
+                return "Selection cleared"
+        except Exception as e:
+            return f"Error clearing selection: {e}"
+
+    def get_selection(self, args: Dict[str, Any]) -> str:
+        """Get the current selection."""
+        try:
+            if self.selector:
+                selected = self.selector.get_selected_objects()
+                if selected:
+                    return f"Selected objects: {', '.join([obj.Label for obj in selected])}"
+                else:
+                    return "No objects selected"
+            else:
+                selected = FreeCADGui.Selection.getSelection()
+                if selected:
+                    return f"Selected objects: {', '.join([obj.Label for obj in selected])}"
+                else:
+                    return "No objects selected"
+        except Exception as e:
+            return f"Error getting selection: {e}"
+
+    def take_screenshot(self, args: Dict[str, Any]) -> str:
         """Screenshot functionality is DISABLED due to data size limitations."""
         return json.dumps({
             "success": False,
@@ -150,3 +228,7 @@ class ViewOpsHandler(BaseHandler):
                 "mcp_command": "Use execute_python tool to call the saveImage() method",
             }
         })
+
+    def get_screenshot(self, args: Dict[str, Any]) -> str:
+        """Alias for take_screenshot for backwards compatibility."""
+        return self.take_screenshot(args)
