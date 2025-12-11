@@ -1,6 +1,6 @@
 # Version History
 
-## Current Versions (2025-12-10)
+## Current Versions (2025-12-11)
 
 | Component | Version | Lines | Status |
 |-----------|---------|-------|--------|
@@ -8,6 +8,28 @@
 | handlers/base.py | 1.1.0 | 103 | ✅ Active - Console mode support |
 | freecad_debug.py | 1.1.0 | - | ✅ Active |
 | freecad_health.py | 1.0.1 | - | ✅ Active |
+| docs/CLAUDE_DESKTOP_MCP_USAGE.md | 1.0.0 | 1273 | ✅ Active - Comprehensive usage guide |
+
+## Documentation Version History
+
+### CLAUDE_DESKTOP_MCP_USAGE.md
+
+#### v1.0.0 (2025-12-11) - **CURRENT**
+- **Initial Release**: Comprehensive MCP usage documentation for Claude Desktop users
+- **Coverage**:
+  - Installation & configuration (macOS/Linux/Windows)
+  - All 80+ MCP tools documented with examples
+  - Health check & debugging systems
+  - Advanced features (modal commands, selection system, threading)
+  - Troubleshooting guide
+  - Complete architecture overview
+  - Maintenance instructions
+- **Tracks Component Versions**:
+  - socket_server.py v4.0.1
+  - freecad_debug.py v1.1.0
+  - freecad_health.py v1.0.1
+  - mcp_versions.py v1.0.0
+- **Size**: 31KB, 1273 lines, 8 major sections
 
 ## socket_server.py Version History
 
@@ -118,4 +140,4 @@ Archived versions are in `archive/` with descriptive names:
 - `socket_server_v3.0.0_bloated.py` - The 4,541 line monster
 - `socket_server_v2.1.2_root_unused.py` - Old root-level version
 
-**Last Updated**: 2025-12-10
+**Last Updated**: 2025-12-11
