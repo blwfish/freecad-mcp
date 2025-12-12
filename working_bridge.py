@@ -488,6 +488,24 @@ async def main():
                     }
                 ),
                 types.Tool(
+                    name="get_debug_logs",
+                    description="Retrieve recent debug logs for troubleshooting and analysis",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "count": {
+                                "type": "integer",
+                                "description": "Number of recent log entries to retrieve",
+                                "default": 20
+                            },
+                            "operation": {
+                                "type": "string",
+                                "description": "Optional filter by operation name (e.g., 'execute_python', 'cam_operations')"
+                            }
+                        }
+                    }
+                ),
+                types.Tool(
                     name="execute_python",
                     description="Execute arbitrary Python code in FreeCAD context for power users and advanced operations",
                     inputSchema={
@@ -567,7 +585,7 @@ async def main():
         # Route smart dispatcher tools to socket with enhanced routing
         elif name in ["partdesign_operations", "part_operations",
                       "view_control", "cam_operations", "cam_tools", "cam_tool_controllers",
-                      "spreadsheet_operations", "draft_operations", "execute_python"]:
+                      "spreadsheet_operations", "draft_operations", "get_debug_logs", "execute_python"]:
             args = arguments or {}
             
             # Check if this is a continuation from interactive selection
