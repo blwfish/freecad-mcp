@@ -817,7 +817,20 @@ class FreeCADSocketServer:
         return json.dumps({"error": f"Unknown Spreadsheet operation: {operation}"})
 
     def _execute_python(self, args: Dict[str, Any]) -> str:
-        """Execute arbitrary Python code in FreeCAD context (GUI-safe)"""
+        """Execute Python code in FreeCAD context with expression value capture (GUI-safe).
+
+        This method handles both statements and expressions, returning the value
+        of the last expression if present (similar to IPython/Jupyter behavior).
+
+        Examples:
+            "1 + 1"                    -> "2"
+            "x = 5"                    -> "Code executed successfully"
+            "x = 5\nx * 2"             -> "10"
+            "FreeCAD.ActiveDocument"   -> "<Document object>"
+            "result = 42"              -> "42" (explicit result variable)
+        """
+        import ast
+
         code = args.get("code", "")
 
         if not code:
@@ -834,13 +847,63 @@ class FreeCADSocketServer:
                     "Gui": FreeCADGui,
                 }
 
-                exec(code, namespace)
+                # Try to import Part module for convenience
+                try:
+                    import Part
+                    namespace['Part'] = Part
+                except ImportError:
+                    pass
 
-                # Check if there's a return value
-                if "result" in namespace:
-                    return {"success": True, "result": str(namespace["result"])}
+                # Try to import Vector for convenience
+                try:
+                    from FreeCAD import Vector
+                    namespace['Vector'] = Vector
+                except ImportError:
+                    pass
 
-                return {"success": True, "result": "Code executed successfully"}
+                result_value = None
+
+                try:
+                    # Parse the code into an AST to detect expressions
+                    tree = ast.parse(code)
+
+                    # Check if the last statement is an expression
+                    if tree.body and isinstance(tree.body[-1], ast.Expr):
+                        # Execute all statements except the last
+                        if len(tree.body) > 1:
+                            exec_body = tree.body[:-1]
+                            exec_module = ast.Module(body=exec_body, type_ignores=[])
+                            ast.fix_missing_locations(exec_module)
+                            exec(compile(exec_module, '<string>', 'exec'), namespace)
+
+                        # Evaluate the last expression and capture its value
+                        last_expr = tree.body[-1].value
+                        expr_ast = ast.Expression(body=last_expr)
+                        ast.fix_missing_locations(expr_ast)
+                        result_value = eval(compile(expr_ast, '<string>', 'eval'), namespace)
+
+                    else:
+                        # No trailing expression - just execute everything
+                        exec(code, namespace)
+
+                        # Check for explicit 'result' variable (backwards compatibility)
+                        if 'result' in namespace:
+                            result_value = namespace['result']
+
+                except SyntaxError:
+                    # If AST parsing fails, fall back to simple exec
+                    exec(code, namespace)
+
+                    # Check for explicit 'result' variable
+                    if 'result' in namespace:
+                        result_value = namespace['result']
+
+                # Return the result
+                if result_value is not None:
+                    result_str = repr(result_value)
+                    return {"success": True, "result": result_str}
+                else:
+                    return {"success": True, "result": "Code executed successfully"}
 
             except Exception as e:
                 import traceback
