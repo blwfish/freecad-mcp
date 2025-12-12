@@ -12,9 +12,13 @@ class SpreadsheetOpsHandler(BaseHandler):
     def create_spreadsheet(self, args: Dict[str, Any]) -> str:
         """Create a new spreadsheet in the active document."""
         try:
-            name = args.get('name', 'Spreadsheet')
+            # Accept both 'name' and 'spreadsheet_name' parameters
+            name = args.get('spreadsheet_name', args.get('name', 'Spreadsheet'))
 
-            doc = self.get_document(create_if_missing=True)
+            # Don't auto-create document to avoid GUI threading issues
+            doc = self.get_document(create_if_missing=False)
+            if not doc:
+                return "Error: No active document"
 
             spreadsheet = doc.addObject('Spreadsheet::Sheet', name)
             self.recompute(doc)
