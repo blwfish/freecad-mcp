@@ -890,13 +890,10 @@ class FreeCADSocketServer:
                         if 'result' in namespace:
                             result_value = namespace['result']
 
-                except SyntaxError:
-                    # If AST parsing fails, fall back to simple exec
-                    exec(code, namespace)
-
-                    # Check for explicit 'result' variable
-                    if 'result' in namespace:
-                        result_value = namespace['result']
+                except SyntaxError as e:
+                    # Syntax error - report it immediately, don't try to execute
+                    import traceback
+                    return {"error": f"SyntaxError: {e}", "traceback": traceback.format_exc()}
 
                 # Return the result
                 if result_value is not None:
