@@ -30,11 +30,26 @@ class CAMOpsHandler(BaseHandler):
             # Prepare model list - MUST be a list, not individual objects
             model_list = []
             if base_object:
-                obj = self.get_object(base_object, doc)
+                # Try direct lookup first
+                obj = doc.getObject(base_object)
+
+                # If not found, try stripping whitespace and try again
+                if not obj and base_object.strip() != base_object:
+                    obj = doc.getObject(base_object.strip())
+
+                # If still not found, search by Label
+                if not obj:
+                    for o in doc.Objects:
+                        if o.Label == base_object or o.Label == base_object.strip():
+                            obj = o
+                            break
+
                 if obj:
                     model_list = [obj]
                 else:
-                    return f"Error: Base object '{base_object}' not found. Please create the base model first."
+                    # Provide helpful error with available objects
+                    available = [f"{o.Name} ({o.Label})" for o in doc.Objects[:10]]
+                    return f"Error: Base object '{base_object}' not found. Available objects: {', '.join(available)}"
 
             # Create job programmatically WITHOUT GUI dialog
             # The Create function signature is: Create(name, base, templateFile=None)
