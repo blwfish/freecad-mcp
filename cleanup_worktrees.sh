@@ -52,6 +52,11 @@ echo ""
 for worktree in crazy-matsumoto lucid-zhukovsky elastic-zhukovsky amazing-chaplygin eager-boyd sharp-herschel; do
     worktree_path="$WORKTREE_BASE/$worktree"
     if [ -d "$worktree_path" ]; then
+        # Check if directory is in use by any process
+        if lsof +D "$worktree_path" 2>/dev/null | grep -q .; then
+            echo "  ⚠️  Skipping worktree: $worktree (directory in use - active session detected)"
+            continue
+        fi
         echo "  Removing worktree: $worktree"
         git worktree remove "$worktree_path" --force || echo "    (worktree already removed or locked)"
     else
