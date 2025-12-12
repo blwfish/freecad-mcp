@@ -441,6 +441,53 @@ async def main():
                     }
                 ),
                 types.Tool(
+                    name="spreadsheet_operations",
+                    description="Spreadsheet operations for data management and calculations",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "description": "Spreadsheet operation to perform",
+                                "enum": [
+                                    "create_spreadsheet", "set_cell", "get_cell",
+                                    "set_alias", "get_alias", "clear_cell",
+                                    "set_cell_range", "get_cell_range"
+                                ]
+                            },
+                            "name": {"type": "string", "description": "Spreadsheet name"},
+                            "cell": {"type": "string", "description": "Cell address (e.g., 'A1')"},
+                            "value": {"type": ["string", "number"], "description": "Cell value"},
+                            "alias": {"type": "string", "description": "Cell alias name"},
+                            "start_cell": {"type": "string", "description": "Range start cell"},
+                            "end_cell": {"type": "string", "description": "Range end cell"},
+                            "values": {"type": "array", "description": "Array of values for range"}
+                        },
+                        "required": ["operation"]
+                    }
+                ),
+                types.Tool(
+                    name="draft_operations",
+                    description="Draft workbench operations for 2D annotations and arrays",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "description": "Draft operation to perform",
+                                "enum": [
+                                    "clone", "array", "polar_array", "path_array", "point_array"
+                                ]
+                            },
+                            "object_name": {"type": "string", "description": "Object to operate on"},
+                            "count": {"type": "integer", "description": "Array count"},
+                            "spacing": {"type": "number", "description": "Array spacing"},
+                            "angle": {"type": "number", "description": "Polar array angle"}
+                        },
+                        "required": ["operation"]
+                    }
+                ),
+                types.Tool(
                     name="execute_python",
                     description="Execute arbitrary Python code in FreeCAD context for power users and advanced operations",
                     inputSchema={
@@ -519,7 +566,8 @@ async def main():
             
         # Route smart dispatcher tools to socket with enhanced routing
         elif name in ["partdesign_operations", "part_operations",
-                      "view_control", "cam_operations", "cam_tools", "cam_tool_controllers", "execute_python"]:
+                      "view_control", "cam_operations", "cam_tools", "cam_tool_controllers",
+                      "spreadsheet_operations", "draft_operations", "execute_python"]:
             args = arguments or {}
             
             # Check if this is a continuation from interactive selection
