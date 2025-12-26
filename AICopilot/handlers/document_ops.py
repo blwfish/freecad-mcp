@@ -75,21 +75,69 @@ class DocumentOpsHandler(BaseHandler):
             return f"Error saving document: {e}"
 
     def list_objects(self, args: Dict[str, Any]) -> str:
-        """List all objects in active document."""
+        """List all objects in active document.
+
+        Args:
+            limit: Maximum number of objects to return (default 100, max 500)
+            offset: Number of objects to skip (for pagination)
+            type_filter: Only return objects matching this TypeId pattern
+        """
         try:
             doc = FreeCAD.ActiveDocument
             if not doc:
                 return "No active document"
 
-            objects = []
-            for obj in doc.Objects:
-                objects.append({
-                    "name": obj.Name,
-                    "type": obj.TypeId,
-                    "label": obj.Label
-                })
+            limit = min(args.get('limit', 100), 500)  # Cap at 500
+            offset = args.get('offset', 0)
+            type_filter = args.get('type_filter', None)
 
-            return json.dumps(objects)
+            total_count = len(doc.Objects)
+
+            objects = []
+            count = 0
+            skipped = 0
+
+            for obj in doc.Objects:
+                # Apply type filter if specified
+                if type_filter and type_filter not in obj.TypeId:
+                    continue
+
+                # Handle offset
+                if skipped < offset:
+                    skipped += 1
+                    continue
+
+                # Stop if we've reached the limit
+                if count >= limit:
+                    break
+
+                # Safely access properties - some FeaturePython objects
+                # can trigger GUI updates when accessing Label
+                try:
+                    obj_info = {
+                        "name": obj.Name,
+                        "type": obj.TypeId,
+                    }
+                    # Try to get Label, but don't crash if it fails
+                    try:
+                        obj_info["label"] = obj.Label
+                    except:
+                        obj_info["label"] = obj.Name  # Fallback to Name
+                    objects.append(obj_info)
+                    count += 1
+                except Exception:
+                    # Skip objects that cause errors
+                    continue
+
+            result = {
+                "total": total_count,
+                "returned": len(objects),
+                "offset": offset,
+                "limit": limit,
+                "objects": objects
+            }
+
+            return json.dumps(result)
 
         except Exception as e:
             return f"Error listing objects: {e}"

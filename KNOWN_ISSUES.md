@@ -56,6 +56,49 @@ Implement proper thread-safe document creation:
 - Use Qt signals/slots or QTimer.singleShot
 - Wait for confirmation before proceeding with operation
 
+## Large Document Handling
+
+### Issue: list_objects Crashes on Large DXF Imports
+
+**Status**: FIXED (2025-12-26)
+**Severity**: High (Causes FreeCAD crashes)
+
+#### Problem
+
+Importing DXF files (e.g., from 3rdPlanit) creates many objects including `App::FeaturePython` layer objects. Calling `list_objects` on documents with 1000+ objects caused FreeCAD to crash with exit code 141 (SIGPIPE).
+
+#### Root Cause
+
+The original `list_objects` handler attempted to serialize all objects in the document at once. With large documents (1000+ objects), this created:
+1. Very large JSON payloads that could overwhelm the socket communication
+2. Potential GIL issues when accessing properties on many FeaturePython objects
+
+#### Fix Applied
+
+`document_ops.py` - `list_objects()` (2025-12-26):
+- Added pagination with `limit` (default 100, max 500) and `offset` parameters
+- Added `type_filter` parameter to filter by TypeId
+- Wrapped property access in try/except to handle problematic objects
+- Returns metadata: `total`, `returned`, `offset`, `limit` along with `objects` array
+
+#### Example Usage
+
+```python
+# Get first 100 objects (default)
+list_objects()
+
+# Get objects 100-199
+list_objects(offset=100)
+
+# Get only Part::Feature objects
+list_objects(type_filter="Part::Feature")
+
+# Get up to 500 objects
+list_objects(limit=500)
+```
+
+---
+
 ## Test Coverage
 
 ### Missing Comprehensive Tests
