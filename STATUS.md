@@ -10,7 +10,7 @@
 |-----------|----------|-------|
 | **Canonical MCP Bridge** | `~/.freecad-mcp/` | Contains `working_bridge.py` and `mcp_bridge_framing.py` |
 | **Dev Repo** | `/Volumes/Additional Files/development/freecad-mcp/` | Main development, push to origin and gitea |
-| **FreeCAD Workbench** | `~/Library/Application Support/FreeCAD/Mod/AICopilot/` | The socket server runs inside FreeCAD |
+| **FreeCAD Workbench** | `~/Library/Application Support/FreeCAD/v1-2/Mod/AICopilot/` | The socket server runs inside FreeCAD (v1-2 for dev builds) |
 
 ### Git Remotes (dev repo)
 
@@ -38,9 +38,10 @@ Both point to: `python3 ~/.freecad-mcp/working_bridge.py`
 - Status: Awaiting review (no response yet)
 
 ### Recent Changes (not in upstream PR)
+- `54b18c4 Fix list_objects crash on large documents (1000+ objects)`
+- `d665ea2 Add STATUS.md for project state tracking`
 - `efd8ed1 Fix manual install to include mcp_bridge_framing.py`
 - `5941042 Add installation directions`
-- `61034e7 Add installation directions`
 
 ---
 
@@ -89,3 +90,20 @@ FreeCAD operations (create objects, modify geometry, etc.)
 
 ### After editing bridge code
 Remember to copy changes from dev repo to `~/.freecad-mcp/` for them to take effect.
+
+### After editing handler code (AICopilot/)
+Sync to FreeCAD and restart FreeCAD:
+```bash
+rsync -av "/Volumes/Additional Files/development/freecad-mcp/AICopilot/" \
+  ~/Library/Application\ Support/FreeCAD/v1-2/Mod/AICopilot/
+```
+
+---
+
+## Recent Fixes
+
+### 2025-12-26: list_objects crash on large DXF imports
+- **Problem**: Importing DXF files (e.g., from 3rdPlanit) with 1000+ objects caused FreeCAD to crash when `list_objects` was called
+- **Fix**: Added pagination (limit/offset), type filtering, and safe property access
+- **Commit**: `54b18c4`
+- **Details**: See KNOWN_ISSUES.md
