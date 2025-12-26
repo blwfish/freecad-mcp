@@ -76,11 +76,11 @@ cp -r AICopilot ~/Library/Application\ Support/FreeCAD/Mod/
 
 ### Step 2: Install the MCP Bridge
 
-Copy `working_bridge.py` somewhere permanent:
+Copy the bridge files somewhere permanent:
 
 ```bash
 mkdir -p ~/.freecad-mcp
-cp working_bridge.py ~/.freecad-mcp/
+cp working_bridge.py mcp_bridge_framing.py ~/.freecad-mcp/
 ```
 
 ### Step 3: Register with Claude
@@ -120,7 +120,7 @@ Edit your config file (see paths above) and add:
 freecad-mcp setup --update
 ```
 
-Or manually replace the `AICopilot` folder and `working_bridge.py` with the latest versions.
+Or manually replace the `AICopilot` folder and the files in `~/.freecad-mcp/` with the latest versions.
 
 ---
 
