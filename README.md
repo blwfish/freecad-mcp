@@ -1,31 +1,40 @@
-# FreeCAD MCP v3.0.0
-**Socket Server with Token Safety & FreeCAD 1.0+ CAM Support**
+# FreeCAD MCP
 
----
+Control FreeCAD with Claude AI through the Model Context Protocol.
 
-## ✨ Recent Updates
-
-- **CAM Operations Fixed**: Full compatibility with FreeCAD 1.0+ CAM workbench
-- **Module Structure**: Updated imports for new `Path.Main.*` and `Path.Op.*` modules
-- **Backward Compatible**: Automatic fallback to older `PathScripts.*` for pre-1.0 versions
-
----
-
-## 🚀 Quick Start
+## Quick Install
 
 ```bash
-# 1. Extract
-tar -xzf freecad_mcp_v3.0.0.tar.gz
-cd freecad_mcp_v3.0.0
-
-# 2. Install to FreeCAD
-python3 freecad_installer.py
-
-# 3. Stage to git
-python3 git_populate.py
-
-# 4. Restart FreeCAD
-# Done!
+npm install -g freecad-mcp-setup
+freecad-mcp setup
 ```
 
-For detailed instructions, see DEPLOYMENT_GUIDE.md
+This installs the FreeCAD workbench and registers the MCP server with Claude.
+
+**Requirements:** FreeCAD 1.0+, Python 3.8+, Claude Desktop or Claude Code
+
+See [INSTALL.md](INSTALL.md) for detailed instructions and troubleshooting.
+
+## What It Does
+
+- Create and modify 3D models through natural language
+- Full PartDesign workflow: sketches, pads, fillets, chamfers, holes, patterns
+- CAM/CNC toolpath generation (FreeCAD 1.2+)
+- Take screenshots and control views
+- Execute Python scripts in FreeCAD
+
+## Example
+
+> "Create a 50x30x10mm box, then add a 5mm fillet to the top edges"
+
+Claude will use the MCP tools to create the geometry directly in FreeCAD.
+
+## Documentation
+
+- [INSTALL.md](INSTALL.md) - Installation guide
+- [MCP-CAPABILITIES.md](MCP-CAPABILITIES.md) - Available tools and operations
+- [docs/CLAUDE_DESKTOP_MCP_USAGE.md](docs/CLAUDE_DESKTOP_MCP_USAGE.md) - Detailed usage guide
+
+## License
+
+LGPL-2.1-or-later
