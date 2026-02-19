@@ -1,10 +1,10 @@
 # FreeCAD Socket Server for MCP Communication
 # Runs inside FreeCAD to receive commands from external MCP bridge
 #
-# Version: 4.0.1 - Console mode support (FreeCAD.GuiUp checks)
-# Requires: freecad_debug >= 1.1.0, freecad_health >= 1.0.1
+# Version: 5.0.0 - Core rewrite: eliminated dead code, unified dispatch,
+#                   replaced busy-wait polling with Queue.get(timeout)
 
-__version__ = "4.0.1"
+__version__ = "5.0.0"
 REQUIRED_VERSIONS = {
     "freecad_debug": ">=1.1.0",
     "freecad_health": ">=1.0.1",
@@ -20,7 +20,8 @@ import queue
 import platform
 import struct
 import sys
-from typing import Dict, Any, List, Optional
+import traceback as tb_module
+from typing import Dict, Any, Optional
 
 # Conditional GUI imports (not available in console mode)
 if FreeCAD.GuiUp:
@@ -30,23 +31,30 @@ else:
     FreeCADGui = None
     QtCore = None
 
-# Platform-specific socket handling
 IS_WINDOWS = platform.system() == "Windows"
 
+# Configurable socket path/port via environment variables
+SOCKET_PATH = os.environ.get("FREECAD_MCP_SOCKET", "/tmp/freecad_mcp.sock")
+WINDOWS_HOST = "localhost"
+WINDOWS_PORT = int(os.environ.get("FREECAD_MCP_PORT", "23456"))
+
 # =============================================================================
-# MCP Debug Infrastructure (Optional) - IMPORT FIRST so they can register
+# MCP Debug Infrastructure (Optional)
 # =============================================================================
 DEBUG_ENABLED = False
 _debugger = None
 _monitor = None
 
+
 def _log_operation(operation, parameters=None, result=None, error=None, duration=None):
     """No-op fallback if debug not enabled"""
     pass
 
+
 def _capture_state():
     """No-op fallback if debug not enabled"""
     return {}
+
 
 try:
     from freecad_debug import (
@@ -61,7 +69,7 @@ try:
         log_dir="/tmp/freecad_mcp_debug",
         enable_console=False,
         enable_file=True,
-        lean_logging=False  # Full logging for Claude Desktop to query
+        lean_logging=False,
     )
     _monitor = init_monitor()
 
@@ -69,20 +77,20 @@ try:
     _capture_state = _capture_state_impl
 
     DEBUG_ENABLED = True
-    FreeCAD.Console.PrintMessage("✅ MCP Debug infrastructure loaded\n")
-    FreeCAD.Console.PrintMessage("   Logs: /tmp/freecad_mcp_debug/\n")
-    FreeCAD.Console.PrintMessage("   Crashes: /tmp/freecad_mcp_crashes/\n")
+    FreeCAD.Console.PrintMessage("MCP Debug infrastructure loaded\n")
+    FreeCAD.Console.PrintMessage("  Logs: /tmp/freecad_mcp_debug/\n")
+    FreeCAD.Console.PrintMessage("  Crashes: /tmp/freecad_mcp_crashes/\n")
 
 except ImportError as e:
-    FreeCAD.Console.PrintMessage(f"ℹ️  MCP Debug not available (optional): {e}\n")
+    FreeCAD.Console.PrintMessage(f"MCP Debug not available (optional): {e}\n")
 
 except Exception as e:
-    FreeCAD.Console.PrintError(f"❌ MCP Debug modules broken: {e}\n")
-    FreeCAD.Console.PrintError("   Fix or remove freecad_debug.py/freecad_health.py\n")
+    FreeCAD.Console.PrintError(f"MCP Debug modules broken: {e}\n")
+    FreeCAD.Console.PrintError("  Fix or remove freecad_debug.py/freecad_health.py\n")
     sys.exit(1)
 
 # =============================================================================
-# Version Validation (after debug modules register themselves)
+# Version Validation
 # =============================================================================
 try:
     from mcp_versions import (
@@ -95,13 +103,13 @@ try:
     declare_requirements("socket_server", REQUIRED_VERSIONS)
     valid, error = validate_all()
     if not valid:
-        FreeCAD.Console.PrintError(f"❌ Version validation failed: {error}\n")
+        FreeCAD.Console.PrintError(f"Version validation failed: {error}\n")
         FreeCAD.Console.PrintError("Component status:\n")
         FreeCAD.Console.PrintError(json.dumps(get_status(), indent=2) + "\n")
         sys.exit(1)
-    FreeCAD.Console.PrintMessage(f"✓ socket_server v{__version__} validated\n")
+    FreeCAD.Console.PrintMessage(f"socket_server v{__version__} validated\n")
 except ImportError as e:
-    FreeCAD.Console.PrintWarning(f"ℹ Version system not available (optional): {e}\n")
+    FreeCAD.Console.PrintWarning(f"Version system not available (optional): {e}\n")
 
 # =============================================================================
 # Modular Handlers
@@ -123,80 +131,55 @@ try:
         MeasurementOpsHandler,
         SpreadsheetOpsHandler,
     )
-    HANDLERS_AVAILABLE = True
-    FreeCAD.Console.PrintMessage("✓ Modular handlers loaded successfully\n")
+    FreeCAD.Console.PrintMessage("Modular handlers loaded successfully\n")
 except ImportError as e:
-    HANDLERS_AVAILABLE = False
-    FreeCAD.Console.PrintError(f"❌ Modular handlers required but not available: {e}\n")
+    FreeCAD.Console.PrintError(f"Modular handlers required but not available: {e}\n")
     sys.exit(1)
 
-# =============================================================================
-# GUI Task Queue for Thread-Safe Operations
-# =============================================================================
-gui_task_queue = queue.Queue()
-gui_response_queue = queue.Queue()
-
-def process_gui_tasks():
-    """Process GUI tasks in the main Qt thread"""
-    while not gui_task_queue.empty():
-        try:
-            task = gui_task_queue.get_nowait()
-            result = task()
-            gui_response_queue.put(result)
-        except queue.Empty:
-            break
-        except Exception as e:
-            gui_response_queue.put(f"GUI task error: {e}")
-
-    # Only schedule next iteration if GUI is available
-    if QtCore:
-        QtCore.QTimer.singleShot(100, process_gui_tasks)
 
 # =============================================================================
 # Message Framing Protocol (v2.1.1)
 # =============================================================================
-# Length-prefixed protocol: [4-byte length][JSON message]
-# Prevents message truncation and enables proper boundaries
+# Length-prefixed protocol: [4-byte big-endian length][JSON message]
+# Keep in sync with mcp_bridge_framing.py on the bridge side.
+
+MAX_MESSAGE_SIZE = 50 * 1024  # 50KB — matches bridge-side limit
+
 
 def send_message(sock: socket.socket, message_str: str) -> bool:
-    """Send length-prefixed message"""
+    """Send a length-prefixed message over the socket."""
     try:
         message_bytes = message_str.encode('utf-8')
-        message_len = len(message_bytes)
-
-        # Send 4-byte length prefix (big-endian)
-        length_bytes = struct.pack('>I', message_len)
-        sock.sendall(length_bytes)
-
-        # Send actual message
-        sock.sendall(message_bytes)
+        length_prefix = struct.pack('>I', len(message_bytes))
+        sock.sendall(length_prefix + message_bytes)
         return True
-
-    except Exception as e:
+    except (socket.error, BrokenPipeError, OSError) as e:
         FreeCAD.Console.PrintWarning(f"Socket send error: {e}\n")
         return False
 
+
 def receive_message(sock: socket.socket, timeout: float = 30.0) -> Optional[str]:
-    """Receive length-prefixed message"""
+    """Receive a length-prefixed message from the socket."""
     try:
+        old_timeout = sock.gettimeout()
         sock.settimeout(timeout)
 
-        # Read 4-byte length prefix
         length_bytes = _recv_exact(sock, 4)
         if not length_bytes:
+            sock.settimeout(old_timeout)
             return None
 
-        # Unpack length (big-endian)
         message_len = struct.unpack('>I', length_bytes)[0]
 
-        # Validate message length
-        MAX_MESSAGE_SIZE = 100 * 1024 * 1024  # 100MB
         if message_len > MAX_MESSAGE_SIZE:
-            FreeCAD.Console.PrintError(f"Message too large: {message_len} bytes\n")
+            FreeCAD.Console.PrintError(
+                f"Message too large: {message_len} bytes (limit: {MAX_MESSAGE_SIZE})\n"
+            )
+            sock.settimeout(old_timeout)
             return None
 
-        # Read actual message
         message_bytes = _recv_exact(sock, message_len)
+        sock.settimeout(old_timeout)
         if not message_bytes:
             return None
 
@@ -212,156 +195,34 @@ def receive_message(sock: socket.socket, timeout: float = 30.0) -> Optional[str]
         FreeCAD.Console.PrintError(f"Receive error: {e}\n")
         return None
 
-def _recv_exact(sock: socket.socket, num_bytes: int) -> Optional[bytes]:
-    """Receive exactly num_bytes from socket, handling partial reads"""
-    buffer = bytearray()
 
-    while len(buffer) < num_bytes:
-        chunk = sock.recv(num_bytes - len(buffer))
+def _recv_exact(sock: socket.socket, num_bytes: int) -> Optional[bytes]:
+    """Receive exactly num_bytes, handling partial reads."""
+    buf = bytearray()
+    while len(buf) < num_bytes:
+        chunk = sock.recv(min(num_bytes - len(buf), 65536))
         if not chunk:
             return None
-        buffer.extend(chunk)
+        buf.extend(chunk)
+    return bytes(buf)
 
-    return bytes(buffer)
-
-# =============================================================================
-# Universal Selector System
-# =============================================================================
-class UniversalSelector:
-    """Universal selection system for human-in-the-loop CAD operations"""
-
-    def __init__(self):
-        self.pending_operations = {}
-
-    def request_selection(self, tool_name: str, selection_type: str, message: str,
-                         object_name: str = "", hints: str = "", **kwargs) -> Dict[str, Any]:
-        """Request user selection in FreeCAD GUI"""
-        operation_id = f"{tool_name}_{int(time.time() * 1000)}"
-
-        try:
-            if FreeCADGui:
-                FreeCADGui.Selection.clearSelection()
-        except:
-            pass
-
-        self.pending_operations[operation_id] = {
-            "tool": tool_name,
-            "type": selection_type,
-            "object": object_name,
-            "timestamp": time.time(),
-            **kwargs
-        }
-
-        if object_name and selection_type in ["edges", "faces"]:
-            self._highlight_elements(object_name, selection_type)
-
-        full_message = message
-        if hints:
-            full_message += f"\n💡 Tip: {hints}"
-
-        return {
-            "status": "awaiting_selection",
-            "operation_id": operation_id,
-            "selection_type": selection_type,
-            "message": full_message,
-            "object_name": object_name
-        }
-
-    def complete_selection(self, operation_id: str) -> Optional[Dict[str, Any]]:
-        """Complete selection and return parsed selection data"""
-        if operation_id not in self.pending_operations:
-            return None
-
-        try:
-            if not FreeCADGui:
-                return {"error": "FreeCAD GUI not available"}
-            selection = FreeCADGui.Selection.getSelectionEx()
-        except:
-            return {"error": "Could not access FreeCAD selection"}
-
-        context = self.pending_operations.pop(operation_id)
-        selection_type = context["type"]
-
-        parsed_data = self._parse_selection(selection, selection_type)
-
-        return {
-            "status": "completed",
-            "selection": parsed_data,
-            "context": context
-        }
-
-    def _parse_selection(self, selection: List, selection_type: str) -> Dict[str, Any]:
-        """Parse FreeCAD selection based on type"""
-        if not selection:
-            return {"elements": []}
-
-        if selection_type == "edges":
-            edges = []
-            for sel in selection:
-                for sub in sel.SubElementNames:
-                    if sub.startswith("Edge"):
-                        edges.append({
-                            "object": sel.ObjectName,
-                            "element": sub
-                        })
-            return {"elements": edges}
-
-        elif selection_type == "faces":
-            faces = []
-            for sel in selection:
-                for sub in sel.SubElementNames:
-                    if sub.startswith("Face"):
-                        faces.append({
-                            "object": sel.ObjectName,
-                            "element": sub
-                        })
-            return {"elements": faces}
-
-        elif selection_type == "objects":
-            objects = [sel.ObjectName for sel in selection]
-            return {"elements": objects}
-
-        return {"elements": []}
-
-    def _highlight_elements(self, object_name: str, element_type: str):
-        """Highlight relevant elements in FreeCAD GUI"""
-        try:
-            if not FreeCADGui:
-                return
-
-            doc = FreeCAD.ActiveDocument
-            if not doc:
-                return
-
-            obj = doc.getObject(object_name)
-            if obj:
-                FreeCADGui.Selection.addSelection(obj)
-        except:
-            pass
-
-    def cleanup_old_operations(self, max_age_seconds: int = 300):
-        """Clean up operations older than max_age_seconds"""
-        current_time = time.time()
-        expired = [
-            op_id for op_id, op in self.pending_operations.items()
-            if current_time - op["timestamp"] > max_age_seconds
-        ]
-        for op_id in expired:
-            del self.pending_operations[op_id]
 
 # =============================================================================
-# FreeCAD Socket Server - Main Class
+# FreeCAD Socket Server
 # =============================================================================
 class FreeCADSocketServer:
-    """Socket server for FreeCAD MCP communication with modular handler architecture"""
+    """Socket server for FreeCAD MCP communication with modular handler architecture."""
 
     def __init__(self):
         self.running = False
         self.server_socket = None
         self.server_thread = None
-        self.selector = UniversalSelector()
 
-        # Initialize handlers (pass self for access to selector and debug functions)
+        # GUI thread task queues (used by handlers that need Qt main thread)
+        self._gui_task_queue = queue.Queue()
+        self._gui_response_queue = queue.Queue()
+
+        # Initialize handlers
         self.primitives = PrimitivesHandler(self, _log_operation, _capture_state)
         self.boolean_ops = BooleanOpsHandler(self, _log_operation, _capture_state)
         self.transforms = TransformsHandler(self, _log_operation, _capture_state)
@@ -372,27 +233,35 @@ class FreeCADSocketServer:
         self.cam_tools = CAMToolsHandler(self, _log_operation, _capture_state)
         self.cam_tool_controllers = CAMToolControllersHandler(self, _log_operation, _capture_state)
         self.draft_ops = DraftOpsHandler(self, _log_operation, _capture_state)
-        # GUI-sensitive handlers need task queues for thread safety
-        self.view_ops = ViewOpsHandler(self, gui_task_queue, gui_response_queue, _log_operation, _capture_state)
-        self.document_ops = DocumentOpsHandler(self, gui_task_queue, gui_response_queue, _log_operation, _capture_state)
         self.measurement_ops = MeasurementOpsHandler(self, _log_operation, _capture_state)
         self.spreadsheet_ops = SpreadsheetOpsHandler(self, _log_operation, _capture_state)
+        # GUI-sensitive handlers get the task queues for thread safety
+        self.view_ops = ViewOpsHandler(
+            self, self._gui_task_queue, self._gui_response_queue, _log_operation, _capture_state
+        )
+        self.document_ops = DocumentOpsHandler(
+            self, self._gui_task_queue, self._gui_response_queue, _log_operation, _capture_state
+        )
 
         FreeCAD.Console.PrintMessage("Socket server initialized with modular handlers\n")
 
+    # -----------------------------------------------------------------
+    # Server lifecycle
+    # -----------------------------------------------------------------
+
     def start_server(self):
-        """Start the socket server"""
+        """Start the socket server."""
         try:
             if IS_WINDOWS:
                 self.socket_path = None
-                self.host = 'localhost'
-                self.port = 23456
                 self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                self.server_socket.bind((self.host, self.port))
-                FreeCAD.Console.PrintMessage(f"Socket server started on {self.host}:{self.port} (Windows TCP)\n")
+                self.server_socket.bind((WINDOWS_HOST, WINDOWS_PORT))
+                FreeCAD.Console.PrintMessage(
+                    f"Socket server started on {WINDOWS_HOST}:{WINDOWS_PORT} (Windows TCP)\n"
+                )
             else:
-                self.socket_path = "/tmp/freecad_mcp.sock"
+                self.socket_path = SOCKET_PATH
                 if os.path.exists(self.socket_path):
                     os.remove(self.socket_path)
                 self.server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -406,9 +275,9 @@ class FreeCADSocketServer:
             self.server_thread = threading.Thread(target=self._server_loop, daemon=True)
             self.server_thread.start()
 
-            # Only start GUI task processing if GUI is available
+            # Start GUI task processing on the Qt main thread
             if QtCore:
-                QtCore.QTimer.singleShot(100, process_gui_tasks)
+                QtCore.QTimer.singleShot(100, self._process_gui_tasks)
 
             return True
 
@@ -417,33 +286,75 @@ class FreeCADSocketServer:
             return False
 
     def stop_server(self):
-        """Stop the socket server"""
+        """Stop the socket server."""
         self.running = False
         if self.server_socket:
             try:
                 self.server_socket.close()
-            except:
+            except Exception:
                 pass
-        if not IS_WINDOWS and self.socket_path and os.path.exists(self.socket_path):
+        if not IS_WINDOWS and hasattr(self, 'socket_path') and self.socket_path:
             try:
-                os.remove(self.socket_path)
-            except:
+                if os.path.exists(self.socket_path):
+                    os.remove(self.socket_path)
+            except Exception:
                 pass
         FreeCAD.Console.PrintMessage("Socket server stopped\n")
 
+    # -----------------------------------------------------------------
+    # GUI thread task processing
+    # -----------------------------------------------------------------
+
+    def _process_gui_tasks(self):
+        """Process queued tasks on the Qt main thread (called by QTimer)."""
+        while not self._gui_task_queue.empty():
+            try:
+                task = self._gui_task_queue.get_nowait()
+                result = task()
+                self._gui_response_queue.put(result)
+            except queue.Empty:
+                break
+            except Exception as e:
+                self._gui_response_queue.put({"error": f"GUI task error: {e}"})
+
+        if QtCore:
+            QtCore.QTimer.singleShot(100, self._process_gui_tasks)
+
+    def _run_on_gui_thread(self, task_fn, timeout=30.0) -> str:
+        """Run a callable on the Qt GUI thread and wait for the result.
+
+        This is the single entry point for all GUI-safe execution.
+        Replaces the duplicated busy-wait polling loops.
+        """
+        self._gui_task_queue.put(task_fn)
+        try:
+            result = self._gui_response_queue.get(timeout=timeout)
+        except queue.Empty:
+            return json.dumps({"error": "Operation timeout - GUI thread may be busy"})
+
+        if isinstance(result, dict):
+            if "error" in result:
+                return json.dumps({"error": result["error"]})
+            if "success" in result:
+                return json.dumps({"result": result["result"]})
+        return json.dumps({"result": str(result)})
+
+    # -----------------------------------------------------------------
+    # Connection handling
+    # -----------------------------------------------------------------
+
     def _server_loop(self):
-        """Main server loop - accept connections"""
+        """Accept connections in a loop."""
         while self.running:
             try:
                 self.server_socket.settimeout(1.0)
                 try:
-                    client_socket, address = self.server_socket.accept()
-                    client_thread = threading.Thread(
+                    client_socket, _ = self.server_socket.accept()
+                    threading.Thread(
                         target=self._handle_client,
                         args=(client_socket,),
-                        daemon=True
-                    )
-                    client_thread.start()
+                        daemon=True,
+                    ).start()
                 except socket.timeout:
                     continue
             except Exception as e:
@@ -451,31 +362,36 @@ class FreeCADSocketServer:
                     FreeCAD.Console.PrintError(f"Server loop error: {e}\n")
 
     def _handle_client(self, client_socket):
-        """Handle client connection"""
+        """Handle a single client connection."""
         try:
             message_str = receive_message(client_socket)
             if message_str:
                 response = self._process_command(message_str)
                 send_message(client_socket, response)
-            client_socket.close()
         except Exception as e:
             FreeCAD.Console.PrintError(f"Client handler error: {e}\n")
             if DEBUG_ENABLED:
-                import traceback
                 _log_operation(
                     operation="CLIENT_ERROR",
                     error=e,
-                    parameters={"traceback": traceback.format_exc()}
+                    parameters={"traceback": tb_module.format_exc()},
                 )
             try:
-                error_response = json.dumps({"error": f"Server error: {e}"})
-                send_message(client_socket, error_response)
+                send_message(client_socket, json.dumps({"error": f"Server error: {e}"}))
+            except Exception:
+                pass
+        finally:
+            try:
                 client_socket.close()
-            except:
+            except Exception:
                 pass
 
+    # -----------------------------------------------------------------
+    # Command processing
+    # -----------------------------------------------------------------
+
     def _process_command(self, command_str: str) -> str:
-        """Process incoming command"""
+        """Parse and dispatch an incoming command."""
         start_time = time.time()
         tool_name = "unknown"
 
@@ -487,24 +403,22 @@ class FreeCADSocketServer:
             if not tool_name:
                 return json.dumps({"error": "No tool specified"})
 
-            # Capture state before execution (if debug enabled)
             if DEBUG_ENABLED:
-                before_state = _capture_state()
+                _capture_state()
                 _log_operation(
                     operation="COMMAND_START",
-                    parameters={"tool": tool_name, "args": args}
+                    parameters={"tool": tool_name, "args": args},
                 )
 
             result = self._execute_tool(tool_name, args)
 
-            # Log successful execution
             if DEBUG_ENABLED:
                 duration = time.time() - start_time
                 _log_operation(
                     operation="COMMAND_SUCCESS",
                     parameters={"tool": tool_name},
                     result=result[:200] if len(result) > 200 else result,
-                    duration=duration
+                    duration=duration,
                 )
 
             return result
@@ -514,118 +428,120 @@ class FreeCADSocketServer:
                 _log_operation(
                     operation="JSON_PARSE_ERROR",
                     error=e,
-                    parameters={"command_preview": command_str[:500]}
+                    parameters={"command_preview": command_str[:500]},
                 )
             return json.dumps({"error": f"Invalid JSON: {e}"})
         except Exception as e:
             if DEBUG_ENABLED:
-                import traceback
                 duration = time.time() - start_time
                 _log_operation(
                     operation="COMMAND_ERROR",
                     error=e,
                     parameters={
                         "tool": tool_name,
-                        "traceback": traceback.format_exc()
+                        "traceback": tb_module.format_exc(),
                     },
-                    duration=duration
+                    duration=duration,
                 )
-                # Log crash details if monitor available
                 if _monitor:
                     try:
                         _monitor.log_crash(
                             health_status={"tool": tool_name, "error": str(e)},
-                            error_context=traceback.format_exc()
+                            error_context=tb_module.format_exc(),
                         )
-                    except:
+                    except Exception:
                         pass
             return json.dumps({"error": f"Command processing error: {e}"})
 
-    def _execute_tool(self, tool_name: str, args: Dict[str, Any]) -> str:
-        """Execute tool by routing to appropriate handler"""
+    # -----------------------------------------------------------------
+    # Tool routing and dispatch
+    # -----------------------------------------------------------------
 
-        # Handler routing map for direct tool calls
-        handler_map = {
-            # Primitives
+    def _execute_tool(self, tool_name: str, args: Dict[str, Any]) -> str:
+        """Route a tool call to the appropriate handler."""
+
+        # Direct handler method map (GUI-safe — runs on Qt thread)
+        direct_map = {
             "create_box": self.primitives.create_box,
             "create_cylinder": self.primitives.create_cylinder,
             "create_sphere": self.primitives.create_sphere,
             "create_cone": self.primitives.create_cone,
             "create_torus": self.primitives.create_torus,
             "create_wedge": self.primitives.create_wedge,
-
-            # Boolean Operations
             "fuse_objects": self.boolean_ops.fuse_objects,
             "cut_objects": self.boolean_ops.cut_objects,
             "common_objects": self.boolean_ops.common_objects,
-
-            # Transformations
             "move_object": self.transforms.move_object,
             "rotate_object": self.transforms.rotate_object,
             "copy_object": self.transforms.copy_object,
             "array_object": self.transforms.array_object,
-
-            # Sketch Operations
             "create_sketch": self.sketch_ops.create_sketch,
             "sketch_verify": self.sketch_ops.verify_sketch,
         }
 
-        # Direct handler method lookup (GUI-safe execution)
-        if tool_name in handler_map:
-            # GUI-safe execution: queue task to main thread
-            def handler_task():
-                try:
-                    result = handler_map[tool_name](args)
-                    return {"success": True, "result": result}
-                except Exception as e:
-                    import traceback
-                    return {"error": f"{tool_name} error: {e}", "traceback": traceback.format_exc()}
+        if tool_name in direct_map:
+            method = direct_map[tool_name]
+            return self._call_on_gui_thread(method, args, tool_name)
 
-            gui_task_queue.put(handler_task)
-
-            # Wait for result with timeout
-            timeout_seconds = 30
-            start_time = time.time()
-            while time.time() - start_time < timeout_seconds:
-                try:
-                    result = gui_response_queue.get_nowait()
-                    if isinstance(result, dict):
-                        if "error" in result:
-                            return json.dumps({"error": result["error"]})
-                        elif "success" in result:
-                            return json.dumps({"result": result["result"]})
-                    return json.dumps({"result": str(result)})
-                except:
-                    time.sleep(0.05)
-
-            return json.dumps({"error": f"{tool_name} timeout - GUI thread may be busy"})
-
-        # Smart dispatchers - route operation to appropriate handler
+        # Smart dispatchers — route by operation name within a handler
+        # PartDesign has explicit method mapping (operation names differ from method names)
         if tool_name == "partdesign_operations":
-            return self._handle_partdesign_operations(args)
-        elif tool_name == "part_operations":
-            return self._handle_part_operations(args)
-        elif tool_name == "view_control":
-            return self._handle_view_control(args)
-        elif tool_name == "cam_operations":
-            return self._handle_cam_operations(args)
-        elif tool_name == "cam_tools":
-            return self._handle_cam_tools(args)
-        elif tool_name == "cam_tool_controllers":
-            return self._handle_cam_tool_controllers(args)
-        elif tool_name == "draft_operations":
-            return self._handle_draft_operations(args)
-        elif tool_name == "spreadsheet_operations":
-            return self._handle_spreadsheet_operations(args)
-        elif tool_name == "execute_python":
+            return self._dispatch_partdesign(args)
+        # Part operations have mixed routing across multiple handlers
+        if tool_name == "part_operations":
+            return self._dispatch_part_operations(args)
+        # View control mixes view_ops and document_ops
+        if tool_name == "view_control":
+            return self._dispatch_view_control(args)
+
+        # Generic dispatchers — operation name matches handler method name
+        generic_dispatch_map = {
+            "cam_operations": self.cam_ops,
+            "cam_tools": self.cam_tools,
+            "cam_tool_controllers": self.cam_tool_controllers,
+            "draft_operations": self.draft_ops,
+            "spreadsheet_operations": self.spreadsheet_ops,
+        }
+
+        if tool_name in generic_dispatch_map:
+            return self._dispatch_to_handler(generic_dispatch_map[tool_name], args, tool_name)
+
+        # Special tools
+        if tool_name == "execute_python":
             return self._execute_python(args)
-        elif tool_name == "get_debug_logs":
+        if tool_name == "get_debug_logs":
             return self._get_debug_logs(args)
 
         return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
-    def _handle_partdesign_operations(self, args: Dict[str, Any]) -> str:
-        """Route PartDesign operations to handler (GUI-safe)"""
+    def _call_on_gui_thread(self, method, args: Dict[str, Any], label: str) -> str:
+        """Wrap a handler method call for GUI-safe execution."""
+        def task():
+            try:
+                result = method(args)
+                return {"success": True, "result": result}
+            except Exception as e:
+                return {"error": f"{label} error: {e}", "traceback": tb_module.format_exc()}
+        return self._run_on_gui_thread(task)
+
+    def _dispatch_to_handler(self, handler, args: Dict[str, Any], tool_name: str) -> str:
+        """Generic dispatch: look up args['operation'] as a method on handler."""
+        operation = args.get("operation", "")
+        method = getattr(handler, operation, None)
+
+        if not method or not callable(method):
+            return json.dumps({"error": f"Unknown {tool_name} operation: {operation}"})
+
+        def task():
+            try:
+                result = method(args)
+                return {"success": True, "result": result}
+            except Exception as e:
+                return {"error": f"{tool_name} {operation} error: {e}", "traceback": tb_module.format_exc()}
+        return self._run_on_gui_thread(task)
+
+    def _dispatch_partdesign(self, args: Dict[str, Any]) -> str:
+        """Route PartDesign operations (operation names differ from method names)."""
         operation = args.get("operation", "")
 
         operation_map = {
@@ -645,82 +561,29 @@ class FreeCADSocketServer:
         if operation not in operation_map:
             return json.dumps({"error": f"Unknown PartDesign operation: {operation}"})
 
-        # GUI-safe execution: queue task to main thread
-        def partdesign_task():
-            try:
-                result = operation_map[operation](args)
-                return {"success": True, "result": result}
-            except Exception as e:
-                import traceback
-                return {"error": f"PartDesign {operation} error: {e}", "traceback": traceback.format_exc()}
+        return self._call_on_gui_thread(operation_map[operation], args, f"PartDesign {operation}")
 
-        gui_task_queue.put(partdesign_task)
-
-        # Wait for result with timeout
-        timeout_seconds = 30
-        start_time = time.time()
-        while time.time() - start_time < timeout_seconds:
-            try:
-                result = gui_response_queue.get_nowait()
-                if isinstance(result, dict):
-                    if "error" in result:
-                        return json.dumps({"error": result["error"]})
-                    elif "success" in result:
-                        return json.dumps({"result": result["result"]})
-                return json.dumps({"result": str(result)})
-            except:
-                time.sleep(0.05)
-
-        return json.dumps({"error": f"PartDesign {operation} timeout - GUI thread may be busy"})
-
-    def _handle_part_operations(self, args: Dict[str, Any]) -> str:
-        """Route Part operations to handler (GUI-safe)"""
+    def _dispatch_part_operations(self, args: Dict[str, Any]) -> str:
+        """Route Part operations across multiple handlers."""
         operation = args.get("operation", "")
 
-        # Build operation map
         method = None
-        if operation in ["box", "cylinder", "sphere", "cone", "torus", "wedge"]:
+        if operation in ("box", "cylinder", "sphere", "cone", "torus", "wedge"):
             method = getattr(self.primitives, f"create_{operation}", None)
-        elif operation in ["fuse", "cut", "common"]:
+        elif operation in ("fuse", "cut", "common"):
             method = getattr(self.boolean_ops, f"{operation}_objects", None)
-        elif operation in ["move", "rotate", "copy", "array"]:
+        elif operation in ("move", "rotate", "copy", "array"):
             method = getattr(self.transforms, f"{operation}_object", None)
-        elif operation in ["extrude", "revolve", "loft", "sweep"]:
+        elif operation in ("extrude", "revolve", "loft", "sweep"):
             method = getattr(self.part_ops, operation, None)
 
         if not method:
             return json.dumps({"error": f"Unknown Part operation: {operation}"})
 
-        # GUI-safe execution: queue task to main thread
-        def part_task():
-            try:
-                result = method(args)
-                return {"success": True, "result": result}
-            except Exception as e:
-                import traceback
-                return {"error": f"Part {operation} error: {e}", "traceback": traceback.format_exc()}
+        return self._call_on_gui_thread(method, args, f"Part {operation}")
 
-        gui_task_queue.put(part_task)
-
-        # Wait for result with timeout
-        timeout_seconds = 30
-        start_time = time.time()
-        while time.time() - start_time < timeout_seconds:
-            try:
-                result = gui_response_queue.get_nowait()
-                if isinstance(result, dict):
-                    if "error" in result:
-                        return json.dumps({"error": result["error"]})
-                    elif "success" in result:
-                        return json.dumps({"result": result["result"]})
-                return json.dumps({"result": str(result)})
-            except:
-                time.sleep(0.05)
-
-        return json.dumps({"error": f"Part {operation} timeout - GUI thread may be busy"})
-
-    def _handle_view_control(self, args: Dict[str, Any]) -> str:
-        """Route view control operations to handler"""
+    def _dispatch_view_control(self, args: Dict[str, Any]) -> str:
+        """Route view control operations (mixes view_ops and document_ops)."""
         operation = args.get("operation", "")
 
         operation_map = {
@@ -737,109 +600,41 @@ class FreeCADSocketServer:
             "get_selection": self.view_ops.get_selection,
         }
 
-        if operation in operation_map:
-            try:
-                result = operation_map[operation](args)
-                return json.dumps({"result": result})
-            except Exception as e:
-                return json.dumps({"error": f"View control {operation} error: {e}"})
+        if operation not in operation_map:
+            return json.dumps({"error": f"Unknown view control operation: {operation}"})
 
-        return json.dumps({"error": f"Unknown view control operation: {operation}"})
+        # view_control handlers manage their own GUI thread safety via their queues
+        try:
+            result = operation_map[operation](args)
+            return json.dumps({"result": result})
+        except Exception as e:
+            return json.dumps({"error": f"View control {operation} error: {e}"})
 
-    def _handle_cam_operations(self, args: Dict[str, Any]) -> str:
-        """Route CAM operations to handler"""
-        operation = args.get("operation", "")
-        method = getattr(self.cam_ops, operation, None)
-
-        if method:
-            try:
-                result = method(args)
-                return json.dumps({"result": result})
-            except Exception as e:
-                return json.dumps({"error": f"CAM {operation} error: {e}"})
-
-        return json.dumps({"error": f"Unknown CAM operation: {operation}"})
-
-    def _handle_cam_tools(self, args: Dict[str, Any]) -> str:
-        """Route CAM tool operations to handler"""
-        operation = args.get("operation", "")
-        method = getattr(self.cam_tools, operation, None)
-
-        if method:
-            try:
-                result = method(args)
-                return json.dumps({"result": result})
-            except Exception as e:
-                return json.dumps({"error": f"CAM tools {operation} error: {e}"})
-
-        return json.dumps({"error": f"Unknown CAM tools operation: {operation}"})
-
-    def _handle_cam_tool_controllers(self, args: Dict[str, Any]) -> str:
-        """Route CAM tool controller operations to handler"""
-        operation = args.get("operation", "")
-        method = getattr(self.cam_tool_controllers, operation, None)
-
-        if method:
-            try:
-                result = method(args)
-                return json.dumps({"result": result})
-            except Exception as e:
-                return json.dumps({"error": f"CAM tool controllers {operation} error: {e}"})
-
-        return json.dumps({"error": f"Unknown CAM tool controllers operation: {operation}"})
-
-    def _handle_draft_operations(self, args: Dict[str, Any]) -> str:
-        """Route Draft operations to handler"""
-        operation = args.get("operation", "")
-        method = getattr(self.draft_ops, operation, None)
-
-        if method:
-            try:
-                result = method(args)
-                return json.dumps({"result": result})
-            except Exception as e:
-                return json.dumps({"error": f"Draft {operation} error: {e}"})
-
-        return json.dumps({"error": f"Unknown Draft operation: {operation}"})
-
-    def _handle_spreadsheet_operations(self, args: Dict[str, Any]) -> str:
-        """Route Spreadsheet operations to handler"""
-        operation = args.get("operation", "")
-        method = getattr(self.spreadsheet_ops, operation, None)
-
-        if method:
-            try:
-                result = method(args)
-                return json.dumps({"result": result})
-            except Exception as e:
-                return json.dumps({"error": f"Spreadsheet {operation} error: {e}"})
-
-        return json.dumps({"error": f"Unknown Spreadsheet operation: {operation}"})
+    # -----------------------------------------------------------------
+    # execute_python
+    # -----------------------------------------------------------------
 
     def _execute_python(self, args: Dict[str, Any]) -> str:
         """Execute Python code in FreeCAD context with expression value capture (GUI-safe).
 
-        This method handles both statements and expressions, returning the value
+        Handles both statements and expressions, returning the value
         of the last expression if present (similar to IPython/Jupyter behavior).
 
         Examples:
             "1 + 1"                    -> "2"
             "x = 5"                    -> "Code executed successfully"
-            "x = 5\nx * 2"             -> "10"
+            "x = 5\\nx * 2"            -> "10"
             "FreeCAD.ActiveDocument"   -> "<Document object>"
             "result = 42"              -> "42" (explicit result variable)
         """
         import ast
 
         code = args.get("code", "")
-
         if not code:
             return json.dumps({"error": "No code provided"})
 
-        # GUI-safe execution: queue task to main thread
         def execute_task():
             try:
-                # Execute in FreeCAD namespace
                 namespace = {
                     "FreeCAD": FreeCAD,
                     "FreeCADGui": FreeCADGui,
@@ -847,130 +642,91 @@ class FreeCADSocketServer:
                     "Gui": FreeCADGui,
                 }
 
-                # Try to import Part module for convenience
                 try:
                     import Part
-                    namespace['Part'] = Part
+                    namespace["Part"] = Part
                 except ImportError:
                     pass
 
-                # Try to import Vector for convenience
                 try:
                     from FreeCAD import Vector
-                    namespace['Vector'] = Vector
+                    namespace["Vector"] = Vector
                 except ImportError:
                     pass
 
                 result_value = None
 
                 try:
-                    # Parse the code into an AST to detect expressions
                     tree = ast.parse(code)
 
-                    # Check if the last statement is an expression
                     if tree.body and isinstance(tree.body[-1], ast.Expr):
                         # Execute all statements except the last
                         if len(tree.body) > 1:
-                            exec_body = tree.body[:-1]
-                            exec_module = ast.Module(body=exec_body, type_ignores=[])
+                            exec_module = ast.Module(body=tree.body[:-1], type_ignores=[])
                             ast.fix_missing_locations(exec_module)
-                            exec(compile(exec_module, '<string>', 'exec'), namespace)
+                            exec(compile(exec_module, "<string>", "exec"), namespace)
 
-                        # Evaluate the last expression and capture its value
-                        last_expr = tree.body[-1].value
-                        expr_ast = ast.Expression(body=last_expr)
+                        # Evaluate the last expression
+                        expr_ast = ast.Expression(body=tree.body[-1].value)
                         ast.fix_missing_locations(expr_ast)
-                        result_value = eval(compile(expr_ast, '<string>', 'eval'), namespace)
+                        result_value = eval(compile(expr_ast, "<string>", "eval"), namespace)
 
                     else:
-                        # No trailing expression - just execute everything
                         exec(code, namespace)
-
-                        # Check for explicit 'result' variable (backwards compatibility)
-                        if 'result' in namespace:
-                            result_value = namespace['result']
+                        if "result" in namespace:
+                            result_value = namespace["result"]
 
                 except SyntaxError as e:
-                    # Syntax error - report it immediately, don't try to execute
-                    import traceback
-                    return {"error": f"SyntaxError: {e}", "traceback": traceback.format_exc()}
+                    return {"error": f"SyntaxError: {e}", "traceback": tb_module.format_exc()}
 
-                # Return the result
                 if result_value is not None:
-                    result_str = repr(result_value)
-                    return {"success": True, "result": result_str}
-                else:
-                    return {"success": True, "result": "Code executed successfully"}
+                    return {"success": True, "result": repr(result_value)}
+                return {"success": True, "result": "Code executed successfully"}
 
             except Exception as e:
-                import traceback
-                return {"error": f"Python execution error: {e}", "traceback": traceback.format_exc()}
+                return {"error": f"Python execution error: {e}", "traceback": tb_module.format_exc()}
 
-        gui_task_queue.put(execute_task)
+        return self._run_on_gui_thread(execute_task)
 
-        # Wait for result with timeout
-        timeout_seconds = 30
-        start_time = time.time()
-        while time.time() - start_time < timeout_seconds:
-            try:
-                result = gui_response_queue.get_nowait()
-                if isinstance(result, dict):
-                    if "error" in result:
-                        return json.dumps({"error": result["error"]})
-                    elif "success" in result:
-                        return json.dumps({"result": result["result"]})
-                return json.dumps({"result": str(result)})
-            except:
-                time.sleep(0.05)
-
-        return json.dumps({"error": "Python execution timeout - GUI thread may be busy"})
+    # -----------------------------------------------------------------
+    # Debug logs
+    # -----------------------------------------------------------------
 
     def _get_debug_logs(self, args: Dict[str, Any]) -> str:
-        """Retrieve recent debug logs for Claude Desktop to analyze."""
-        import os
+        """Retrieve recent debug logs for analysis."""
         import glob
 
         try:
             log_dir = "/tmp/freecad_mcp_debug"
-            count = args.get('count', 20)  # Number of recent log entries
-            operation_filter = args.get('operation', None)  # Optional filter by operation name
+            count = args.get("count", 20)
+            operation_filter = args.get("operation", None)
 
             if not os.path.exists(log_dir):
-                return json.dumps({
-                    "result": "No debug logs available (logging may be disabled)"
-                })
+                return json.dumps({"result": "No debug logs available (logging may be disabled)"})
 
-            # Find most recent log file
             log_files = glob.glob(os.path.join(log_dir, "*.jsonl"))
             if not log_files:
-                return json.dumps({
-                    "result": "No log files found in /tmp/freecad_mcp_debug/"
-                })
+                return json.dumps({"result": "No log files found in /tmp/freecad_mcp_debug/"})
 
             latest_log = max(log_files, key=os.path.getmtime)
 
-            # Read last N lines (recent entries)
             entries = []
-            with open(latest_log, 'r') as f:
+            with open(latest_log, "r") as f:
                 lines = f.readlines()
                 for line in lines[-count:]:
                     try:
                         entry = json.loads(line)
-                        if operation_filter:
-                            if entry.get('operation') == operation_filter:
-                                entries.append(entry)
-                        else:
-                            entries.append(entry)
+                        if operation_filter and entry.get("operation") != operation_filter:
+                            continue
+                        entries.append(entry)
                     except json.JSONDecodeError:
                         continue
 
             return json.dumps({
                 "result": f"Retrieved {len(entries)} log entries from {os.path.basename(latest_log)}",
                 "log_file": latest_log,
-                "entries": entries
+                "entries": entries,
             })
 
         except Exception as e:
-            return json.dumps({
-                "error": f"Failed to retrieve debug logs: {e}"
-            })
+            return json.dumps({"error": f"Failed to retrieve debug logs: {e}"})

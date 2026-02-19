@@ -80,7 +80,7 @@ async def main():
                 sock.connect(('localhost', 23456))
             else:
                 if not os.path.exists(socket_path):
-                    return json.dumps({"error": "FreeCAD socket not available. Please start FreeCAD and switch to AI Copilot workbench"})
+                    return json.dumps({"error": "FreeCAD socket not available. Please start FreeCAD with AICopilot installed"})
                 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 sock.connect(socket_path)
             
@@ -159,7 +159,7 @@ async def main():
         base_tools = [
             types.Tool(
                 name="check_freecad_connection",
-                description="Check if FreeCAD is running with AI Copilot workbench",
+                description="Check if FreeCAD is running with AICopilot installed",
                 inputSchema={
                     "type": "object",
                     "properties": {},
@@ -548,8 +548,8 @@ async def main():
             status = {
                 "freecad_socket_exists": freecad_available,
                 "socket_path": socket_path,
-                "status": "FreeCAD running with AI Copilot workbench" if freecad_available 
-                         else "FreeCAD not running. Please start FreeCAD and switch to AI Copilot workbench"
+                "status": "FreeCAD running with AICopilot" if freecad_available
+                         else "FreeCAD not running. Please start FreeCAD with AICopilot installed"
             }
             return [types.TextContent(
                 type="text",

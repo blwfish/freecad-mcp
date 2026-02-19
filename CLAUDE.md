@@ -1,6 +1,36 @@
-# FreeCAD MCP Integration - Native Command Workflow
+# FreeCAD MCP Integration
 
-**⚠️ IMPORTANT: See `.claude-project-config.md` for critical development info (paths, versions, architecture)!**
+MCP server to control FreeCAD from Claude.
+
+## Setup
+
+Bridge files installed to: `~/.freecad-mcp/`
+Workbench installed to: `~/Library/Application Support/FreeCAD/Mod/AICopilot/`
+
+MCP registered with Claude Code via:
+```bash
+claude mcp add freecad python3 ~/.freecad-mcp/working_bridge.py
+```
+
+## Architecture
+
+```
+Claude Desktop/Code
+    | (MCP protocol over stdio)
+working_bridge.py
+    | (Socket connection)
+AICopilot/socket_server.py (inside FreeCAD)
+    | (FreeCAD API)
+FreeCAD operations
+```
+
+## Development
+
+See `.claude-project-config.md` for paths, versions, architecture.
+
+---
+
+# Native Command Workflow
 
 ## New Modal Command System
 

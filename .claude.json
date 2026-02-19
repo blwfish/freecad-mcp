@@ -2,8 +2,13 @@
   "mcpServers": {
     "freecad": {
       "type": "stdio",
-      "command": "/opt/homebrew/bin/python3.11",
-      "args": ["/Users/josephwu/Documents/FreeCAD_MCP/working_bridge.py"]
+      "command": "/Users/blw/freecad-mcp/venv/bin/python3",
+      "args": ["/Users/blw/freecad-mcp/working_bridge.py"]
     }
+  },
+  "permissions": {
+    "allow": [
+      "mcp__freecad__*"
+    ]
   }
 }

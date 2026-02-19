@@ -321,7 +321,7 @@ class FreeCADHealthMonitor:
         # TODO: Add actual FreeCAD restart logic here
         # This would depend on how FreeCAD is launched with MCP
         self.logger.info("Restart logic would execute here")
-        self.logger.info("You may need to manually restart FreeCAD with AI Copilot workbench")
+        self.logger.info("You may need to manually restart FreeCAD")
         
         return False  # Return True when actual restart is implemented
     
