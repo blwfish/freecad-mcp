@@ -1,0 +1,11 @@
+[project]
+name = "freecad-mcp"
+version = "5.0.0"
+description = "MCP server to control FreeCAD from Claude"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]

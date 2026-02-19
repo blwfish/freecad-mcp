@@ -5,7 +5,7 @@ MCP server to control FreeCAD from Claude.
 ## Setup
 
 Bridge files installed to: `~/.freecad-mcp/`
-Workbench installed to: `~/Library/Application Support/FreeCAD/Mod/AICopilot/`
+FreeCAD module installed to: `~/Library/Application Support/FreeCAD/v1-2/Mod/AICopilot/`
 
 MCP registered with Claude Code via:
 ```bash
@@ -20,7 +20,7 @@ Claude Desktop/Code
 working_bridge.py
     | (Socket connection)
 AICopilot/socket_server.py (inside FreeCAD)
-    | (FreeCAD API)
+    | (FreeCAD API via modular handlers)
 FreeCAD operations
 ```
 
@@ -28,46 +28,12 @@ FreeCAD operations
 
 See `.claude-project-config.md` for paths, versions, architecture.
 
----
-
-# Native Command Workflow
-
-## New Modal Command System
-
-**Direct FreeCAD command triggering - No complex back-and-forth!**
-
-### Simple Workflow:
-1. User: `"Add 5mm fillet to TestBox"`
-2. System: Directly opens FreeCAD's native fillet tool
-3. User works entirely in FreeCAD (select edges, set parameters)
-4. User clicks OK in FreeCAD dialog
-5. System reports result automatically
-
-### Key Benefits:
-- ✅ **Native FreeCAD Interface** - Uses familiar FreeCAD tools and modals
-- ✅ **No Context Switching** - User stays in FreeCAD
-- ✅ **Standard CAD Workflow** - Command → Modal → Execute
-- ✅ **Professional Experience** - Matches industry CAD software
-- ✅ **Automatic Results** - System reports completion
-
-## Operations with Modal Interface:
-- `fillet` - Opens FreeCAD fillet dialog with pre-selected object
-- `chamfer` - Opens FreeCAD chamfer dialog with pre-selected object
-- `hole` - Opens FreeCAD hole wizard with suggested parameters
-- `pad` - Opens FreeCAD pad dialog with pre-selected sketch
-- `pocket` - Opens FreeCAD pocket dialog with pre-selected sketch
-- `patterns` - Opens FreeCAD pattern dialog with pre-selected feature
-
-## Example Response:
-```
-✅ FreeCAD Fillet Tool Opened
-📦 Pre-selected: TestBox
-⚙️  Suggested radius: 5mm
-
-👉 Complete in FreeCAD:
-1. Select edges to fillet
-2. Set radius (5mm)
-3. Click OK
+### Run unit tests
+```bash
+python3 -m pytest
 ```
 
-**Result**: User gets familiar FreeCAD interface with intelligent pre-configuration!
+### Sync to FreeCAD
+```bash
+rsync -av --delete AICopilot/ ~/Library/Application\ Support/FreeCAD/v1-2/Mod/AICopilot/
+```

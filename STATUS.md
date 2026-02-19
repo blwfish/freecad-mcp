@@ -1,65 +1,66 @@
 # FreeCAD MCP Project Status
 
-*Last updated: 2025-12-26*
+*Last updated: 2026-02-18*
 
 ## Current State
+
+**socket_server.py v5.0.0** — Core rewrite complete. Upstream abandoned; we own the full codebase.
 
 ### Installation Locations
 
 | Component | Location | Notes |
 |-----------|----------|-------|
-| **Canonical MCP Bridge** | `~/.freecad-mcp/` | Contains `working_bridge.py` and `mcp_bridge_framing.py` |
-| **Dev Repo** | `/Volumes/Additional Files/development/freecad-mcp/` | Main development, push to origin and gitea |
-| **FreeCAD Workbench** | `~/Library/Application Support/FreeCAD/v1-2/Mod/AICopilot/` | The socket server runs inside FreeCAD (v1-2 for dev builds) |
+| **MCP Bridge** | `~/.freecad-mcp/` | `working_bridge.py` + `mcp_bridge_framing.py` |
+| **Dev Repo** | `/Volumes/Files/claude/freecad-mcp/` | Main development |
+| **FreeCAD Module** | `~/Library/Application Support/FreeCAD/v1-2/Mod/AICopilot/` | Socket server runs inside FreeCAD |
 
-### Git Remotes (dev repo)
+### Git Remotes
 
 | Remote | URL | Purpose |
 |--------|-----|---------|
-| `origin` | `github.com/blwfish/freecad-mcp.git` | Your fork |
-| `upstream` | `github.com/contextform/freecad-mcp.git` | Original repo |
+| `origin` | `github.com/blwfish/freecad-mcp.git` | Our fork (primary) |
 | `gitea` | `localhost:3000/blw/freecad-mcp` | Local backup |
+| `upstream` | `github.com/contextform/freecad-mcp.git` | Original repo (abandoned) |
 
-### Configuration Files
+### Configuration
 
+- **Claude Code:** `claude mcp add freecad python3 ~/.freecad-mcp/working_bridge.py`
 - **Claude Desktop:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Claude Code:** `~/.claude.json` (mcpServers section)
-
-Both point to: `python3 ~/.freecad-mcp/working_bridge.py`
 
 ---
 
-## Open Items
+## v5.0.0 Core Rewrite (2026-02-18)
 
-### Pull Request to Upstream
-- PR submitted to `contextform/freecad-mcp` with:
-  - `74c120a Fix spreadsheet_ops threading crash from socket server`
-  - `2f206c5 Add smoke tests for newly exposed MCP operations`
-- Status: Awaiting review (no response yet)
+Rewrote the server core and deleted all dead upstream code:
 
-### Recent Changes (not in upstream PR)
-- `54b18c4 Fix list_objects crash on large documents (1000+ objects)`
-- `d665ea2 Add STATUS.md for project state tracking`
-- `efd8ed1 Fix manual install to include mcp_bridge_framing.py`
-- `5941042 Add installation directions`
+**Changed:**
+- `AICopilot/socket_server.py` — 976→732 lines. Unified dispatch, `Queue.get(timeout)` replaces busy-wait polling, zero bare `except:` clauses.
+- `AICopilot/InitGui.py` — 250→96 lines. Stripped workbench UI and event observer.
+
+**Deleted (~14,000 lines):**
+- `freecad_agent.py` — broken autonomous agent, never imported
+- `memory_system.py` — unwired SQLite learning system
+- `modal_command_system.py` — superseded by PartDesignOpsHandler
+- `event_observer.py` — captured data that went nowhere
+- `commands/` directory — workbench UI commands
+- `archive/` directory — old socket_server snapshots
+
+**Added:**
+- `tests/unit/` — 74 unit tests (pytest), no FreeCAD required
+- `.github/workflows/tests.yml` — GitHub Actions CI (Ubuntu + macOS, Python 3.10/3.12/3.13)
+- `pyproject.toml` — project metadata + pytest config
+
+### Branch: `rewrite-core`
+Commit: `1c6350e` (rewrite) + uncommitted test/CI additions.
 
 ---
 
-## Workflow
+## Near-term TODO
 
-### To update the running MCP bridge:
-```bash
-cp "/Volumes/Additional Files/development/freecad-mcp/working_bridge.py" ~/.freecad-mcp/
-cp "/Volumes/Additional Files/development/freecad-mcp/mcp_bridge_framing.py" ~/.freecad-mcp/
-# Then restart Claude Desktop/Code
-```
-
-### To push changes:
-```bash
-cd "/Volumes/Additional Files/development/freecad-mcp"
-git push origin main
-git push gitea main
-```
+- [ ] **Smoke test with live FreeCAD** — start FreeCAD, verify socket connects, run create_box / pad / fillet / list_objects / execute_python / spreadsheet
+- [ ] Sync rewritten AICopilot/ to `~/Library/Application Support/FreeCAD/v1-2/Mod/AICopilot/`
+- [ ] Merge `rewrite-core` to `main` after smoke test passes
+- [ ] Push to origin and gitea
 
 ---
 
@@ -73,9 +74,36 @@ Claude Desktop/Code
     | (Unix socket: /tmp/freecad_mcp.sock)
     v
 FreeCAD: AICopilot/socket_server.py
-    | (FreeCAD Python API)
+    | (FreeCAD Python API via modular handlers)
     v
 FreeCAD operations (create objects, modify geometry, etc.)
+```
+
+---
+
+## Workflow
+
+### Update running MCP bridge:
+```bash
+cp /Volumes/Files/claude/freecad-mcp/working_bridge.py ~/.freecad-mcp/
+cp /Volumes/Files/claude/freecad-mcp/mcp_bridge_framing.py ~/.freecad-mcp/
+# Then restart Claude Desktop/Code
+```
+
+### Sync to FreeCAD:
+```bash
+rsync -av --delete /Volumes/Files/claude/freecad-mcp/AICopilot/ \
+  ~/Library/Application\ Support/FreeCAD/v1-2/Mod/AICopilot/
+```
+
+### Run unit tests:
+```bash
+cd /Volumes/Files/claude/freecad-mcp && python3 -m pytest
+```
+
+### Push changes:
+```bash
+git push origin main && git push gitea main
 ```
 
 ---
@@ -83,27 +111,7 @@ FreeCAD operations (create objects, modify geometry, etc.)
 ## Troubleshooting
 
 ### MCP not connecting
-1. Ensure FreeCAD is running with AICopilot workbench
-2. Check FreeCAD console for "MCP Socket Server started"
+1. Ensure FreeCAD is running with AICopilot loaded
+2. Check FreeCAD console for "AI Socket Server started - Claude ready"
 3. Verify socket exists: `ls -la /tmp/freecad_mcp.sock`
 4. Restart Claude Desktop/Code after config changes
-
-### After editing bridge code
-Remember to copy changes from dev repo to `~/.freecad-mcp/` for them to take effect.
-
-### After editing handler code (AICopilot/)
-Sync to FreeCAD and restart FreeCAD:
-```bash
-rsync -av "/Volumes/Additional Files/development/freecad-mcp/AICopilot/" \
-  ~/Library/Application\ Support/FreeCAD/v1-2/Mod/AICopilot/
-```
-
----
-
-## Recent Fixes
-
-### 2025-12-26: list_objects crash on large DXF imports
-- **Problem**: Importing DXF files (e.g., from 3rdPlanit) with 1000+ objects caused FreeCAD to crash when `list_objects` was called
-- **Fix**: Added pagination (limit/offset), type filtering, and safe property access
-- **Commit**: `54b18c4`
-- **Details**: See KNOWN_ISSUES.md
