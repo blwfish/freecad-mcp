@@ -1,22 +1,16 @@
-# FreeCAD initialization file for AICopilot module
-# This runs when FreeCAD starts (before GUI)
+"""AICopilot FreeCAD module initialization.
 
-import FreeCAD
+Runs at FreeCAD startup (before GUI). Adds the module directory
+to sys.path so handler imports work. GUI startup is in InitGui.py.
+"""
+
 import os
 import sys
 
-# Add our directory to path
-import inspect
-try:
-    current_file = inspect.getfile(inspect.currentframe())
-    path = os.path.dirname(current_file)
-except Exception:
-    # Fallback for FreeCAD
-    path = os.path.join(FreeCAD.getUserAppDataDir(), "Mod", "AICopilot")
+import FreeCAD
 
-if path not in sys.path:
-    sys.path.append(path)
+mod_dir = os.path.dirname(os.path.abspath(__file__))
+if mod_dir not in sys.path:
+    sys.path.append(mod_dir)
 
-FreeCAD.Console.PrintMessage("AICopilot loading...\n")
-
-# Module is loaded, GUI initialization happens in InitGui.py
+FreeCAD.Console.PrintMessage("AICopilot module loaded.\n")
