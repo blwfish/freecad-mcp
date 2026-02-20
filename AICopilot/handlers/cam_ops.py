@@ -143,23 +143,24 @@ class CAMOpsHandler(BaseHandler):
             if not job:
                 return f"Error: Job '{job_name}' not found. Create a CAM job first."
 
-            obj = CreateProfile(name)
-            job.Operations.Group += [obj]
+            # FC 1.2: pass parentJob only; passing obj= causes group conflict if obj is
+            # already in job.Model.Group. Set Base after creation instead.
+            op = CreateProfile(name, parentJob=job)
 
             if base_object:
                 base = self.get_object(base_object, doc)
                 if base:
-                    obj.Base = [(base, [])]
+                    op.Base = [(base, [])]
 
-            if 'cut_side' in args:
-                obj.Side = args['cut_side']
-            if 'direction' in args:
-                obj.Direction = args['direction']
-            if 'stepdown' in args:
-                obj.StepDown = args['stepdown']
+            if 'cut_side' in args and hasattr(op, 'Side'):
+                op.Side = args['cut_side']
+            if 'direction' in args and hasattr(op, 'Direction'):
+                op.Direction = args['direction']
+            if 'stepdown' in args and hasattr(op, 'StepDown'):
+                op.StepDown = args['stepdown']
 
-            job.recompute()
-            return f"Created Profile operation '{obj.Name}' in job '{job_name}'"
+            self.recompute(doc)
+            return f"Created Profile operation '{op.Name}' in job '{job_name}'"
 
         except ImportError:
             return "Error: PathProfile module not available"
@@ -188,23 +189,23 @@ class CAMOpsHandler(BaseHandler):
             if not job:
                 return f"Error: Job '{job_name}' not found. Create a CAM job first."
 
-            obj = CreatePocket(name)
-            job.Operations.Group += [obj]
+            # FC 1.2: pass parentJob only; set Base after creation
+            op = CreatePocket(name, parentJob=job)
 
             if base_object:
                 base = self.get_object(base_object, doc)
                 if base:
-                    obj.Base = [(base, [])]
+                    op.Base = [(base, [])]
 
-            if 'stepover' in args:
-                obj.StepOver = args['stepover']
-            if 'stepdown' in args:
-                obj.StepDown = args['stepdown']
-            if 'cut_mode' in args:
-                obj.CutMode = args['cut_mode']
+            if 'stepover' in args and hasattr(op, 'StepOver'):
+                op.StepOver = args['stepover']
+            if 'stepdown' in args and hasattr(op, 'StepDown'):
+                op.StepDown = args['stepdown']
+            if 'cut_mode' in args and hasattr(op, 'CutMode'):
+                op.CutMode = args['cut_mode']
 
-            job.recompute()
-            return f"Created Pocket operation '{obj.Name}' in job '{job_name}'"
+            self.recompute(doc)
+            return f"Created Pocket operation '{op.Name}' in job '{job_name}'"
 
         except ImportError:
             return "Error: PathPocket module not available"
@@ -232,20 +233,19 @@ class CAMOpsHandler(BaseHandler):
             if not job:
                 return f"Error: Job '{job_name}' not found. Create a CAM job first."
 
-            obj = CreateDrilling(name)
-            job.Operations.Group += [obj]
+            op = CreateDrilling(name, parentJob=job)
 
-            if 'depth' in args:
-                obj.FinalDepth = args['depth']
-            if 'retract_height' in args:
-                obj.RetractHeight = args['retract_height']
-            if 'peck_depth' in args:
-                obj.PeckDepth = args['peck_depth']
-            if 'dwell_time' in args:
-                obj.DwellTime = args['dwell_time']
+            if 'depth' in args and hasattr(op, 'FinalDepth'):
+                op.FinalDepth = args['depth']
+            if 'retract_height' in args and hasattr(op, 'RetractHeight'):
+                op.RetractHeight = args['retract_height']
+            if 'peck_depth' in args and hasattr(op, 'PeckDepth'):
+                op.PeckDepth = args['peck_depth']
+            if 'dwell_time' in args and hasattr(op, 'DwellTime'):
+                op.DwellTime = args['dwell_time']
 
-            job.recompute()
-            return f"Created Drilling operation '{obj.Name}' in job '{job_name}'"
+            self.recompute(doc)
+            return f"Created Drilling operation '{op.Name}' in job '{job_name}'"
 
         except ImportError:
             return "Error: PathDrilling module not available"
@@ -273,16 +273,15 @@ class CAMOpsHandler(BaseHandler):
             if not job:
                 return f"Error: Job '{job_name}' not found. Create a CAM job first."
 
-            obj = CreateAdaptive(name)
-            job.Operations.Group += [obj]
+            op = CreateAdaptive(name, parentJob=job)
 
-            if 'stepover' in args:
-                obj.StepOver = args['stepover']
-            if 'tolerance' in args:
-                obj.Tolerance = args['tolerance']
+            if 'stepover' in args and hasattr(op, 'StepOver'):
+                op.StepOver = args['stepover']
+            if 'tolerance' in args and hasattr(op, 'Tolerance'):
+                op.Tolerance = args['tolerance']
 
-            job.recompute()
-            return f"Created Adaptive operation '{obj.Name}' in job '{job_name}'"
+            self.recompute(doc)
+            return f"Created Adaptive operation '{op.Name}' in job '{job_name}'"
 
         except ImportError:
             return "Error: PathAdaptive module not available"
@@ -395,13 +394,7 @@ class CAMOpsHandler(BaseHandler):
     def post_process(self, args: Dict[str, Any]) -> str:
         """Post-process CAM job to generate G-code."""
         try:
-            # Try new FreeCAD 1.0+ structure first, fall back to old PathScripts
-            try:
-                from Path.Post import Processor
-                # For FreeCAD 1.0+, the API might be different
-                PathPost = Processor
-            except ImportError:
-                import PathScripts.PathPost as PathPost
+            from Path.Post.Processor import PostProcessorFactory
 
             doc = self.get_document()
             if not doc:
@@ -418,16 +411,30 @@ class CAMOpsHandler(BaseHandler):
             if not output_file:
                 output_file = f"/tmp/{job_name}.gcode"
 
-            postlist = PathPost.buildPostList(job)
-            if not postlist:
-                return "Error: No operations to post-process"
+            # Set post-processor on job
+            job.PostProcessor = post_processor
+            if not hasattr(job, 'PostProcessorArgs') or not job.PostProcessorArgs:
+                job.PostProcessorArgs = '--no-show-editor'
 
-            gcode = PathPost.exportGCode(postlist, job, output_file)
+            processor = PostProcessorFactory.get_post_processor(job, post_processor)
+            if processor is None:
+                return f"Error: Post processor '{post_processor}' not found"
 
-            return f"Generated G-code for job '{job_name}' -> {output_file}"
+            gcode_sections = processor.export()
+            if not gcode_sections:
+                return "Error: No G-code generated (no operations or empty paths)"
 
-        except ImportError:
-            return "Error: PathPost module not available"
+            total_lines = 0
+            with open(output_file, 'w') as f:
+                for _partname, gcode in gcode_sections:
+                    if gcode:
+                        f.write(gcode)
+                        total_lines += gcode.count('\n')
+
+            return f"Generated G-code for job '{job_name}' -> {output_file} ({total_lines} lines)"
+
+        except ImportError as e:
+            return f"Error: Path.Post module not available: {e}"
         except Exception as e:
             return f"Error post-processing: {e}"
 
@@ -922,22 +929,45 @@ class CAMOpsHandler(BaseHandler):
             return self.log_and_return("job_status", args, error=e, duration=time.time() - start_time)
 
     def simulate_job(self, args: Dict[str, Any]) -> str:
-        """Run CAM simulation and return status.
+        """Launch the CAM simulator for a job.
 
         Args:
             job_name: Name of the CAM job
+            use_gl: If True (default), use CAM_SimulatorGL (GPU); else CAM_Simulator
 
         Returns:
-            Simulation instructions (manual UI required)
+            Success or error message
         """
         start_time = time.time()
         try:
+            import FreeCAD
+            if not FreeCAD.GuiUp:
+                error = Exception("GUI not available — cannot open simulator")
+                return self.log_and_return("simulate_job", args, error=error, duration=time.time() - start_time)
+
+            import FreeCADGui
+
             job_name = args.get('job_name', '')
             if not job_name:
                 error = Exception("job_name parameter required")
                 return self.log_and_return("simulate_job", args, error=error, duration=time.time() - start_time)
 
-            result = f"Simulation: Please use CAM -> Simulate (or click Simulate button) to run simulation for job '{job_name}'"
+            doc = self.get_document()
+            job = self.get_object(job_name, doc)
+            if not job:
+                error = Exception(f"Job '{job_name}' not found")
+                return self.log_and_return("simulate_job", args, error=error, duration=time.time() - start_time)
+
+            # Switch to CAM workbench and select the job
+            FreeCADGui.activateWorkbench('CAMWorkbench')
+            FreeCADGui.Selection.clearSelection()
+            FreeCADGui.Selection.addSelection(doc.Name, job.Name)
+
+            use_gl = args.get('use_gl', True)
+            cmd = 'CAM_SimulatorGL' if use_gl else 'CAM_Simulator'
+            FreeCADGui.runCommand(cmd, 0)
+
+            result = f"Launched {cmd} for job '{job_name}'"
             return self.log_and_return("simulate_job", args, result=result, duration=time.time() - start_time)
 
         except Exception as e:

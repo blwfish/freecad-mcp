@@ -64,9 +64,9 @@ class CAMToolControllersHandler(BaseHandler):
                 error = Exception(f"Tool '{tool_name}' not found")
                 return self.log_and_return("add_tool_controller", args, error=error, duration=time.time() - start_time)
 
-            # In FreeCAD 1.2+, tool bits are Part::FeaturePython
-            if tool.TypeId != "Part::FeaturePython" or not (hasattr(tool, 'ShapeID') or hasattr(tool, 'ToolBitID')):
-                error = Exception(f"Object '{tool_name}' is not a tool bit")
+            # In FreeCAD 1.2+, tool bits are Part::FeaturePython with ShapeID attribute
+            if not hasattr(tool, 'ShapeID'):
+                error = Exception(f"Object '{tool_name}' is not a tool bit (no ShapeID attribute)")
                 return self.log_and_return("add_tool_controller", args, error=error, duration=time.time() - start_time)
 
             # Create tool controller
@@ -78,13 +78,14 @@ class CAMToolControllersHandler(BaseHandler):
 
             # Set parameters
             spindle_speed = args.get('spindle_speed', 10000)
-            feed_rate = args.get('feed_rate', 1000)
-            vertical_feed_rate = args.get('vertical_feed_rate', feed_rate // 2)
+            feed_rate = args.get('feed_rate', 1000)           # mm/min from user
+            vertical_feed_rate = args.get('vertical_feed_rate', feed_rate / 3)
             tool_number = args.get('tool_number', 1)
 
-            controller.SpindleSpeed = spindle_speed
-            controller.HorizFeed = feed_rate
-            controller.VertFeed = vertical_feed_rate
+            # FC 1.2 stores feed rates in mm/s internally
+            controller.SpindleSpeed = float(spindle_speed)
+            controller.HorizFeed = feed_rate / 60.0
+            controller.VertFeed = vertical_feed_rate / 60.0
             controller.ToolNumber = tool_number
 
             # Add to job's tool controllers
@@ -142,7 +143,9 @@ class CAMToolControllersHandler(BaseHandler):
             for i, tc in enumerate(controllers, 1):
                 tool_name = tc.Tool.Label if hasattr(tc, 'Tool') and tc.Tool else 'None'
                 speed = tc.SpindleSpeed if hasattr(tc, 'SpindleSpeed') else 'N/A'
-                feed = tc.HorizFeed if hasattr(tc, 'HorizFeed') else 'N/A'
+                # FC 1.2 stores feed in mm/s; display as mm/min
+                feed_mms = tc.HorizFeed if hasattr(tc, 'HorizFeed') else None
+                feed = f"{float(str(feed_mms).split()[0]) * 60:.0f}" if feed_mms is not None else 'N/A'
                 tool_num = tc.ToolNumber if hasattr(tc, 'ToolNumber') else 'N/A'
 
                 result += f"  {i}. {tc.Label} (T{tool_num})\n"
@@ -191,7 +194,7 @@ class CAMToolControllersHandler(BaseHandler):
                 error = Exception(f"Tool controller '{controller_name}' not found")
                 return self.log_and_return("get_tool_controller", args, error=error, duration=time.time() - start_time)
 
-            if controller.TypeId != "Path::ToolController":
+            if not hasattr(controller, 'SpindleSpeed'):
                 error = Exception(f"Object '{controller_name}' is not a tool controller")
                 return self.log_and_return("get_tool_controller", args, error=error, duration=time.time() - start_time)
 
@@ -261,7 +264,7 @@ class CAMToolControllersHandler(BaseHandler):
                 error = Exception(f"Tool controller '{controller_name}' not found")
                 return self.log_and_return("update_tool_controller", args, error=error, duration=time.time() - start_time)
 
-            if controller.TypeId != "Path::ToolController":
+            if not hasattr(controller, 'SpindleSpeed'):
                 error = Exception(f"Object '{controller_name}' is not a tool controller")
                 return self.log_and_return("update_tool_controller", args, error=error, duration=time.time() - start_time)
 
@@ -273,11 +276,11 @@ class CAMToolControllersHandler(BaseHandler):
                 updates.append(f"spindle_speed: {args['spindle_speed']} RPM")
 
             if 'feed_rate' in args:
-                controller.HorizFeed = args['feed_rate']
+                controller.HorizFeed = args['feed_rate'] / 60.0  # mm/min -> mm/s
                 updates.append(f"feed_rate: {args['feed_rate']} mm/min")
 
             if 'vertical_feed_rate' in args:
-                controller.VertFeed = args['vertical_feed_rate']
+                controller.VertFeed = args['vertical_feed_rate'] / 60.0  # mm/min -> mm/s
                 updates.append(f"vertical_feed_rate: {args['vertical_feed_rate']} mm/min")
 
             if 'tool_number' in args:
@@ -332,7 +335,7 @@ class CAMToolControllersHandler(BaseHandler):
                 error = Exception(f"Tool controller '{controller_name}' not found")
                 return self.log_and_return("remove_tool_controller", args, error=error, duration=time.time() - start_time)
 
-            if controller.TypeId != "Path::ToolController":
+            if not hasattr(controller, 'SpindleSpeed'):
                 error = Exception(f"Object '{controller_name}' is not a tool controller")
                 return self.log_and_return("remove_tool_controller", args, error=error, duration=time.time() - start_time)
 

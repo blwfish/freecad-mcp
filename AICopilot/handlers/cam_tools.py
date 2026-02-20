@@ -43,21 +43,21 @@ class CAMToolsHandler(BaseHandler):
             if not name:
                 name = f"{tool_type}_{diameter}mm"
 
-            # Map tool_type to shape_id (.fcstd extension required in FC 1.2)
+            # Valid shape IDs in FC 1.2 (no .fcstd extension in ShapeID attribute)
             shape_map = {
-                'endmill': 'endmill.fcstd',
-                'ballend': 'ballend.fcstd',
-                'bullnose': 'bullnose.fcstd',
-                'chamfer': 'chamfer.fcstd',
-                'drill': 'drill.fcstd',
-                'vbit': 'vbit.fcstd',
-                'v-bit': 'vbit.fcstd',
-                'dovetail': 'dovetail.fcstd',
-                'probe': 'probe.fcstd',
-                'slittingsaw': 'slittingsaw.fcstd',
-                'reamer': 'reamer.fcstd',
-                'tap': 'tap.fcstd',
-                'threadmill': 'threadmill.fcstd'
+                'endmill': 'endmill',
+                'ballend': 'ballend',
+                'bullnose': 'bullnose',
+                'chamfer': 'chamfer',
+                'drill': 'drill',
+                'vbit': 'vbit',
+                'v-bit': 'vbit',
+                'dovetail': 'dovetail',
+                'probe': 'probe',
+                'slittingsaw': 'slittingsaw',
+                'reamer': 'reamer',
+                'tap': 'tap',
+                'threadmill': 'threadmill'
             }
 
             shape_id = shape_map.get(tool_type.lower())
@@ -65,32 +65,36 @@ class CAMToolsHandler(BaseHandler):
                 valid_types = ', '.join(shape_map.keys())
                 return f"Error: Unknown tool type '{tool_type}'. Valid types: {valid_types}"
 
-            # Create tool bit using from_shape_id (FreeCAD 1.2+ API)
-            tool_bit = ToolBit.from_shape_id(shape_id, label=name)
-
-            if not tool_bit:
-                return f"Error: Could not create tool with shape_id '{shape_id}'"
-
-            # Set basic parameters
-            tool_bit.label = name
-            tool_bit.set_property("Diameter", f"{diameter} mm")
-
-            # Set optional parameters if provided
-            if flute_length:
-                tool_bit.set_property("CuttingEdgeHeight", f"{flute_length} mm")
-            if shank_diameter:
-                tool_bit.set_property("ShankDiameter", f"{shank_diameter} mm")
-            if number_of_flutes and hasattr(tool_bit, 'Flutes'):
-                tool_bit.set_property("Flutes", number_of_flutes)
-
-            # Attach to active document
             doc = self.get_document()
             if not doc:
                 return "Error: No active document to attach tool"
 
-            tool_obj = tool_bit.attach_to_doc(doc=doc)
+            # FC 1.2 API: ToolBit.from_dict() takes .fctb file dict format
+            parameters = {
+                "Diameter": {"type": "Length", "value": f"{diameter} mm"},
+            }
+            if flute_length:
+                parameters["CuttingEdgeHeight"] = {"type": "Length", "value": f"{flute_length} mm"}
+            if shank_diameter:
+                parameters["ShankDiameter"] = {"type": "Length", "value": f"{shank_diameter} mm"}
+            if number_of_flutes:
+                parameters["Flutes"] = {"type": "Integer", "value": number_of_flutes}
+            if material:
+                parameters["Material"] = {"type": "String", "value": material}
 
-            # Note: Material is typically set in tool controller, not the bit itself
+            tool_dict = {
+                "version": 2,
+                "name": name,
+                "shape": shape_id,
+                "attribute": {},
+                "parameter": parameters,
+            }
+
+            tool_bit = ToolBit.from_dict(tool_dict)
+            if not tool_bit:
+                return f"Error: Could not create tool from dict for shape '{shape_id}'"
+
+            tool_obj = tool_bit.attach_to_doc(doc=doc)
 
             result = f"Created tool '{name}' ({tool_type}, diameter: {diameter}mm) as {tool_obj.Label}"
             return self.log_and_return("create_tool", args, result=result, duration=time.time() - start_time)
@@ -116,10 +120,8 @@ class CAMToolsHandler(BaseHandler):
             # In FreeCAD 1.2+, tool bits are Part::FeaturePython with a ToolBit proxy
             tools = []
             for obj in doc.Objects:
-                if obj.TypeId == "Part::FeaturePython" and hasattr(obj, 'Proxy'):
-                    # Check if it's a ToolBit by looking for ToolBit-specific attributes
-                    if hasattr(obj, 'ShapeID') or hasattr(obj, 'ToolBitID'):
-                        tools.append(obj)
+                if obj.TypeId == "Part::FeaturePython" and hasattr(obj, 'ShapeID'):
+                    tools.append(obj)
 
             if not tools:
                 result = "No tools found in document. Use create_tool to add tools."
@@ -162,9 +164,9 @@ class CAMToolsHandler(BaseHandler):
                 error = Exception(f"Tool '{tool_name}' not found")
                 return self.log_and_return("get_tool", args, error=error, duration=time.time() - start_time)
 
-            # In FreeCAD 1.2+, tool bits are Part::FeaturePython
-            if tool.TypeId != "Part::FeaturePython" or not (hasattr(tool, 'ShapeID') or hasattr(tool, 'ToolBitID')):
-                error = Exception(f"Object '{tool_name}' is not a tool bit (type: {tool.TypeId})")
+            # In FreeCAD 1.2+, tool bits are Part::FeaturePython with ShapeID attribute
+            if not hasattr(tool, 'ShapeID'):
+                error = Exception(f"Object '{tool_name}' is not a tool bit (no ShapeID attribute)")
                 return self.log_and_return("get_tool", args, error=error, duration=time.time() - start_time)
 
             # Collect tool details
@@ -213,9 +215,8 @@ class CAMToolsHandler(BaseHandler):
             if not tool:
                 return f"Error: Tool '{tool_name}' not found"
 
-            # In FreeCAD 1.2+, tool bits are Part::FeaturePython
-            if tool.TypeId != "Part::FeaturePython" or not (hasattr(tool, 'ShapeID') or hasattr(tool, 'ToolBitID')):
-                return f"Error: Object '{tool_name}' is not a tool bit"
+            if not hasattr(tool, 'ShapeID'):
+                return f"Error: Object '{tool_name}' is not a tool bit (no ShapeID attribute)"
 
             # Update parameters if provided
             updates = []
@@ -270,8 +271,8 @@ class CAMToolsHandler(BaseHandler):
             if not tool:
                 return f"Error: Tool '{tool_name}' not found"
 
-            if tool.TypeId != "Path::ToolBit":
-                return f"Error: Object '{tool_name}' is not a tool bit"
+            if not hasattr(tool, 'ShapeID'):
+                return f"Error: Object '{tool_name}' is not a tool bit (no ShapeID attribute)"
 
             # Check if tool is in use by any tool controllers
             in_use = []
