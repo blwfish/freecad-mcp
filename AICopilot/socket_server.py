@@ -4,7 +4,7 @@
 # Version: 5.0.0 - Core rewrite: eliminated dead code, unified dispatch,
 #                   replaced busy-wait polling with Queue.get(timeout)
 
-__version__ = "5.0.0"
+__version__ = "5.1.0"
 REQUIRED_VERSIONS = {
     "freecad_debug": ">=1.1.0",
     "freecad_health": ">=1.0.1",
@@ -130,6 +130,7 @@ try:
         DocumentOpsHandler,
         MeasurementOpsHandler,
         SpreadsheetOpsHandler,
+        MeshOpsHandler,
     )
     FreeCAD.Console.PrintMessage("Modular handlers loaded successfully\n")
 except ImportError as e:
@@ -235,6 +236,7 @@ class FreeCADSocketServer:
         self.draft_ops = DraftOpsHandler(self, _log_operation, _capture_state)
         self.measurement_ops = MeasurementOpsHandler(self, _log_operation, _capture_state)
         self.spreadsheet_ops = SpreadsheetOpsHandler(self, _log_operation, _capture_state)
+        self.mesh_ops = MeshOpsHandler(self, _log_operation, _capture_state)
         # GUI-sensitive handlers get the task queues for thread safety
         self.view_ops = ViewOpsHandler(
             self, self._gui_task_queue, self._gui_response_queue, _log_operation, _capture_state
@@ -500,6 +502,7 @@ class FreeCADSocketServer:
             "cam_tools": self.cam_tools,
             "cam_tool_controllers": self.cam_tool_controllers,
             "draft_operations": self.draft_ops,
+            "mesh_operations": self.mesh_ops,
             "spreadsheet_operations": self.spreadsheet_ops,
         }
 

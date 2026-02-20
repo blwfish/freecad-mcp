@@ -488,6 +488,34 @@ async def main():
                     }
                 ),
                 types.Tool(
+                    name="mesh_operations",
+                    description="Mesh import/export, mesh-to-solid conversion, validation, simplification, and CAD file I/O (STL, OBJ, STEP, IGES, BREP)",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "description": "Mesh/file operation to perform",
+                                "enum": [
+                                    "import_mesh", "export_mesh", "mesh_to_solid",
+                                    "get_mesh_info", "import_file", "export_file",
+                                    "validate_mesh", "simplify_mesh"
+                                ]
+                            },
+                            "file_path": {"type": "string", "description": "File path for import/export"},
+                            "object_name": {"type": "string", "description": "Object name to operate on"},
+                            "name": {"type": "string", "description": "Name for created object"},
+                            "tolerance": {"type": "number", "description": "Mesh-to-solid sewing tolerance", "default": 0.1},
+                            "linear_deflection": {"type": "number", "description": "Tessellation linear deflection for Part-to-mesh export", "default": 0.1},
+                            "angular_deflection": {"type": "number", "description": "Tessellation angular deflection for Part-to-mesh export"},
+                            "target_count": {"type": "integer", "description": "Target face count for mesh simplification"},
+                            "reduction": {"type": "number", "description": "Reduction ratio 0-1 for mesh simplification (e.g., 0.5 = 50% fewer faces)"},
+                            "auto_repair": {"type": "boolean", "description": "Auto-repair mesh issues during validation", "default": False}
+                        },
+                        "required": ["operation"]
+                    }
+                ),
+                types.Tool(
                     name="get_debug_logs",
                     description="Retrieve recent debug logs for troubleshooting and analysis",
                     inputSchema={
@@ -585,6 +613,7 @@ async def main():
         # Route smart dispatcher tools to socket with enhanced routing
         elif name in ["partdesign_operations", "part_operations",
                       "view_control", "cam_operations", "cam_tools", "cam_tool_controllers",
+                      "cam_machines", "mesh_operations", "measurement_operations",
                       "spreadsheet_operations", "draft_operations", "get_debug_logs", "execute_python"]:
             args = arguments or {}
             

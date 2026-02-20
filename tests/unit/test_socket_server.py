@@ -32,7 +32,7 @@ def mock_handlers(monkeypatch):
         "SketchOpsHandler", "PartDesignOpsHandler", "PartOpsHandler",
         "CAMOpsHandler", "CAMToolsHandler", "CAMToolControllersHandler",
         "DraftOpsHandler", "ViewOpsHandler", "DocumentOpsHandler",
-        "MeasurementOpsHandler", "SpreadsheetOpsHandler",
+        "MeasurementOpsHandler", "SpreadsheetOpsHandler", "MeshOpsHandler",
     ]
 
     handlers_mod = types.ModuleType("handlers")
@@ -636,7 +636,7 @@ class TestConfiguration:
         assert ss_module.WINDOWS_PORT == 23456
 
     def test_version(self, ss_module):
-        assert ss_module.__version__ == "5.0.0"
+        assert ss_module.__version__ == "5.1.0"
 
     def test_max_message_size(self, ss_module):
         assert ss_module.MAX_MESSAGE_SIZE == 50 * 1024

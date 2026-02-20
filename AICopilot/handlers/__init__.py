@@ -16,6 +16,7 @@ from .view_ops import ViewOpsHandler
 from .document_ops import DocumentOpsHandler
 from .measurement_ops import MeasurementOpsHandler
 from .spreadsheet_ops import SpreadsheetOpsHandler
+from .mesh_ops import MeshOpsHandler
 
 __all__ = [
     'BaseHandler',
@@ -33,4 +34,5 @@ __all__ = [
     'DocumentOpsHandler',
     'MeasurementOpsHandler',
     'SpreadsheetOpsHandler',
+    'MeshOpsHandler',
 ]

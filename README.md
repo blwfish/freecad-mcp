@@ -1,6 +1,6 @@
 # freecad-mcp
 
-MCP server for FreeCAD — 13 tools for AI-assisted 3D CAD modeling via the [Model Context Protocol](https://modelcontextprotocol.io/).
+MCP server for FreeCAD — 14 tools for AI-assisted 3D CAD modeling via the [Model Context Protocol](https://modelcontextprotocol.io/).
 
 Design parametric parts, generate CAM toolpaths, take screenshots, and execute Python scripts — all driven by an AI assistant like Claude.
 
@@ -64,7 +64,7 @@ Each dispatcher accepts an `operation` argument routing to many sub-operations.
 ```
 Claude Desktop/Code
     | (MCP protocol over stdio)
-working_bridge.py         13 MCP tools
+working_bridge.py         14 MCP tools
     | (Unix socket: /tmp/freecad_mcp.sock)
 socket_server.py          25 dispatch routes, v5.0.0
     | (Modular handlers)
@@ -99,7 +99,7 @@ cp working_bridge.py mcp_bridge_framing.py ~/.freecad-mcp/
 ### Project Structure
 
 ```
-working_bridge.py         MCP bridge (Claude-facing, 13 tools)
+working_bridge.py         MCP bridge (Claude-facing, 14 tools)
 mcp_bridge_framing.py     Length-prefixed message protocol
 AICopilot/
   socket_server.py        FreeCAD socket server (v5.0.0, 732 lines)
