@@ -555,6 +555,43 @@ async def main():
                     }
                 ),
                 types.Tool(
+                    name="execute_python_async",
+                    description="Submit Python code for async execution in FreeCAD. Returns a job_id immediately without waiting. Use poll_job(job_id) to check status. Use this for long-running operations (CAM recompute, mesh operations, surface generation) that would otherwise timeout.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "code": {
+                                "type": "string",
+                                "description": "Python code to execute in FreeCAD context (same semantics as execute_python)"
+                            }
+                        },
+                        "required": ["code"]
+                    }
+                ),
+                types.Tool(
+                    name="poll_job",
+                    description="Poll the status of an async job submitted via execute_python_async. Returns 'running' with elapsed seconds, 'done' with result, or 'error'. Completed jobs are cleaned up after retrieval.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "job_id": {
+                                "type": "string",
+                                "description": "Job ID returned by execute_python_async"
+                            }
+                        },
+                        "required": ["job_id"]
+                    }
+                ),
+                types.Tool(
+                    name="list_jobs",
+                    description="List all currently tracked async jobs and their status (running/done/error) and elapsed time.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
+                ),
+                types.Tool(
                     name="continue_selection",
                     description="Continue an interactive selection operation after selecting elements in FreeCAD",
                     inputSchema={
@@ -621,7 +658,8 @@ async def main():
         elif name in ["partdesign_operations", "part_operations",
                       "view_control", "cam_operations", "cam_tools", "cam_tool_controllers",
                       "cam_machines", "mesh_operations", "measurement_operations",
-                      "spreadsheet_operations", "draft_operations", "get_debug_logs", "execute_python"]:
+                      "spreadsheet_operations", "draft_operations", "get_debug_logs",
+                      "execute_python", "execute_python_async", "poll_job", "list_jobs"]:
             args = arguments or {}
             
             # Check if this is a continuation from interactive selection

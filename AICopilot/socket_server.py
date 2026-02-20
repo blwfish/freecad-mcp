@@ -4,7 +4,7 @@
 # Version: 5.0.0 - Core rewrite: eliminated dead code, unified dispatch,
 #                   replaced busy-wait polling with Queue.get(timeout)
 
-__version__ = "5.1.0"
+__version__ = "5.2.0"
 REQUIRED_VERSIONS = {
     "freecad_debug": ">=1.1.0",
     "freecad_health": ">=1.0.1",
@@ -17,6 +17,7 @@ import json
 import os
 import time
 import queue
+import uuid
 import platform
 import struct
 import sys
@@ -223,6 +224,9 @@ class FreeCADSocketServer:
         self._gui_task_queue = queue.Queue()
         self._gui_response_queue = queue.Queue()
 
+        # Async job tracking: job_id -> {status, started, result, error, elapsed}
+        self._async_jobs: Dict[str, Dict] = {}
+
         # Initialize handlers
         self.primitives = PrimitivesHandler(self, _log_operation, _capture_state)
         self.boolean_ops = BooleanOpsHandler(self, _log_operation, _capture_state)
@@ -340,6 +344,161 @@ class FreeCADSocketServer:
             if "success" in result:
                 return json.dumps({"result": result["result"]})
         return json.dumps({"result": str(result)})
+
+    def _run_on_gui_thread_async(self, job_id: str, task_fn) -> None:
+        """Schedule task_fn on the Qt GUI thread without blocking the caller.
+
+        The result is stored in self._async_jobs[job_id] when complete.
+        QTimer.singleShot is thread-safe and always fires on the Qt main thread.
+        """
+        def wrapper():
+            try:
+                result = task_fn()
+                self._async_jobs[job_id].update({
+                    "status": "done",
+                    "result": result,
+                    "elapsed": time.time() - self._async_jobs[job_id]["started"],
+                })
+            except Exception as e:
+                self._async_jobs[job_id].update({
+                    "status": "error",
+                    "error": str(e),
+                    "traceback": tb_module.format_exc(),
+                    "elapsed": time.time() - self._async_jobs[job_id]["started"],
+                })
+            FreeCAD.Console.PrintMessage(
+                f"[MCP] async job {job_id} finished: {self._async_jobs[job_id]['status']}\n"
+            )
+
+        if QtCore:
+            QtCore.QTimer.singleShot(0, wrapper)
+        else:
+            # Fallback: run synchronously (console mode)
+            wrapper()
+
+    def _execute_python_async(self, args: Dict[str, Any]) -> str:
+        """Submit Python code for async GUI-safe execution; returns job_id immediately.
+
+        Use poll_job(job_id) to check status and retrieve the result.
+        Identical execution semantics to execute_python.
+        """
+        import ast
+
+        code = args.get("code", "")
+        if not code:
+            return json.dumps({"error": "No code provided"})
+
+        job_id = uuid.uuid4().hex[:8]
+        self._async_jobs[job_id] = {
+            "status": "running",
+            "started": time.time(),
+            "tool": "execute_python_async",
+        }
+
+        def execute_task():
+            try:
+                namespace = {
+                    "FreeCAD": FreeCAD,
+                    "FreeCADGui": FreeCADGui,
+                    "App": FreeCAD,
+                    "Gui": FreeCADGui,
+                }
+                try:
+                    import Part
+                    namespace["Part"] = Part
+                except ImportError:
+                    pass
+                try:
+                    from FreeCAD import Vector
+                    namespace["Vector"] = Vector
+                except ImportError:
+                    pass
+
+                result_value = None
+                try:
+                    tree = ast.parse(code)
+                    if tree.body and isinstance(tree.body[-1], ast.Expr):
+                        if len(tree.body) > 1:
+                            exec_module = ast.Module(body=tree.body[:-1], type_ignores=[])
+                            ast.fix_missing_locations(exec_module)
+                            exec(compile(exec_module, "<string>", "exec"), namespace)
+                        expr_ast = ast.Expression(body=tree.body[-1].value)
+                        ast.fix_missing_locations(expr_ast)
+                        result_value = eval(compile(expr_ast, "<string>", "eval"), namespace)
+                    else:
+                        exec(code, namespace)
+                        if "result" in namespace:
+                            result_value = namespace["result"]
+                except SyntaxError as e:
+                    return {"error": f"SyntaxError: {e}", "traceback": tb_module.format_exc()}
+
+                if result_value is not None:
+                    return {"success": True, "result": repr(result_value)}
+                return {"success": True, "result": "Code executed successfully"}
+
+            except Exception as e:
+                return {"error": f"Python execution error: {e}", "traceback": tb_module.format_exc()}
+
+        self._run_on_gui_thread_async(job_id, execute_task)
+        return json.dumps({"job_id": job_id, "status": "submitted"})
+
+    def _poll_job(self, args: Dict[str, Any]) -> str:
+        """Poll status and result of an async job.
+
+        Returns:
+          {"status": "running", "elapsed_s": N}          — still computing
+          {"status": "done",    "elapsed_s": N, "result": ...}  — finished
+          {"status": "error",   "elapsed_s": N, "error": ...}   — failed
+        Completed jobs are removed from tracking after retrieval.
+        """
+        job_id = args.get("job_id", "")
+        if not job_id:
+            return json.dumps({"error": "job_id required"})
+        if job_id not in self._async_jobs:
+            return json.dumps({"error": f"Unknown job_id: {job_id!r}. Already retrieved or never submitted."})
+
+        job = self._async_jobs[job_id]
+        elapsed = round(time.time() - job["started"], 1)
+
+        if job["status"] == "running":
+            return json.dumps({"status": "running", "elapsed_s": elapsed})
+
+        # Done or error — retrieve and clean up
+        del self._async_jobs[job_id]
+
+        if job["status"] == "done":
+            task_result = job.get("result", {})
+            if isinstance(task_result, dict) and "error" in task_result:
+                return json.dumps({
+                    "status": "error",
+                    "error": task_result["error"],
+                    "elapsed_s": round(job.get("elapsed", elapsed), 1),
+                })
+            result_val = task_result.get("result", "done") if isinstance(task_result, dict) else str(task_result)
+            return json.dumps({
+                "status": "done",
+                "result": result_val,
+                "elapsed_s": round(job.get("elapsed", elapsed), 1),
+            })
+        else:
+            return json.dumps({
+                "status": "error",
+                "error": job.get("error", "unknown error"),
+                "elapsed_s": round(job.get("elapsed", elapsed), 1),
+            })
+
+    def _list_jobs(self, args: Dict[str, Any]) -> str:
+        """List all tracked async jobs and their current status."""
+        now = time.time()
+        jobs = {
+            jid: {
+                "status": j["status"],
+                "elapsed_s": round(now - j["started"], 1),
+                "tool": j.get("tool", "?"),
+            }
+            for jid, j in self._async_jobs.items()
+        }
+        return json.dumps({"jobs": jobs, "count": len(jobs)})
 
     # -----------------------------------------------------------------
     # Connection handling
@@ -512,6 +671,12 @@ class FreeCADSocketServer:
         # Special tools
         if tool_name == "execute_python":
             return self._execute_python(args)
+        if tool_name == "execute_python_async":
+            return self._execute_python_async(args)
+        if tool_name == "poll_job":
+            return self._poll_job(args)
+        if tool_name == "list_jobs":
+            return self._list_jobs(args)
         if tool_name == "get_debug_logs":
             return self._get_debug_logs(args)
 
