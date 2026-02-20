@@ -45,11 +45,11 @@ jobs:
           echo "Bridge defines $ACTUAL tools"
 
           # Check README.md
-          README_COUNT=$(grep -oP '(\d+) tools for' README.md | grep -oP '^\d+')
+          README_COUNT=$(grep -oP '(\d+) tools for' README.md | grep -oP '^\d+' | head -1)
           echo "README.md says $README_COUNT tools"
 
           # Check CLAUDE.md
-          CLAUDE_COUNT=$(grep -oP '(\d+) MCP tools' CLAUDE.md | grep -oP '^\d+')
+          CLAUDE_COUNT=$(grep -oP '(\d+) MCP tools' CLAUDE.md | grep -oP '^\d+' | head -1)
           echo "CLAUDE.md says $CLAUDE_COUNT tools"
 
           # Compare
