@@ -265,6 +265,87 @@ class CAMOpsHandler(BaseHandler):
         """Create a surface milling operation."""
         return self._placeholder_operation("Surface Milling", args)
 
+    def surface_stl(self, args: Dict[str, Any]) -> str:
+        """Create an OCL PathDropCutter surface operation from an STL file.
+
+        This is the production replacement for the 'surface' placeholder.
+        Reads the STL directly into ocl.STLSurf, runs PathDropCutter, and
+        attaches the resulting Path to a proper Path::FeaturePython object
+        with Active=True — so job consolidation and post-processing work
+        through the normal FreeCAD CAM pipeline with no workarounds.
+
+        Args:
+            job_name:        CAM Job object name
+            stl_file:        Absolute path to the STL mesh file
+            name:            Operation name (default: "OCLSurface")
+            tool_diameter:   Ball end mill diameter in mm (default: 1.0)
+            stepover:        Step between Y scan lines in mm (default: 0.75)
+            sample_interval: X sampling interval in mm (default: 0.5)
+            safe_height:     Safe Z for rapid moves in mm (default: 8.0)
+            cut_feed:        Horizontal feed rate in mm/min (default: 400.0)
+            plunge_feed:     Plunge feed rate in mm/min (default: 150.0)
+
+        Note: For very large STLs (>100K triangles or fine stepover) use
+        execute_python_async to avoid MCP timeout.
+        """
+        import json
+        import os
+        import time
+
+        start = time.time()
+        try:
+            doc = self.get_document()
+            if not doc:
+                return json.dumps({"error": "No active document"})
+
+            job_name = args.get("job_name", "")
+            job = self.get_object(job_name, doc) if job_name else None
+            if not job:
+                return json.dumps({"error": f"Job '{job_name}' not found. Create a CAM job first."})
+
+            stl_file = args.get("stl_file", "")
+            if not stl_file:
+                return json.dumps({"error": "stl_file is required"})
+            if not os.path.exists(stl_file):
+                return json.dumps({"error": f"STL file not found: {stl_file!r}"})
+
+            op_name = args.get("name", "OCLSurface")
+
+            from ocl_surface_op import create_ocl_surface_op
+
+            op_obj = create_ocl_surface_op(
+                doc, job, op_name,
+                stl_file        = stl_file,
+                tool_diameter   = args.get("tool_diameter",   1.0),
+                stepover        = args.get("stepover",        0.75),
+                sample_interval = args.get("sample_interval", 0.5),
+                safe_height     = args.get("safe_height",     8.0),
+                cut_feed        = args.get("cut_feed",        400.0),
+                plunge_feed     = args.get("plunge_feed",     150.0),
+            )
+
+            # Recompute just this op (runs execute() → OCL → sets op_obj.Path)
+            op_obj.recompute()
+
+            cmd_count  = len(op_obj.Path.Commands) if op_obj.Path else 0
+            cycle_time = getattr(op_obj, "CycleTime", "N/A")
+
+            return self.log_and_return(
+                "surface_stl", args,
+                result=json.dumps({
+                    "success":       True,
+                    "operation":     op_obj.Name,
+                    "stl_file":      stl_file,
+                    "command_count": cmd_count,
+                    "cycle_time":    cycle_time,
+                }),
+                duration=time.time() - start,
+            )
+
+        except Exception as e:
+            return self.log_and_return("surface_stl", args, error=e,
+                                       duration=time.time() - start)
+
     def waterline(self, args: Dict[str, Any]) -> str:
         """Create a waterline operation."""
         return self._placeholder_operation("Waterline", args)

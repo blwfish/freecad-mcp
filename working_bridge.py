@@ -337,7 +337,7 @@ async def main():
                                     "create_job", "setup_stock", "configure_job", "inspect_job", "job_status", "delete_job",
                                     # Primary milling operations (12)
                                     "profile", "pocket", "adaptive", "face", "helix", "slot",
-                                    "engrave", "vcarve", "deburr", "surface", "waterline", "pocket_3d",
+                                    "engrave", "vcarve", "deburr", "surface", "surface_stl", "waterline", "pocket_3d",
                                     # Drilling operations (2)
                                     "drilling", "thread_milling",
                                     # Dressup operations (7)
