@@ -230,10 +230,14 @@ class CAMOpsHandler(BaseHandler):
             # FC 1.2: pass parentJob only; set Base after creation
             op = CreatePocket(name, parentJob=job)
 
-            if base_object:
-                base = self.get_object(base_object, doc)
+            # Faces must be named explicitly — an empty sub-list causes FC to skip geometry.
+            # Default base object is the job's Clone (the internal model copy).
+            faces = args.get('faces', [])
+            if faces:
+                base_obj_name = base_object or 'Clone'
+                base = self.get_object(base_obj_name, doc)
                 if base:
-                    op.Base = [(base, [])]
+                    op.Base = [(base, list(faces))]
 
             if 'stepover' in args and hasattr(op, 'StepOver'):
                 op.StepOver = args['stepover']
@@ -243,7 +247,8 @@ class CAMOpsHandler(BaseHandler):
                 op.CutMode = args['cut_mode']
 
             self.recompute(doc)
-            return f"Created Pocket operation '{op.Name}' in job '{job_name}'"
+            face_info = f"faces={faces}" if faces else "no faces (needs faces to generate toolpath)"
+            return f"Created Pocket operation '{op.Name}' in job '{job_name}' ({face_info})"
 
         except ImportError:
             return "Error: PathPocket module not available"
@@ -251,9 +256,24 @@ class CAMOpsHandler(BaseHandler):
             return f"Error creating pocket operation: {e}"
 
     def drilling(self, args: Dict[str, Any]) -> str:
-        """Create a drilling operation."""
+        """Create a drilling operation.
+
+        Requires cylindrical faces (hole walls) or circular edges to identify
+        drill locations. FC extracts center and diameter automatically from the
+        cylindrical face geometry.
+
+        Args:
+            job_name:     CAM job name (required)
+            name:         operation name (default 'Drilling')
+            base_object:  object containing the holes (default: job's Clone)
+            faces:        list of cylindrical face names e.g. ['Face11'] (required
+                          for toolpath generation — each face should be a hole wall)
+            depth:        drill depth override in mm (optional, default from stock)
+            retract_height: retract height in mm (optional)
+            peck_depth:   peck increment in mm for peck drilling (optional)
+            dwell_time:   dwell time in seconds at hole bottom (optional)
+        """
         try:
-            # Try new FreeCAD 1.0+ structure first, fall back to old PathScripts
             try:
                 from Path.Op.Drilling import Create as CreateDrilling
             except ImportError:
@@ -266,12 +286,21 @@ class CAMOpsHandler(BaseHandler):
 
             job_name = args.get('job_name', '')
             name = args.get('name', 'Drilling')
+            base_object = args.get('base_object', '')
+            faces = args.get('faces', [])
 
             job = self.get_object(job_name, doc) if job_name else None
             if not job:
                 return f"Error: Job '{job_name}' not found. Create a CAM job first."
 
             op = CreateDrilling(name, parentJob=job)
+
+            # Cylindrical faces must be named — FC identifies drill center/diameter from them
+            if faces:
+                base_obj_name = base_object or 'Clone'
+                base = self.get_object(base_obj_name, doc)
+                if base:
+                    op.Base = [(base, list(faces))]
 
             if 'depth' in args and hasattr(op, 'FinalDepth'):
                 op.FinalDepth = args['depth']
@@ -283,7 +312,8 @@ class CAMOpsHandler(BaseHandler):
                 op.DwellTime = args['dwell_time']
 
             self.recompute(doc)
-            return f"Created Drilling operation '{op.Name}' in job '{job_name}'"
+            face_info = f"faces={faces}" if faces else "no faces (needs cylindrical faces to generate drill cycles)"
+            return f"Created Drilling operation '{op.Name}' in job '{job_name}' ({face_info})"
 
         except ImportError:
             return "Error: PathDrilling module not available"
@@ -291,9 +321,23 @@ class CAMOpsHandler(BaseHandler):
             return f"Error creating drilling operation: {e}"
 
     def adaptive(self, args: Dict[str, Any]) -> str:
-        """Create an adaptive clearing operation."""
+        """Create an adaptive clearing operation.
+
+        Adaptive clearing uses a trochoidal algorithm to maintain constant tool
+        engagement. Requires face geometry to define the pocket area to clear.
+
+        Args:
+            job_name:    CAM job name (required)
+            name:        operation name (default 'Adaptive')
+            base_object: object to take faces from (default: job's Clone)
+            faces:       list of face names to clear e.g. ['Face14','Face15']
+                         (required for toolpath generation)
+            stepover:    stepover as percentage of tool diameter (optional)
+            tolerance:   path accuracy tolerance in mm (optional)
+            stepdown:    step-down depth in mm (optional)
+            cut_mode:    'Climb' | 'Conventional' (optional)
+        """
         try:
-            # Try new FreeCAD 1.0+ structure first, fall back to old PathScripts
             try:
                 from Path.Op.Adaptive import Create as CreateAdaptive
             except ImportError:
@@ -306,6 +350,8 @@ class CAMOpsHandler(BaseHandler):
 
             job_name = args.get('job_name', '')
             name = args.get('name', 'Adaptive')
+            base_object = args.get('base_object', '')
+            faces = args.get('faces', [])
 
             job = self.get_object(job_name, doc) if job_name else None
             if not job:
@@ -313,13 +359,25 @@ class CAMOpsHandler(BaseHandler):
 
             op = CreateAdaptive(name, parentJob=job)
 
+            # Faces must be named explicitly — empty Base produces no toolpath
+            if faces:
+                base_obj_name = base_object or 'Clone'
+                base = self.get_object(base_obj_name, doc)
+                if base:
+                    op.Base = [(base, list(faces))]
+
             if 'stepover' in args and hasattr(op, 'StepOver'):
                 op.StepOver = args['stepover']
             if 'tolerance' in args and hasattr(op, 'Tolerance'):
                 op.Tolerance = args['tolerance']
+            if 'stepdown' in args and hasattr(op, 'StepDown'):
+                op.StepDown = args['stepdown']
+            if 'cut_mode' in args and hasattr(op, 'CutMode'):
+                op.CutMode = args['cut_mode']
 
             self.recompute(doc)
-            return f"Created Adaptive operation '{op.Name}' in job '{job_name}'"
+            face_info = f"faces={faces}" if faces else "no faces (needs faces to generate toolpath)"
+            return f"Created Adaptive operation '{op.Name}' in job '{job_name}' ({face_info})"
 
         except ImportError:
             return "Error: PathAdaptive module not available"
