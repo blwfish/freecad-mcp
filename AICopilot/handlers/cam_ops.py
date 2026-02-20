@@ -124,70 +124,22 @@ class CAMOpsHandler(BaseHandler):
     def profile(self, args: Dict[str, Any]) -> str:
         """Create a profile (contour) operation.
 
-        Modes (determined by what geometry is specified):
-          - No base_object/faces/edges → exterior contour of the whole model
-            (FC Profile with empty Base → _processEachModel → envelope of job model)
-          - faces list → perimeter of those faces (processPerimeter=True by default)
-          - edges list → trace specific edges
-
-        Args:
-            job_name:          CAM job name (required)
-            name:              operation name (default 'Profile')
-            base_object:       object to take geometry from (default: job's Clone)
-            faces:             list of face names e.g. ['Face1','Face3'] (optional)
-            edges:             list of edge names e.g. ['Edge1'] (optional)
-            side:              'Outside' | 'Inside' (default 'Outside')
-            direction:         'CW' | 'CCW' (optional)
-            stepdown:          step-down depth in mm (optional)
-            process_perimeter: trace outer boundary of selected faces (default True)
-            process_holes:     trace inner holes of selected faces (default False)
-            process_circles:   treat circular holes as drillable (default False)
+        With no faces/edges → exterior contour of the whole model (FC Profile
+        with empty Base calls _processEachModel → envelope of job model).
+        With faces → perimeter of those faces (processPerimeter=True by default).
+        With edges → trace specific edges.
         """
         try:
             try:
                 from Path.Op.Profile import Create as CreateProfile
             except ImportError:
-                import PathScripts.PathProfile as PathProfileModule
-                CreateProfile = PathProfileModule.Create
+                import PathScripts.PathProfile as m
+                CreateProfile = m.Create
 
-            doc = self.get_document()
-            if not doc:
-                return "Error: No active document"
+            doc, op = self._create_path_op(CreateProfile, args, 'Profile')
 
-            job_name = args.get('job_name', '')
-            name = args.get('name', 'Profile')
-            base_object = args.get('base_object', '')
-            faces = args.get('faces', [])
-            edges = args.get('edges', [])
-
-            job = self.get_object(job_name, doc) if job_name else None
-            if not job:
-                return f"Error: Job '{job_name}' not found. Create a CAM job first."
-
-            # FC 1.2: pass parentJob only to avoid group conflict
-            op = CreateProfile(name, parentJob=job)
-
-            # Only set Base when specific sub-geometry is requested.
-            # With empty Base, Profile's _processEachModel() profiles the whole model
-            # exterior — which is the correct behaviour for a plain outer contour.
-            subs = list(faces) + list(edges)
-            if subs:
-                base_obj_name = base_object or 'Clone'  # job's internal model clone
-                base = self.get_object(base_obj_name, doc)
-                if base:
-                    op.Base = [(base, subs)]
-
-            # Side: 'Outside' (default) cuts outside the profile; 'Inside' cuts inside
-            side = args.get('side', 'Outside')
             if hasattr(op, 'Side'):
-                op.Side = side
-
-            if 'direction' in args and hasattr(op, 'Direction'):
-                op.Direction = args['direction']
-            if 'stepdown' in args and hasattr(op, 'StepDown'):
-                op.StepDown = args['stepdown']
-
-            # Face processing flags (only relevant when faces are selected)
+                op.Side = args.get('side', 'Outside')
             if 'process_perimeter' in args and hasattr(op, 'processPerimeter'):
                 op.processPerimeter = bool(args['process_perimeter'])
             if 'process_holes' in args and hasattr(op, 'processHoles'):
@@ -196,111 +148,49 @@ class CAMOpsHandler(BaseHandler):
                 op.processCircles = bool(args['process_circles'])
 
             self.recompute(doc)
+            faces, edges = args.get('faces', []), args.get('edges', [])
+            mode = f"faces={faces}" if faces else (f"edges={edges}" if edges else "whole model exterior")
+            return f"Created Profile operation '{op.Name}' in job '{args.get('job_name')}' ({mode})"
 
-            mode = f"faces={faces}" if faces else ("edges={edges}" if edges else "whole model exterior")
-            return f"Created Profile operation '{op.Name}' in job '{job_name}' ({mode})"
-
-        except ImportError:
-            return "Error: PathProfile module not available"
         except Exception as e:
             return f"Error creating profile operation: {e}"
 
     def pocket(self, args: Dict[str, Any]) -> str:
-        """Create a pocket operation."""
+        """Create a pocket operation. Pass faces=['FaceN',...] to generate toolpath."""
         try:
-            # Try new FreeCAD 1.0+ structure first, fall back to old PathScripts
             try:
                 from Path.Op.Pocket import Create as CreatePocket
             except ImportError:
-                import PathScripts.PathPocket as PathPocketModule
-                CreatePocket = PathPocketModule.Create
+                import PathScripts.PathPocket as m
+                CreatePocket = m.Create
 
-            doc = self.get_document()
-            if not doc:
-                return "Error: No active document"
-
-            job_name = args.get('job_name', '')
-            name = args.get('name', 'Pocket')
-            base_object = args.get('base_object', '')
-
-            job = self.get_object(job_name, doc) if job_name else None
-            if not job:
-                return f"Error: Job '{job_name}' not found. Create a CAM job first."
-
-            # FC 1.2: pass parentJob only; set Base after creation
-            op = CreatePocket(name, parentJob=job)
-
-            # Faces must be named explicitly — an empty sub-list causes FC to skip geometry.
-            # Default base object is the job's Clone (the internal model copy).
-            faces = args.get('faces', [])
-            if faces:
-                base_obj_name = base_object or 'Clone'
-                base = self.get_object(base_obj_name, doc)
-                if base:
-                    op.Base = [(base, list(faces))]
+            doc, op = self._create_path_op(CreatePocket, args, 'Pocket')
 
             if 'stepover' in args and hasattr(op, 'StepOver'):
                 op.StepOver = args['stepover']
-            if 'stepdown' in args and hasattr(op, 'StepDown'):
-                op.StepDown = args['stepdown']
-            if 'cut_mode' in args and hasattr(op, 'CutMode'):
-                op.CutMode = args['cut_mode']
 
             self.recompute(doc)
-            face_info = f"faces={faces}" if faces else "no faces (needs faces to generate toolpath)"
-            return f"Created Pocket operation '{op.Name}' in job '{job_name}' ({face_info})"
+            faces = args.get('faces', [])
+            face_info = f"faces={faces}" if faces else "no faces (provide faces= to generate toolpath)"
+            return f"Created Pocket operation '{op.Name}' in job '{args.get('job_name')}' ({face_info})"
 
-        except ImportError:
-            return "Error: PathPocket module not available"
         except Exception as e:
             return f"Error creating pocket operation: {e}"
 
     def drilling(self, args: Dict[str, Any]) -> str:
         """Create a drilling operation.
 
-        Requires cylindrical faces (hole walls) or circular edges to identify
-        drill locations. FC extracts center and diameter automatically from the
-        cylindrical face geometry.
-
-        Args:
-            job_name:     CAM job name (required)
-            name:         operation name (default 'Drilling')
-            base_object:  object containing the holes (default: job's Clone)
-            faces:        list of cylindrical face names e.g. ['Face11'] (required
-                          for toolpath generation — each face should be a hole wall)
-            depth:        drill depth override in mm (optional, default from stock)
-            retract_height: retract height in mm (optional)
-            peck_depth:   peck increment in mm for peck drilling (optional)
-            dwell_time:   dwell time in seconds at hole bottom (optional)
+        Pass faces=['FaceN'] where FaceN is a cylindrical hole wall — FC extracts
+        drill center and diameter automatically from the cylindrical face geometry.
         """
         try:
             try:
                 from Path.Op.Drilling import Create as CreateDrilling
             except ImportError:
-                import PathScripts.PathDrilling as PathDrillingModule
-                CreateDrilling = PathDrillingModule.Create
+                import PathScripts.PathDrilling as m
+                CreateDrilling = m.Create
 
-            doc = self.get_document()
-            if not doc:
-                return "Error: No active document"
-
-            job_name = args.get('job_name', '')
-            name = args.get('name', 'Drilling')
-            base_object = args.get('base_object', '')
-            faces = args.get('faces', [])
-
-            job = self.get_object(job_name, doc) if job_name else None
-            if not job:
-                return f"Error: Job '{job_name}' not found. Create a CAM job first."
-
-            op = CreateDrilling(name, parentJob=job)
-
-            # Cylindrical faces must be named — FC identifies drill center/diameter from them
-            if faces:
-                base_obj_name = base_object or 'Clone'
-                base = self.get_object(base_obj_name, doc)
-                if base:
-                    op.Base = [(base, list(faces))]
+            doc, op = self._create_path_op(CreateDrilling, args, 'Drilling')
 
             if 'depth' in args and hasattr(op, 'FinalDepth'):
                 op.FinalDepth = args['depth']
@@ -312,75 +202,38 @@ class CAMOpsHandler(BaseHandler):
                 op.DwellTime = args['dwell_time']
 
             self.recompute(doc)
-            face_info = f"faces={faces}" if faces else "no faces (needs cylindrical faces to generate drill cycles)"
-            return f"Created Drilling operation '{op.Name}' in job '{job_name}' ({face_info})"
+            faces = args.get('faces', [])
+            face_info = f"faces={faces}" if faces else "no faces (provide cylindrical faces= to generate drill cycles)"
+            return f"Created Drilling operation '{op.Name}' in job '{args.get('job_name')}' ({face_info})"
 
-        except ImportError:
-            return "Error: PathDrilling module not available"
         except Exception as e:
             return f"Error creating drilling operation: {e}"
 
     def adaptive(self, args: Dict[str, Any]) -> str:
         """Create an adaptive clearing operation.
 
-        Adaptive clearing uses a trochoidal algorithm to maintain constant tool
-        engagement. Requires face geometry to define the pocket area to clear.
-
-        Args:
-            job_name:    CAM job name (required)
-            name:        operation name (default 'Adaptive')
-            base_object: object to take faces from (default: job's Clone)
-            faces:       list of face names to clear e.g. ['Face14','Face15']
-                         (required for toolpath generation)
-            stepover:    stepover as percentage of tool diameter (optional)
-            tolerance:   path accuracy tolerance in mm (optional)
-            stepdown:    step-down depth in mm (optional)
-            cut_mode:    'Climb' | 'Conventional' (optional)
+        Trochoidal algorithm for constant tool engagement.
+        Pass faces=['FaceN',...] to define the area to clear.
         """
         try:
             try:
                 from Path.Op.Adaptive import Create as CreateAdaptive
             except ImportError:
-                import PathScripts.PathAdaptive as PathAdaptiveModule
-                CreateAdaptive = PathAdaptiveModule.Create
+                import PathScripts.PathAdaptive as m
+                CreateAdaptive = m.Create
 
-            doc = self.get_document()
-            if not doc:
-                return "Error: No active document"
-
-            job_name = args.get('job_name', '')
-            name = args.get('name', 'Adaptive')
-            base_object = args.get('base_object', '')
-            faces = args.get('faces', [])
-
-            job = self.get_object(job_name, doc) if job_name else None
-            if not job:
-                return f"Error: Job '{job_name}' not found. Create a CAM job first."
-
-            op = CreateAdaptive(name, parentJob=job)
-
-            # Faces must be named explicitly — empty Base produces no toolpath
-            if faces:
-                base_obj_name = base_object or 'Clone'
-                base = self.get_object(base_obj_name, doc)
-                if base:
-                    op.Base = [(base, list(faces))]
+            doc, op = self._create_path_op(CreateAdaptive, args, 'Adaptive')
 
             if 'stepover' in args and hasattr(op, 'StepOver'):
                 op.StepOver = args['stepover']
             if 'tolerance' in args and hasattr(op, 'Tolerance'):
                 op.Tolerance = args['tolerance']
-            if 'stepdown' in args and hasattr(op, 'StepDown'):
-                op.StepDown = args['stepdown']
-            if 'cut_mode' in args and hasattr(op, 'CutMode'):
-                op.CutMode = args['cut_mode']
 
             self.recompute(doc)
-            face_info = f"faces={faces}" if faces else "no faces (needs faces to generate toolpath)"
-            return f"Created Adaptive operation '{op.Name}' in job '{job_name}' ({face_info})"
+            faces = args.get('faces', [])
+            face_info = f"faces={faces}" if faces else "no faces (provide faces= to generate toolpath)"
+            return f"Created Adaptive operation '{op.Name}' in job '{args.get('job_name')}' ({face_info})"
 
-        except ImportError:
-            return "Error: PathAdaptive module not available"
         except Exception as e:
             return f"Error creating adaptive operation: {e}"
 
@@ -1131,6 +984,55 @@ class CAMOpsHandler(BaseHandler):
 
         except Exception as e:
             return self.log_and_return("delete_job", args, error=e, duration=time.time() - start_time)
+
+    def _create_path_op(self, create_fn, args: Dict[str, Any], default_name: str):
+        """Shared scaffold for CAM path operations.
+
+        Owns everything that is identical across profile, pocket, drilling,
+        adaptive (and future ops): document/job resolution, op creation with the
+        FC 1.2 parentJob= pattern, Base wiring from faces/edges args, and the
+        common parameters stepdown/direction/cut_mode.
+
+        Returns (doc, op). Raises RuntimeError on missing document or job so the
+        caller's existing `except Exception as e` handler catches it uniformly.
+
+        The critical Base-wiring rule (hard-won from FC 1.2 debugging):
+          - Only set op.Base when sub-geometry is explicitly named.
+          - An empty sub-list makes FC consider geometry "already processed"
+            and skip toolpath generation → 2-3 header commands only.
+          - ops that work with empty Base (Profile → whole-model exterior)
+            simply don't pass faces or edges.
+        """
+        doc = self.get_document()
+        if not doc:
+            raise RuntimeError("No active document")
+
+        job_name = args.get('job_name', '')
+        job = self.get_object(job_name, doc) if job_name else None
+        if not job:
+            raise RuntimeError(f"Job '{job_name}' not found. Create a CAM job first.")
+
+        # FC 1.2: parentJob= only; passing obj= causes "Object can only be in a
+        # single Group" if the object is already in job.Model.Group
+        op = create_fn(args.get('name', default_name), parentJob=job)
+
+        subs = list(args.get('faces', [])) + list(args.get('edges', []))
+        if subs:
+            base_obj_name = args.get('base_object') or 'Clone'
+            base = self.get_object(base_obj_name, doc)
+            if base:
+                op.Base = [(base, subs)]
+
+        # Common parameters shared by most ops; hasattr guard makes them safe on
+        # ops that don't support them
+        if 'stepdown' in args and hasattr(op, 'StepDown'):
+            op.StepDown = args['stepdown']
+        if 'direction' in args and hasattr(op, 'Direction'):
+            op.Direction = args['direction']
+        if 'cut_mode' in args and hasattr(op, 'CutMode'):
+            op.CutMode = args['cut_mode']
+
+        return doc, op
 
     def _placeholder_operation(self, operation_name: str, args: Dict[str, Any]) -> str:
         """Placeholder for CAM operations not yet implemented."""
