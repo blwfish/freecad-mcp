@@ -1,0 +1,70 @@
+name: Documentation freshness check
+
+on:
+  push:
+    branches: [main, rewrite-core]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need parent commit for diff
+
+      - name: Check if tool files changed without CLAUDE.md update
+        run: |
+          # Get changed files vs parent commit
+          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+
+          # Check if any tool-related files changed
+          TOOL_CHANGES=$(echo "$CHANGED" | grep -E '^(working_bridge\.py|AICopilot/socket_server\.py|AICopilot/handlers/)' || true)
+
+          if [ -n "$TOOL_CHANGES" ]; then
+            echo "Tool files changed:"
+            echo "$TOOL_CHANGES"
+
+            # Check if CLAUDE.md was also updated
+            CLAUDE_CHANGED=$(echo "$CHANGED" | grep '^CLAUDE.md$' || true)
+            README_CHANGED=$(echo "$CHANGED" | grep '^README.md$' || true)
+
+            if [ -z "$CLAUDE_CHANGED" ] && [ -z "$README_CHANGED" ]; then
+              echo ""
+              echo "::warning::Tool files changed but neither CLAUDE.md nor README.md were updated. If you added, removed, or renamed tools, please update the docs."
+            fi
+          else
+            echo "No tool file changes detected."
+          fi
+
+      - name: Verify tool count consistency
+        run: |
+          # Count tools in bridge (types.Tool( occurrences)
+          ACTUAL=$(grep -c 'types\.Tool(' working_bridge.py)
+          echo "Bridge defines $ACTUAL tools"
+
+          # Check README.md
+          README_COUNT=$(grep -oP '(\d+) tools for' README.md | grep -oP '^\d+')
+          echo "README.md says $README_COUNT tools"
+
+          # Check CLAUDE.md
+          CLAUDE_COUNT=$(grep -oP '(\d+) MCP tools' CLAUDE.md | grep -oP '^\d+')
+          echo "CLAUDE.md says $CLAUDE_COUNT tools"
+
+          # Compare
+          MISMATCH=0
+          if [ "$ACTUAL" != "$README_COUNT" ]; then
+            echo "::error::Tool count mismatch: bridge has $ACTUAL but README.md says $README_COUNT"
+            MISMATCH=1
+          fi
+          if [ "$ACTUAL" != "$CLAUDE_COUNT" ]; then
+            echo "::error::Tool count mismatch: bridge has $ACTUAL but CLAUDE.md says $CLAUDE_COUNT"
+            MISMATCH=1
+          fi
+
+          if [ "$MISMATCH" = "1" ]; then
+            exit 1
+          else
+            echo "All tool counts match: $ACTUAL"
+          fi

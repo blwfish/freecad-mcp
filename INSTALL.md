@@ -3,8 +3,8 @@
 Control FreeCAD with Claude AI through the Model Context Protocol (MCP).
 
 **Requirements:**
-- FreeCAD 1.0+ (download from [freecad.org](https://freecad.org/downloads.php))
-- Python 3.8+
+- FreeCAD 1.0+ (1.2-dev recommended, download from [freecad.org](https://freecad.org/downloads.php))
+- Python 3.10+
 - Claude Desktop or Claude Code
 
 ---
@@ -186,5 +186,5 @@ The bridge translates MCP tool calls into FreeCAD commands via a socket connecti
 
 ## Support
 
-- **Issues:** https://github.com/contextform/freecad-mcp/issues
-- **Docs:** See `docs/CLAUDE_DESKTOP_MCP_USAGE.md` for detailed usage
+- **Issues:** https://github.com/blwfish/freecad-mcp/issues
+- **Docs:** See [CLAUDE.md](CLAUDE.md) for tool reference and usage

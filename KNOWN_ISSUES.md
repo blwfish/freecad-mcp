@@ -109,4 +109,4 @@ The following operations have TODO markers for comprehensive testing:
 - `draft_operations` - Only basic smoke test exists
 - `get_debug_logs` - Only basic smoke test exists
 
-See `tests/socket_test_client_v2.py` for details.
+These need comprehensive test coverage added.
