@@ -388,6 +388,7 @@ async def main():
                             # Post-processing parameters
                             "output_file": {"type": "string", "description": "Output G-code file path"},
                             "post_processor": {"type": "string", "description": "Post processor name", "default": "grbl"},
+                            "post_processor_args": {"type": "string", "description": "Post processor arguments (e.g. '--no-show-editor')"},
                             # Adaptive parameters
                             "tolerance": {"type": "number", "description": "Adaptive tolerance"},
                             # General

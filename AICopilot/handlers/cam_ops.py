@@ -723,12 +723,16 @@ class CAMOpsHandler(BaseHandler):
             updates = []
 
             if 'output_file' in args:
-                job.OutputFile = args['output_file']
+                job.PostProcessorOutputFile = args['output_file']
                 updates.append(f"output_file: {args['output_file']}")
 
             if 'post_processor' in args:
                 job.PostProcessor = args['post_processor']
                 updates.append(f"post_processor: {args['post_processor']}")
+
+            if 'post_processor_args' in args:
+                job.PostProcessorArgs = args['post_processor_args']
+                updates.append(f"post_processor_args: {args['post_processor_args']}")
 
             if 'stock_type' in args:
                 # Stock type changes require setup_stock operation
@@ -736,7 +740,7 @@ class CAMOpsHandler(BaseHandler):
                 return self.log_and_return("configure_job", args, result=result, duration=time.time() - start_time)
 
             if not updates:
-                error = Exception("No parameters to update. Provide output_file or post_processor.")
+                error = Exception("No parameters to update. Provide output_file, post_processor, or post_processor_args.")
                 return self.log_and_return("configure_job", args, error=error, duration=time.time() - start_time)
 
             self.recompute(doc)
@@ -812,10 +816,12 @@ class CAMOpsHandler(BaseHandler):
                 result += "Operations: None\n\n"
 
             # Output configuration
-            if hasattr(job, 'OutputFile'):
-                result += f"Output File: {job.OutputFile}\n"
+            if hasattr(job, 'PostProcessorOutputFile') and job.PostProcessorOutputFile:
+                result += f"Output File: {job.PostProcessorOutputFile}\n"
             if hasattr(job, 'PostProcessor'):
                 result += f"Post Processor: {job.PostProcessor}\n"
+            if hasattr(job, 'PostProcessorArgs') and job.PostProcessorArgs:
+                result += f"Post Processor Args: {job.PostProcessorArgs}\n"
 
             # Status
             result += f"\nStatus:\n"

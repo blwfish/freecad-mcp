@@ -102,15 +102,17 @@ These operations cannot programmatically select edges — the user must click ed
 
 ### Paths
 - **Dev repo**: `/Volumes/Files/claude/freecad-mcp/`
-- **FreeCAD module (primary)**: `/Volumes/Files/claude/FreeCAD-prefs/v1-2/Mod/AICopilot/` ← FreeCAD actually loads from here
-- **FreeCAD module (secondary)**: `~/Library/Application Support/FreeCAD/v1-2/Mod/AICopilot/`
+- **FreeCAD module (actual load path)**: `/Volumes/Files/claude/FreeCAD-prefs/Mod/AICopilot/` ← FreeCAD actually loads from here (verified Feb 2026)
+- **FreeCAD module (v1-2 path)**: `/Volumes/Files/claude/FreeCAD-prefs/v1-2/Mod/AICopilot/`
 - **Bridge install**: `~/.freecad-mcp/`
+
+To verify which path FreeCAD loads: `execute_python("import os, AICopilot.handlers.cam_ops as m; os.path.realpath(m.__file__)")`
 
 ### Commands
 ```bash
-python3 -m pytest                 # Run 77 unit tests (no FreeCAD needed)
+python3 -m pytest                 # Run 127 unit tests (no FreeCAD needed)
+rsync -av --delete AICopilot/ /Volumes/Files/claude/FreeCAD-prefs/Mod/AICopilot/
 rsync -av --delete AICopilot/ /Volumes/Files/claude/FreeCAD-prefs/v1-2/Mod/AICopilot/
-rsync -av --delete AICopilot/ ~/Library/Application\ Support/FreeCAD/v1-2/Mod/AICopilot/
 cp working_bridge.py mcp_bridge_framing.py ~/.freecad-mcp/
 ```
 
