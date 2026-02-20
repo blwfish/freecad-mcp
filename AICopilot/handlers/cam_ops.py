@@ -523,12 +523,13 @@ class CAMOpsHandler(BaseHandler):
                 if hasattr(tc, 'SpindleSpeed'):
                     result += f"    Spindle Speed: {tc.SpindleSpeed} RPM\n"
                 if hasattr(tc, 'HorizFeed'):
-                    result += f"    Feed Rate: {tc.HorizFeed} mm/min\n"
+                    feed_mmpm = float(str(tc.HorizFeed).split()[0]) * 60
+                    result += f"    Feed Rate: {feed_mmpm:.0f} mm/min\n"
 
             if hasattr(operation, 'Base'):
                 result += f"  Base Object: {operation.Base}\n"
             if hasattr(operation, 'StepDown'):
-                result += f"  Step Down: {operation.StepDown} mm\n"
+                result += f"  Step Down: {operation.StepDown}\n"
             if hasattr(operation, 'StepOver'):
                 result += f"  Step Over: {operation.StepOver}%\n"
             if hasattr(operation, 'CutMode'):
@@ -593,7 +594,13 @@ class CAMOpsHandler(BaseHandler):
             updates = []
 
             if 'stepdown' in args and hasattr(operation, 'StepDown'):
-                operation.StepDown = args['stepdown']
+                # Clear any expression binding before setting — recompute would
+                # restore the SetupSheet-driven default otherwise.
+                try:
+                    operation.setExpression('StepDown', None)
+                except Exception:
+                    pass
+                operation.StepDown = FreeCAD.Units.Quantity(f"{args['stepdown']} mm")
                 updates.append(f"stepdown: {args['stepdown']}mm")
 
             if 'stepover' in args and hasattr(operation, 'StepOver'):
