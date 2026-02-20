@@ -277,7 +277,7 @@ class CAMToolsHandler(BaseHandler):
             # Check if tool is in use by any tool controllers
             in_use = []
             for obj in doc.Objects:
-                if obj.TypeId == "Path::ToolController":
+                if hasattr(obj, 'SpindleSpeed'):  # FC 1.2: tool controllers are Path::FeaturePython
                     if hasattr(obj, 'Tool') and obj.Tool == tool:
                         in_use.append(obj.Label)
 
