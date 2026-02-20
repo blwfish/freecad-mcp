@@ -1,6 +1,6 @@
 # freecad-mcp
 
-MCP server for FreeCAD — 14 tools for AI-assisted 3D CAD modeling via the [Model Context Protocol](https://modelcontextprotocol.io/).
+MCP server for FreeCAD — 17 tools for AI-assisted 3D CAD modeling via the [Model Context Protocol](https://modelcontextprotocol.io/).
 
 Design parametric parts, generate CAM toolpaths, take screenshots, and execute Python scripts — all driven by an AI assistant like Claude.
 
@@ -32,7 +32,7 @@ Design parametric parts, generate CAM toolpaths, take screenshots, and execute P
 
 See [INSTALL.md](INSTALL.md) for Claude Desktop config, other platforms, and troubleshooting.
 
-## Tools (13)
+## Tools (17)
 
 ### Smart Dispatchers (8 tools)
 
@@ -43,20 +43,24 @@ Each dispatcher accepts an `operation` argument routing to many sub-operations.
 | `partdesign_operations` | 13 | Pad, pocket, fillet, chamfer, hole, revolution, loft, sweep, mirror, linear/polar pattern, draft, shell |
 | `part_operations` | 18 | Primitives (box, cylinder, sphere, cone, torus, wedge), booleans (fuse, cut, common), transforms, extrude, revolve, loft, sweep |
 | `view_control` | 16 | Screenshots, set view, fit all, zoom, create/list/save documents, list objects, undo/redo, selection |
-| `cam_operations` | 36 | Full CNC toolpath: create job, profile, pocket, drilling, adaptive, contour, surface, engrave, export G-code |
+| `cam_operations` | 37 | Full CNC toolpath: create job, profile, pocket, drilling, adaptive, contour, surface, surface_stl (OCL), engrave, export G-code |
 | `cam_tools` | 5 | Cutting tool library CRUD |
 | `cam_tool_controllers` | 5 | Tool controller CRUD (link tools to jobs with speeds/feeds) |
 | `spreadsheet_operations` | 8 | Parametric spreadsheet data management |
 | `draft_operations` | 5 | 2D drafting, clones, arrays |
 
-### Utility Tools (5 tools)
+### Utility Tools (9 tools)
 
 | Tool | Description |
 |------|-------------|
 | `execute_python` | Run arbitrary Python in FreeCAD context — the escape hatch for anything not covered by dedicated tools |
+| `execute_python_async` | Submit long-running Python for async execution; returns a job ID immediately |
+| `poll_job` | Check status of an async job (running/done/error) |
+| `list_jobs` | List all tracked async jobs |
 | `get_debug_logs` | Retrieve recent operation logs for troubleshooting |
 | `continue_selection` | Complete interactive edge/face selection (fillet, chamfer, hole workflows) |
 | `check_freecad_connection` | Verify FreeCAD is running with AICopilot loaded |
+| `mesh_operations` | Import/export meshes, mesh-to-solid conversion, validation, simplification |
 | `test_echo` | Connectivity test |
 
 ## Architecture
