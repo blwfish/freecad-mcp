@@ -8,7 +8,7 @@ Design parametric parts, generate CAM toolpaths, take screenshots, and execute P
 
 ### Prerequisites
 
-- FreeCAD 1.0+ (1.2-dev recommended)
+- **FreeCAD 1.2-dev** (required — CAM, PartDesign, and mesh APIs changed significantly in 1.2; earlier versions will appear to work but have broken behavior)
 - Python 3.10+
 - Claude Desktop or Claude Code
 
@@ -66,7 +66,7 @@ Claude Desktop/Code
     | (MCP protocol over stdio)
 working_bridge.py         14 MCP tools
     | (Unix socket: /tmp/freecad_mcp.sock)
-socket_server.py          25 dispatch routes, v5.0.0
+socket_server.py          dispatch routes, v5.2.0
     | (Modular handlers)
 handlers/*.py             14 handler classes
     | (FreeCAD Python API)
@@ -85,12 +85,11 @@ See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for details:
 ## Development
 
 ```bash
-# Run tests (74 tests, no FreeCAD required)
+# Run tests (no FreeCAD required)
 python3 -m pytest
 
-# Sync changes to FreeCAD
-rsync -av --delete AICopilot/ \
-  ~/Library/Application\ Support/FreeCAD/v1-2/Mod/AICopilot/
+# Sync AICopilot workbench to FreeCAD's Mod directory
+./deploy.sh
 
 # Copy bridge updates
 cp working_bridge.py mcp_bridge_framing.py ~/.freecad-mcp/
@@ -102,8 +101,9 @@ cp working_bridge.py mcp_bridge_framing.py ~/.freecad-mcp/
 working_bridge.py         MCP bridge (Claude-facing, 14 tools)
 mcp_bridge_framing.py     Length-prefixed message protocol
 AICopilot/
-  socket_server.py        FreeCAD socket server (v5.0.0, 732 lines)
-  handlers/               14 modular handler classes
+  socket_server.py        FreeCAD socket server (v5.2.0)
+  handlers/               Modular handler classes
+  ocl_surface_op.py       OCL PathDropCutter surface op (Path::FeaturePython)
   freecad_debug.py        Debug logging (optional)
   freecad_health.py       Crash monitoring (optional)
 tests/unit/               Unit tests (pytest, no FreeCAD required)
