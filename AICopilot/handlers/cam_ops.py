@@ -122,9 +122,28 @@ class CAMOpsHandler(BaseHandler):
             return f"Error setting up stock: {e}"
 
     def profile(self, args: Dict[str, Any]) -> str:
-        """Create a profile (contour) operation."""
+        """Create a profile (contour) operation.
+
+        Modes (determined by what geometry is specified):
+          - No base_object/faces/edges → exterior contour of the whole model
+            (FC Profile with empty Base → _processEachModel → envelope of job model)
+          - faces list → perimeter of those faces (processPerimeter=True by default)
+          - edges list → trace specific edges
+
+        Args:
+            job_name:          CAM job name (required)
+            name:              operation name (default 'Profile')
+            base_object:       object to take geometry from (default: job's Clone)
+            faces:             list of face names e.g. ['Face1','Face3'] (optional)
+            edges:             list of edge names e.g. ['Edge1'] (optional)
+            side:              'Outside' | 'Inside' (default 'Outside')
+            direction:         'CW' | 'CCW' (optional)
+            stepdown:          step-down depth in mm (optional)
+            process_perimeter: trace outer boundary of selected faces (default True)
+            process_holes:     trace inner holes of selected faces (default False)
+            process_circles:   treat circular holes as drillable (default False)
+        """
         try:
-            # Try new FreeCAD 1.0+ structure first, fall back to old PathScripts
             try:
                 from Path.Op.Profile import Create as CreateProfile
             except ImportError:
@@ -138,29 +157,48 @@ class CAMOpsHandler(BaseHandler):
             job_name = args.get('job_name', '')
             name = args.get('name', 'Profile')
             base_object = args.get('base_object', '')
+            faces = args.get('faces', [])
+            edges = args.get('edges', [])
 
             job = self.get_object(job_name, doc) if job_name else None
             if not job:
                 return f"Error: Job '{job_name}' not found. Create a CAM job first."
 
-            # FC 1.2: pass parentJob only; passing obj= causes group conflict if obj is
-            # already in job.Model.Group. Set Base after creation instead.
+            # FC 1.2: pass parentJob only to avoid group conflict
             op = CreateProfile(name, parentJob=job)
 
-            if base_object:
-                base = self.get_object(base_object, doc)
+            # Only set Base when specific sub-geometry is requested.
+            # With empty Base, Profile's _processEachModel() profiles the whole model
+            # exterior — which is the correct behaviour for a plain outer contour.
+            subs = list(faces) + list(edges)
+            if subs:
+                base_obj_name = base_object or 'Clone'  # job's internal model clone
+                base = self.get_object(base_obj_name, doc)
                 if base:
-                    op.Base = [(base, [])]
+                    op.Base = [(base, subs)]
 
-            if 'cut_side' in args and hasattr(op, 'Side'):
-                op.Side = args['cut_side']
+            # Side: 'Outside' (default) cuts outside the profile; 'Inside' cuts inside
+            side = args.get('side', 'Outside')
+            if hasattr(op, 'Side'):
+                op.Side = side
+
             if 'direction' in args and hasattr(op, 'Direction'):
                 op.Direction = args['direction']
             if 'stepdown' in args and hasattr(op, 'StepDown'):
                 op.StepDown = args['stepdown']
 
+            # Face processing flags (only relevant when faces are selected)
+            if 'process_perimeter' in args and hasattr(op, 'processPerimeter'):
+                op.processPerimeter = bool(args['process_perimeter'])
+            if 'process_holes' in args and hasattr(op, 'processHoles'):
+                op.processHoles = bool(args['process_holes'])
+            if 'process_circles' in args and hasattr(op, 'processCircles'):
+                op.processCircles = bool(args['process_circles'])
+
             self.recompute(doc)
-            return f"Created Profile operation '{op.Name}' in job '{job_name}'"
+
+            mode = f"faces={faces}" if faces else ("edges={edges}" if edges else "whole model exterior")
+            return f"Created Profile operation '{op.Name}' in job '{job_name}' ({mode})"
 
         except ImportError:
             return "Error: PathProfile module not available"
