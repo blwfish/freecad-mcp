@@ -382,8 +382,6 @@ class FreeCADSocketServer:
         Use poll_job(job_id) to check status and retrieve the result.
         Identical execution semantics to execute_python.
         """
-        import ast
-
         code = args.get("code", "")
         if not code:
             return json.dumps({"error": "No code provided"})
@@ -395,51 +393,7 @@ class FreeCADSocketServer:
             "tool": "execute_python_async",
         }
 
-        def execute_task():
-            try:
-                namespace = {
-                    "FreeCAD": FreeCAD,
-                    "FreeCADGui": FreeCADGui,
-                    "App": FreeCAD,
-                    "Gui": FreeCADGui,
-                }
-                try:
-                    import Part
-                    namespace["Part"] = Part
-                except ImportError:
-                    pass
-                try:
-                    from FreeCAD import Vector
-                    namespace["Vector"] = Vector
-                except ImportError:
-                    pass
-
-                result_value = None
-                try:
-                    tree = ast.parse(code)
-                    if tree.body and isinstance(tree.body[-1], ast.Expr):
-                        if len(tree.body) > 1:
-                            exec_module = ast.Module(body=tree.body[:-1], type_ignores=[])
-                            ast.fix_missing_locations(exec_module)
-                            exec(compile(exec_module, "<string>", "exec"), namespace)
-                        expr_ast = ast.Expression(body=tree.body[-1].value)
-                        ast.fix_missing_locations(expr_ast)
-                        result_value = eval(compile(expr_ast, "<string>", "eval"), namespace)
-                    else:
-                        exec(code, namespace)
-                        if "result" in namespace:
-                            result_value = namespace["result"]
-                except SyntaxError as e:
-                    return {"error": f"SyntaxError: {e}", "traceback": tb_module.format_exc()}
-
-                if result_value is not None:
-                    return {"success": True, "result": repr(result_value)}
-                return {"success": True, "result": "Code executed successfully"}
-
-            except Exception as e:
-                return {"error": f"Python execution error: {e}", "traceback": tb_module.format_exc()}
-
-        self._run_on_gui_thread_async(job_id, execute_task)
+        self._run_on_gui_thread_async(job_id, lambda: self._run_python_code(code))
         return json.dumps({"job_id": job_id, "status": "submitted"})
 
     def _poll_job(self, args: Dict[str, Any]) -> str:
@@ -499,6 +453,27 @@ class FreeCADSocketServer:
             for jid, j in self._async_jobs.items()
         }
         return json.dumps({"jobs": jobs, "count": len(jobs)})
+
+    # -----------------------------------------------------------------
+    # cancel_operation
+    # -----------------------------------------------------------------
+
+    def _cancel_operation(self, args: Dict[str, Any]) -> str:
+        """Request cancellation of the current long-running FreeCAD operation.
+
+        Calls FreeCADGui.cancelOperation() which sets Base::OperationCancel::requested.
+        The flag is checked within ≤200 ms by any cancellable operation
+        (Thickness, boolean, Check Geometry, …).
+
+        Safe to call from the socket thread while the GUI thread is blocked —
+        the atomic store is lock-free and immediately visible to the GUI thread.
+        """
+        try:
+            import FreeCADGui as Gui
+            Gui.cancelOperation()
+            return json.dumps({"result": "Cancel requested — operation will stop within 200 ms"})
+        except Exception as e:
+            return json.dumps({"error": f"cancelOperation failed: {e}"})
 
     # -----------------------------------------------------------------
     # Connection handling
@@ -677,6 +652,8 @@ class FreeCADSocketServer:
             return self._poll_job(args)
         if tool_name == "list_jobs":
             return self._list_jobs(args)
+        if tool_name == "cancel_operation":
+            return self._cancel_operation(args)
         if tool_name == "get_debug_logs":
             return self._get_debug_logs(args)
 
@@ -782,6 +759,73 @@ class FreeCADSocketServer:
     # execute_python
     # -----------------------------------------------------------------
 
+    def _run_python_code(self, code: str) -> dict:
+        """Core Python execution: runs code on the GUI thread, captures stdout.
+
+        Returns a result dict suitable for _run_on_gui_thread / _run_on_gui_thread_async.
+
+        Output priority:
+          - stdout lines (from print() calls) are always included when present
+          - the last-expression value (or `result` variable) is appended when present
+          - if neither, returns "Code executed successfully"
+        """
+        import ast, io, sys
+
+        namespace = {
+            "FreeCAD": FreeCAD,
+            "FreeCADGui": FreeCADGui,
+            "App": FreeCAD,
+            "Gui": FreeCADGui,
+        }
+        try:
+            import Part
+            namespace["Part"] = Part
+        except ImportError:
+            pass
+        try:
+            from FreeCAD import Vector
+            namespace["Vector"] = Vector
+        except ImportError:
+            pass
+
+        result_value = None
+        old_stdout = sys.stdout
+        sys.stdout = captured = io.StringIO()
+        try:
+            try:
+                tree = ast.parse(code)
+                if tree.body and isinstance(tree.body[-1], ast.Expr):
+                    # Execute all statements except the last
+                    if len(tree.body) > 1:
+                        exec_module = ast.Module(body=tree.body[:-1], type_ignores=[])
+                        ast.fix_missing_locations(exec_module)
+                        exec(compile(exec_module, "<string>", "exec"), namespace)
+                    # Evaluate the last expression
+                    expr_ast = ast.Expression(body=tree.body[-1].value)
+                    ast.fix_missing_locations(expr_ast)
+                    result_value = eval(compile(expr_ast, "<string>", "eval"), namespace)
+                else:
+                    exec(code, namespace)
+                    if "result" in namespace:
+                        result_value = namespace["result"]
+            except SyntaxError as e:
+                return {"error": f"SyntaxError: {e}", "traceback": tb_module.format_exc()}
+        except Exception as e:
+            return {"error": f"Python execution error: {e}", "traceback": tb_module.format_exc()}
+        finally:
+            sys.stdout = old_stdout
+
+        stdout_output = captured.getvalue().rstrip("\n")
+        parts = []
+        if stdout_output:
+            parts.append(stdout_output)
+        if result_value is not None:
+            parts.append(repr(result_value))
+
+        if parts:
+            return {"success": True, "result": "\n".join(parts)}
+        return {"success": True, "result": "Code executed successfully"}
+
     def _execute_python(self, args: Dict[str, Any]) -> str:
         """Execute Python code in FreeCAD context with expression value capture (GUI-safe).
 
@@ -795,66 +839,11 @@ class FreeCADSocketServer:
             "FreeCAD.ActiveDocument"   -> "<Document object>"
             "result = 42"              -> "42" (explicit result variable)
         """
-        import ast
-
         code = args.get("code", "")
         if not code:
             return json.dumps({"error": "No code provided"})
 
-        def execute_task():
-            try:
-                namespace = {
-                    "FreeCAD": FreeCAD,
-                    "FreeCADGui": FreeCADGui,
-                    "App": FreeCAD,
-                    "Gui": FreeCADGui,
-                }
-
-                try:
-                    import Part
-                    namespace["Part"] = Part
-                except ImportError:
-                    pass
-
-                try:
-                    from FreeCAD import Vector
-                    namespace["Vector"] = Vector
-                except ImportError:
-                    pass
-
-                result_value = None
-
-                try:
-                    tree = ast.parse(code)
-
-                    if tree.body and isinstance(tree.body[-1], ast.Expr):
-                        # Execute all statements except the last
-                        if len(tree.body) > 1:
-                            exec_module = ast.Module(body=tree.body[:-1], type_ignores=[])
-                            ast.fix_missing_locations(exec_module)
-                            exec(compile(exec_module, "<string>", "exec"), namespace)
-
-                        # Evaluate the last expression
-                        expr_ast = ast.Expression(body=tree.body[-1].value)
-                        ast.fix_missing_locations(expr_ast)
-                        result_value = eval(compile(expr_ast, "<string>", "eval"), namespace)
-
-                    else:
-                        exec(code, namespace)
-                        if "result" in namespace:
-                            result_value = namespace["result"]
-
-                except SyntaxError as e:
-                    return {"error": f"SyntaxError: {e}", "traceback": tb_module.format_exc()}
-
-                if result_value is not None:
-                    return {"success": True, "result": repr(result_value)}
-                return {"success": True, "result": "Code executed successfully"}
-
-            except Exception as e:
-                return {"error": f"Python execution error: {e}", "traceback": tb_module.format_exc()}
-
-        return self._run_on_gui_thread(execute_task)
+        return self._run_on_gui_thread(lambda: self._run_python_code(code))
 
     # -----------------------------------------------------------------
     # Debug logs

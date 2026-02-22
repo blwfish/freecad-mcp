@@ -592,6 +592,17 @@ async def main():
                     }
                 ),
                 types.Tool(
+                    name="cancel_operation",
+                    description="Cancel the current long-running FreeCAD operation (Thickness, boolean, Check Geometry, etc.). "
+                                "Sets the global cancel flag; the operation stops within ≤200 ms. "
+                                "Safe to call while the GUI thread is blocked.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
+                ),
+                types.Tool(
                     name="continue_selection",
                     description="Continue an interactive selection operation after selecting elements in FreeCAD",
                     inputSchema={
@@ -659,7 +670,8 @@ async def main():
                       "view_control", "cam_operations", "cam_tools", "cam_tool_controllers",
                       "cam_machines", "mesh_operations", "measurement_operations",
                       "spreadsheet_operations", "draft_operations", "get_debug_logs",
-                      "execute_python", "execute_python_async", "poll_job", "list_jobs"]:
+                      "execute_python", "execute_python_async", "poll_job", "list_jobs",
+                      "cancel_operation"]:
             args = arguments or {}
 
             # Check if this is a continuation from interactive selection
