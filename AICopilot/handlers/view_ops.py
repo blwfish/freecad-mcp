@@ -202,32 +202,46 @@ class ViewOpsHandler(BaseHandler):
             return f"Error getting selection: {e}"
 
     def take_screenshot(self, args: Dict[str, Any]) -> str:
-        """Screenshot functionality is DISABLED due to data size limitations."""
-        return json.dumps({
-            "success": False,
-            "error": "Screenshot not supported over MCP",
-            "message": (
-                "Screenshots are not practical over MCP due to data size limitations.\n\n"
-                "COST ANALYSIS:\n"
-                "  - 1920x1080 (HD):  ~2MB base64 -> ~3M tokens -> $8.85\n"
-                "  - 3840x2160 (4K):  ~8MB base64 -> ~12M tokens -> $35.39\n"
-                "  - 5120x2880 (5K):  ~15MB base64 -> ~21M tokens -> $62.91\n\n"
-                "These sizes exceed Claude's 190K token context window by 15-110x.\n"
-                "Even if technically possible, a single screenshot would consume\n"
-                "your entire conversation budget and cost $9-$63.\n\n"
-                "ALTERNATIVES - Use FreeCAD's native screenshot features:\n"
-                "  - From GUI: View menu -> Save Picture...\n"
-                "  - From Python: Gui.activeDocument().activeView().saveImage('path.png', 1920, 1080)\n"
-                "  - From MCP: Use execute_python tool to call saveImage()\n\n"
-                "For automation: Save screenshots to a shared directory, then reference\n"
-                "the file path in conversation. Claude can then view the file if needed."
-            ),
-            "alternatives": {
-                "gui_menu": "View -> Save Picture...",
-                "python_command": "Gui.activeDocument().activeView().saveImage('/path/to/screenshot.png', width, height)",
-                "mcp_command": "Use execute_python tool to call the saveImage() method",
-            }
-        })
+        """Take a screenshot of the FreeCAD viewport and return as base64-encoded PNG."""
+        import tempfile
+        import os
+        import base64
+
+        width = args.get("width", 800)
+        height = args.get("height", 600)
+        tmp_path = None
+
+        try:
+            doc = FreeCADGui.activeDocument()
+            if doc is None:
+                return json.dumps({"success": False, "error": "No active document"})
+
+            view = doc.activeView()
+            if view is None:
+                return json.dumps({"success": False, "error": "No active view"})
+
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+                tmp_path = f.name
+
+            view.saveImage(tmp_path, width, height)
+
+            with open(tmp_path, "rb") as f:
+                image_data = base64.b64encode(f.read()).decode("utf-8")
+
+            return json.dumps({
+                "success": True,
+                "image_data": image_data,
+                "mime_type": "image/png",
+                "width": width,
+                "height": height,
+            })
+
+        except Exception as e:
+            return json.dumps({"success": False, "error": str(e)})
+
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
 
     def get_screenshot(self, args: Dict[str, Any]) -> str:
         """Alias for take_screenshot for backwards compatibility."""

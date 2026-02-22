@@ -661,25 +661,37 @@ async def main():
                       "spreadsheet_operations", "draft_operations", "get_debug_logs",
                       "execute_python", "execute_python_async", "poll_job", "list_jobs"]:
             args = arguments or {}
-            
+
             # Check if this is a continuation from interactive selection
             if args.get("_continue_from_interactive"):
                 # Extract the original operation details
                 operation_id = args.get("operation_id")
-                tool_name = args.get("tool_name") 
+                tool_name = args.get("tool_name")
                 original_args = args.get("original_args", {})
-                
+
                 # Add continuation flag
                 continue_args = {
                     **original_args,
                     "_continue_selection": True,
                     "_operation_id": operation_id
                 }
-                
+
                 response = await send_to_freecad(tool_name, continue_args)
             else:
                 response = await send_to_freecad(name, args)
-            
+
+            # Return image content when the response contains base64 image data
+            try:
+                result = json.loads(response)
+                if isinstance(result, dict) and result.get("image_data"):
+                    return [types.ImageContent(
+                        type="image",
+                        data=result["image_data"],
+                        mimeType=result.get("mime_type", "image/png"),
+                    )]
+            except (json.JSONDecodeError, Exception):
+                pass
+
             return [types.TextContent(
                 type="text",
                 text=response
