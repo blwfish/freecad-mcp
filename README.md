@@ -1,6 +1,6 @@
 # freecad-mcp
 
-MCP server for FreeCAD — 17 tools for AI-assisted 3D CAD modeling via the [Model Context Protocol](https://modelcontextprotocol.io/).
+MCP server for FreeCAD — 19 tools for AI-assisted 3D CAD modeling via the [Model Context Protocol](https://modelcontextprotocol.io/).
 
 Design parametric parts, generate CAM toolpaths, take screenshots, and execute Python scripts — all driven by an AI assistant like Claude.
 

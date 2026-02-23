@@ -143,19 +143,21 @@ class TestServerFraming:
 # ---------------------------------------------------------------------------
 
 class TestRunOnGuiThread:
+    def _simulate_gui_thread(self, server):
+        """Simulate the GUI timer draining the task queue with tagged request IDs."""
+        def process():
+            time.sleep(0.05)
+            req_id, task = server._gui_task_queue.get(timeout=1)
+            result = task()
+            server._gui_response_queue.put((req_id, result))
+        return process
+
     def test_success_result(self, server):
         """A task returning {success: True, result: X} should produce {"result": X}."""
         def fake_task():
             return {"success": True, "result": "Box created"}
 
-        # Simulate the GUI timer processing the task
-        def process():
-            time.sleep(0.05)
-            task = server._gui_task_queue.get(timeout=1)
-            result = task()
-            server._gui_response_queue.put(result)
-
-        t = threading.Thread(target=process)
+        t = threading.Thread(target=self._simulate_gui_thread(server))
         t.start()
 
         response = server._run_on_gui_thread(fake_task)
@@ -168,13 +170,7 @@ class TestRunOnGuiThread:
         def fake_task():
             return {"error": "Something broke"}
 
-        def process():
-            time.sleep(0.05)
-            task = server._gui_task_queue.get(timeout=1)
-            result = task()
-            server._gui_response_queue.put(result)
-
-        t = threading.Thread(target=process)
+        t = threading.Thread(target=self._simulate_gui_thread(server))
         t.start()
 
         response = server._run_on_gui_thread(fake_task)
@@ -196,13 +192,7 @@ class TestRunOnGuiThread:
         def fake_task():
             return 42
 
-        def process():
-            time.sleep(0.05)
-            task = server._gui_task_queue.get(timeout=1)
-            result = task()
-            server._gui_response_queue.put(result)
-
-        t = threading.Thread(target=process)
+        t = threading.Thread(target=self._simulate_gui_thread(server))
         t.start()
 
         response = server._run_on_gui_thread(fake_task)
@@ -218,9 +208,10 @@ class TestRunOnGuiThread:
 class TestProcessGuiTasks:
     def test_processes_queued_task(self, server):
         """_process_gui_tasks should drain the queue and put results."""
-        server._gui_task_queue.put(lambda: {"success": True, "result": "done"})
+        server._gui_task_queue.put((1, lambda: {"success": True, "result": "done"}))
         server._process_gui_tasks()
-        result = server._gui_response_queue.get_nowait()
+        req_id, result = server._gui_response_queue.get_nowait()
+        assert req_id == 1
         assert result == {"success": True, "result": "done"}
 
     def test_handles_task_exception(self, server):
@@ -228,16 +219,17 @@ class TestProcessGuiTasks:
         def bad_task():
             raise ValueError("boom")
 
-        server._gui_task_queue.put(bad_task)
+        server._gui_task_queue.put((2, bad_task))
         server._process_gui_tasks()
-        result = server._gui_response_queue.get_nowait()
+        req_id, result = server._gui_response_queue.get_nowait()
+        assert req_id == 2
         assert "error" in result
         assert "boom" in result["error"]
 
     def test_processes_multiple_tasks(self, server):
         """Should drain all tasks in one call."""
         for i in range(3):
-            server._gui_task_queue.put(lambda i=i: {"success": True, "result": f"task_{i}"})
+            server._gui_task_queue.put((i, lambda i=i: {"success": True, "result": f"task_{i}"}))
 
         server._process_gui_tasks()
 
@@ -245,6 +237,9 @@ class TestProcessGuiTasks:
         while not server._gui_response_queue.empty():
             results.append(server._gui_response_queue.get_nowait())
         assert len(results) == 3
+        # Each result should be a (req_id, result_dict) tuple
+        for req_id, result in results:
+            assert "success" in result
 
 
 # ---------------------------------------------------------------------------
@@ -367,12 +362,12 @@ class TestDispatchToHandler:
         handler = MagicMock()
         handler.create_spreadsheet = MagicMock(return_value="Spreadsheet created")
 
-        # Simulate GUI processing
+        # Simulate GUI processing with tagged request IDs
         def process():
             time.sleep(0.05)
-            task = server._gui_task_queue.get(timeout=1)
+            req_id, task = server._gui_task_queue.get(timeout=1)
             result = task()
-            server._gui_response_queue.put(result)
+            server._gui_response_queue.put((req_id, result))
 
         t = threading.Thread(target=process)
         t.start()
@@ -514,9 +509,9 @@ class TestExecutePython:
         """Helper: run _execute_python with simulated GUI thread processing."""
         def process():
             time.sleep(0.05)
-            task = server._gui_task_queue.get(timeout=2)
+            req_id, task = server._gui_task_queue.get(timeout=2)
             result = task()
-            server._gui_response_queue.put(result)
+            server._gui_response_queue.put((req_id, result))
 
         t = threading.Thread(target=process)
         t.start()
@@ -586,17 +581,20 @@ class TestExecutePython:
 # ---------------------------------------------------------------------------
 
 class TestCallOnGuiThread:
+    def _simulate_gui_thread(self, server):
+        """Simulate the GUI timer draining the task queue with tagged request IDs."""
+        def process():
+            time.sleep(0.05)
+            req_id, task = server._gui_task_queue.get(timeout=1)
+            result = task()
+            server._gui_response_queue.put((req_id, result))
+        return process
+
     def test_wraps_handler_success(self, server):
         """Should wrap handler result in {success: True, result: ...}."""
         handler_method = MagicMock(return_value="created")
 
-        def process():
-            time.sleep(0.05)
-            task = server._gui_task_queue.get(timeout=1)
-            result = task()
-            server._gui_response_queue.put(result)
-
-        t = threading.Thread(target=process)
+        t = threading.Thread(target=self._simulate_gui_thread(server))
         t.start()
 
         response = server._call_on_gui_thread(handler_method, {"x": 1}, "test")
@@ -609,13 +607,7 @@ class TestCallOnGuiThread:
         """If handler raises, should return error with traceback."""
         handler_method = MagicMock(side_effect=ValueError("bad value"))
 
-        def process():
-            time.sleep(0.05)
-            task = server._gui_task_queue.get(timeout=1)
-            result = task()
-            server._gui_response_queue.put(result)
-
-        t = threading.Thread(target=process)
+        t = threading.Thread(target=self._simulate_gui_thread(server))
         t.start()
 
         response = server._call_on_gui_thread(handler_method, {}, "test")
@@ -636,7 +628,7 @@ class TestConfiguration:
         assert ss_module.WINDOWS_PORT == 23456
 
     def test_version(self, ss_module):
-        assert ss_module.__version__ == "5.2.0"
+        assert ss_module.__version__ == "5.3.0"
 
     def test_max_message_size(self, ss_module):
         assert ss_module.MAX_MESSAGE_SIZE == 50 * 1024
