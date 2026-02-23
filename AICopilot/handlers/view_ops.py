@@ -83,13 +83,24 @@ class ViewOpsHandler(BaseHandler):
                 except Exception as e:
                     return {"error": f"View task failed: {e}"}
 
-            if self.gui_task_queue and self.gui_response_queue:
-                self.gui_task_queue.put(view_task)
-
+            # Use server's tagged GUI thread dispatch (prevents stale response bugs)
+            if self.server and hasattr(self.server, '_run_on_gui_thread'):
+                import json
+                result_json = self.server._run_on_gui_thread(view_task, timeout=5.0)
+                parsed = json.loads(result_json)
+                if "error" in parsed:
+                    return f"Error setting view: {parsed['error']}"
+                result_str = parsed.get("result", "")
+                if "success" in str(result_str):
+                    return f"View set to {view_type}"
+                return result_str
+            elif self.gui_task_queue and self.gui_response_queue:
+                # Legacy fallback with tagged tuple
+                self.gui_task_queue.put((0, view_task))
                 start_time = time.time()
                 while time.time() - start_time < 5:
                     try:
-                        result = self.gui_response_queue.get_nowait()
+                        _id, result = self.gui_response_queue.get_nowait()
                         if isinstance(result, dict):
                             if "error" in result:
                                 return f"Error setting view: {result['error']}"
@@ -99,7 +110,6 @@ class ViewOpsHandler(BaseHandler):
                     except queue.Empty:
                         time.sleep(0.1)
                         continue
-
                 return "View change timeout - GUI thread may be busy"
             else:
                 return self.set_view(args)

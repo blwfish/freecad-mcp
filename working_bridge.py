@@ -63,11 +63,12 @@ async def main():
     server = Server("freecad")
     
     # Check if FreeCAD is available (cross-platform)
+    # Socket path is configurable via env var (matches server-side convention)
     if platform.system() == "Windows":
         socket_path = "localhost:23456"
         freecad_available = True  # We'll check connection when needed
     else:
-        socket_path = "/tmp/freecad_mcp.sock"
+        socket_path = os.environ.get("FREECAD_MCP_SOCKET", "/tmp/freecad_mcp.sock")
         freecad_available = os.path.exists(socket_path)
     
     @debug_decorator(track_state=False, track_performance=True)
@@ -91,7 +92,10 @@ async def main():
                 return json.dumps({"error": "Failed to send command to FreeCAD"})
             
             # Receive response with length-prefixed protocol (v2.1.1)
-            response = receive_message(sock, timeout=30.0)
+            # Use caller's timeout if provided (e.g., execute_python long ops)
+            recv_timeout = float(args.get("timeout", 30.0)) if isinstance(args, dict) else 30.0
+            # Add 5s grace period so server-side timeout fires first
+            response = receive_message(sock, timeout=recv_timeout + 5.0)
             sock.close()
             
             if response is None:
@@ -177,6 +181,25 @@ async def main():
                         }
                     },
                     "required": ["message"]
+                }
+            ),
+            types.Tool(
+                name="restart_freecad",
+                description="Restart FreeCAD: saves open documents, spawns new instance, exits current. Use when FreeCAD is unresponsive or needs to reload addons.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "save_documents": {
+                            "type": "boolean",
+                            "description": "Save open documents before restart (default true)",
+                            "default": True,
+                        },
+                        "reopen_documents": {
+                            "type": "boolean",
+                            "description": "Reopen documents in new instance (default true)",
+                            "default": True,
+                        }
+                    },
                 }
             )
         ]
@@ -642,8 +665,39 @@ async def main():
         elif name == "test_echo":
             message = arguments.get("message", "No message provided") if arguments else "No arguments"
             return [types.TextContent(
-                type="text", 
+                type="text",
                 text=f"Bridge received: {message}"
+            )]
+
+        elif name == "restart_freecad":
+            # Send restart command, then wait for new instance
+            import asyncio
+            result = await send_to_freecad("restart_freecad", arguments or {})
+            # Wait for old instance to die and new one to start
+            await asyncio.sleep(3)
+            # Poll for new instance (up to 30s)
+            for i in range(30):
+                if os.path.exists(socket_path):
+                    try:
+                        test = await send_to_freecad("test_echo", {"message": "ping"})
+                        parsed = json.loads(test)
+                        if "error" not in parsed:
+                            return [types.TextContent(
+                                type="text",
+                                text=json.dumps({
+                                    "status": "FreeCAD restarted successfully",
+                                    "restart_response": json.loads(result) if isinstance(result, str) else result,
+                                })
+                            )]
+                    except Exception:
+                        pass
+                await asyncio.sleep(1)
+            return [types.TextContent(
+                type="text",
+                text=json.dumps({
+                    "status": "Restart command sent but new instance not yet available",
+                    "restart_response": json.loads(result) if isinstance(result, str) else result,
+                })
             )]
             
         # Handle continue_selection tool

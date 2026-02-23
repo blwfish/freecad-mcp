@@ -43,6 +43,23 @@ class BaseHandler:
         """Access the selection manager from the server."""
         return self.server.selector if self.server else None
 
+    def run_on_gui_thread(self, task_fn, timeout=30.0) -> str:
+        """Run a callable on the Qt GUI thread via the server's tagged queue.
+
+        Delegates to server._run_on_gui_thread which handles request ID
+        tagging and stale response draining.
+
+        Returns JSON string with result or error.
+        """
+        if self.server and hasattr(self.server, '_run_on_gui_thread'):
+            return self.server._run_on_gui_thread(task_fn, timeout)
+        # Fallback: run directly (no server or console mode)
+        try:
+            result = task_fn()
+            return result
+        except Exception as e:
+            return f"Error: {e}"
+
     def log_and_return(self, operation: str, parameters: Dict, result: str = None, error: Exception = None, duration: float = None):
         """Helper to log operation and return result/error.
 

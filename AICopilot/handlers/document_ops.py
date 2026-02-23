@@ -14,6 +14,7 @@ class DocumentOpsHandler(BaseHandler):
     def __init__(self, server=None, gui_task_queue=None, gui_response_queue=None, log_operation=None, capture_state=None):
         """Initialize with optional GUI queues for thread-safe operations."""
         super().__init__(server, log_operation, capture_state)
+        # Legacy queue references kept for backward compat but no longer used directly
         self.gui_task_queue = gui_task_queue
         self.gui_response_queue = gui_response_queue
 
@@ -31,16 +32,21 @@ class DocumentOpsHandler(BaseHandler):
                 except Exception as e:
                     return f"Error creating document: {e}"
 
-            if self.gui_task_queue and self.gui_response_queue:
-                self.gui_task_queue.put(create_doc_task)
-
+            # Use server's tagged GUI thread dispatch (prevents stale response bugs)
+            if self.server and hasattr(self.server, '_run_on_gui_thread'):
+                import json
+                result_json = self.server._run_on_gui_thread(create_doc_task, timeout=5.0)
+                parsed = json.loads(result_json)
+                return parsed.get("result", parsed.get("error", "Unknown result"))
+            elif self.gui_task_queue and self.gui_response_queue:
+                # Legacy fallback
+                self.gui_task_queue.put((0, create_doc_task))
                 try:
-                    result = self.gui_response_queue.get(timeout=5.0)
+                    _id, result = self.gui_response_queue.get(timeout=5.0)
                     return result
                 except queue.Empty:
                     return "Timeout waiting for document creation"
             else:
-                # Direct creation if no queue available
                 doc = FreeCAD.newDocument(name)
                 doc.recompute()
                 return f"Document '{name}' created successfully"

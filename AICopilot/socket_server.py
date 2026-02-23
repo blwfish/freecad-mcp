@@ -4,7 +4,7 @@
 # Version: 5.0.0 - Core rewrite: eliminated dead code, unified dispatch,
 #                   replaced busy-wait polling with Queue.get(timeout)
 
-__version__ = "5.2.0"
+__version__ = "5.3.0"
 REQUIRED_VERSIONS = {
     "freecad_debug": ">=1.1.0",
     "freecad_health": ">=1.0.1",
@@ -221,8 +221,10 @@ class FreeCADSocketServer:
         self.server_thread = None
 
         # GUI thread task queues (used by handlers that need Qt main thread)
+        # Tasks are (request_id, callable) tuples; responses are (request_id, result).
         self._gui_task_queue = queue.Queue()
         self._gui_response_queue = queue.Queue()
+        self._request_counter = 0  # monotonic request ID
 
         # Async job tracking: job_id -> {status, started, result, error, elapsed}
         self._async_jobs: Dict[str, Dict] = {}
@@ -315,13 +317,13 @@ class FreeCADSocketServer:
         """Process queued tasks on the Qt main thread (called by QTimer)."""
         while not self._gui_task_queue.empty():
             try:
-                task = self._gui_task_queue.get_nowait()
+                req_id, task = self._gui_task_queue.get_nowait()
                 result = task()
-                self._gui_response_queue.put(result)
+                self._gui_response_queue.put((req_id, result))
             except queue.Empty:
                 break
             except Exception as e:
-                self._gui_response_queue.put({"error": f"GUI task error: {e}"})
+                self._gui_response_queue.put((req_id, {"error": f"GUI task error: {e}"}))
 
         if QtCore:
             QtCore.QTimer.singleShot(100, self._process_gui_tasks)
@@ -330,20 +332,46 @@ class FreeCADSocketServer:
         """Run a callable on the Qt GUI thread and wait for the result.
 
         This is the single entry point for all GUI-safe execution.
-        Replaces the duplicated busy-wait polling loops.
+        Uses request IDs to prevent stale responses from previous
+        timed-out calls from being confused with the current response.
         """
-        self._gui_task_queue.put(task_fn)
-        try:
-            result = self._gui_response_queue.get(timeout=timeout)
-        except queue.Empty:
-            return json.dumps({"error": "Operation timeout - GUI thread may be busy"})
+        self._request_counter += 1
+        req_id = self._request_counter
+        self._gui_task_queue.put((req_id, task_fn))
 
-        if isinstance(result, dict):
-            if "error" in result:
-                return json.dumps({"error": result["error"]})
-            if "success" in result:
-                return json.dumps({"result": result["result"]})
-        return json.dumps({"result": str(result)})
+        deadline = time.time() + timeout
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                FreeCAD.Console.PrintWarning(
+                    f"[MCP] Request {req_id} timed out after {timeout:.0f}s "
+                    f"- GUI thread may still be busy\n"
+                )
+                return json.dumps({
+                    "error": f"Operation timeout ({timeout:.0f}s) - "
+                             f"GUI thread may be busy. Use execute_python_async "
+                             f"for long operations."
+                })
+            try:
+                resp_id, result = self._gui_response_queue.get(timeout=remaining)
+            except queue.Empty:
+                continue  # recalculate remaining and check deadline
+
+            if resp_id != req_id:
+                # Stale response from a previously timed-out request -- discard
+                FreeCAD.Console.PrintWarning(
+                    f"[MCP] Discarded stale response for request {resp_id} "
+                    f"(waiting for {req_id})\n"
+                )
+                continue
+
+            # Matched -- process result
+            if isinstance(result, dict):
+                if "error" in result:
+                    return json.dumps({"error": result["error"]})
+                if "success" in result:
+                    return json.dumps({"result": result["result"]})
+            return json.dumps({"result": str(result)})
 
     def _run_on_gui_thread_async(self, job_id: str, task_fn) -> None:
         """Schedule task_fn on the Qt GUI thread without blocking the caller.
@@ -656,6 +684,8 @@ class FreeCADSocketServer:
             return self._cancel_operation(args)
         if tool_name == "get_debug_logs":
             return self._get_debug_logs(args)
+        if tool_name == "restart_freecad":
+            return self._restart_freecad(args)
 
         return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
@@ -843,7 +873,74 @@ class FreeCADSocketServer:
         if not code:
             return json.dumps({"error": "No code provided"})
 
-        return self._run_on_gui_thread(lambda: self._run_python_code(code))
+        timeout = args.get("timeout", 30.0)
+        try:
+            timeout = float(timeout)
+        except (TypeError, ValueError):
+            timeout = 30.0
+
+        return self._run_on_gui_thread(lambda: self._run_python_code(code), timeout=timeout)
+
+    # -----------------------------------------------------------------
+    # Restart FreeCAD
+    # -----------------------------------------------------------------
+
+    def _restart_freecad(self, args: Dict[str, Any]) -> str:
+        """Restart FreeCAD: save documents, spawn new instance, exit current.
+
+        The response is sent BEFORE the restart happens, so the MCP bridge
+        gets a clean response. The new FreeCAD instance will start fresh
+        with AICopilot reconnecting on the same socket path.
+        """
+        import subprocess
+
+        save_docs = args.get("save_documents", True)
+        reopen_docs = args.get("reopen_documents", True)
+
+        doc_paths = []
+        try:
+            for doc_name, doc in FreeCAD.listDocuments().items():
+                path = doc.FileName
+                if path:
+                    if save_docs:
+                        doc.save()
+                        FreeCAD.Console.PrintMessage(f"[MCP] Saved {doc_name}: {path}\n")
+                    if reopen_docs:
+                        doc_paths.append(path)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to save documents: {e}"})
+
+        # Build the command to restart FreeCAD
+        # Use sys.executable for the Python, but we need the FreeCAD binary
+        fc_bin = FreeCAD.getHomePath() + "bin/FreeCAD"
+        if not os.path.exists(fc_bin):
+            # Try platform-specific locations
+            import shutil
+            fc_bin = shutil.which("FreeCAD") or shutil.which("freecad")
+        if not fc_bin:
+            return json.dumps({"error": "Cannot find FreeCAD binary for restart"})
+
+        # Schedule the restart on the GUI thread (after response is sent)
+        def do_restart():
+            try:
+                cmd = [fc_bin] + doc_paths
+                env = os.environ.copy()
+                subprocess.Popen(cmd, env=env, start_new_session=True)
+                FreeCAD.Console.PrintMessage("[MCP] New FreeCAD instance spawned, exiting...\n")
+                # Give the response time to be sent, then quit
+                if QtCore:
+                    QtCore.QTimer.singleShot(500, lambda: FreeCADGui.getMainWindow().close())
+            except Exception as e:
+                FreeCAD.Console.PrintError(f"[MCP] Restart failed: {e}\n")
+
+        if QtCore:
+            QtCore.QTimer.singleShot(100, do_restart)
+
+        return json.dumps({
+            "result": f"Restarting FreeCAD. Saved {len(doc_paths)} documents. "
+                      f"New instance will reconnect on same socket.",
+            "saved_documents": doc_paths,
+        })
 
     # -----------------------------------------------------------------
     # Debug logs
