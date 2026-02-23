@@ -229,6 +229,10 @@ class FreeCADSocketServer:
         # Async job tracking: job_id -> {status, started, result, error, elapsed}
         self._async_jobs: Dict[str, Dict] = {}
 
+        # Persistent namespace for execute_python calls.
+        # Variables created in one call survive to the next.
+        self._python_namespace: Dict[str, Any] = {}
+
         # Initialize handlers
         self.primitives = PrimitivesHandler(self, _log_operation, _capture_state)
         self.boolean_ops = BooleanOpsHandler(self, _log_operation, _capture_state)
@@ -794,6 +798,8 @@ class FreeCADSocketServer:
 
         Returns a result dict suitable for _run_on_gui_thread / _run_on_gui_thread_async.
 
+        Uses a persistent namespace so variables survive across calls.
+
         Output priority:
           - stdout lines (from print() calls) are always included when present
           - the last-expression value (or `result` variable) is appended when present
@@ -801,22 +807,22 @@ class FreeCADSocketServer:
         """
         import ast, io, sys
 
-        namespace = {
-            "FreeCAD": FreeCAD,
-            "FreeCADGui": FreeCADGui,
-            "App": FreeCAD,
-            "Gui": FreeCADGui,
-        }
+        # Ensure base modules are always available (even if user overwrites them)
+        self._python_namespace["FreeCAD"] = FreeCAD
+        self._python_namespace["FreeCADGui"] = FreeCADGui
+        self._python_namespace["App"] = FreeCAD
+        self._python_namespace["Gui"] = FreeCADGui
         try:
             import Part
-            namespace["Part"] = Part
+            self._python_namespace["Part"] = Part
         except ImportError:
             pass
         try:
             from FreeCAD import Vector
-            namespace["Vector"] = Vector
+            self._python_namespace["Vector"] = Vector
         except ImportError:
             pass
+        namespace = self._python_namespace
 
         result_value = None
         old_stdout = sys.stdout
