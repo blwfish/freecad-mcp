@@ -626,6 +626,24 @@ async def main():
                     }
                 ),
                 types.Tool(
+                    name="cancel_job",
+                    description="Mark a running async job as cancelled so poll_job stops returning 'running'. "
+                                "Also fires the FreeCAD cancel flag. "
+                                "WARNING: raw OCCT booleans (Shape.common/fuse/cut) do NOT respond to the cancel flag — "
+                                "the GUI thread stays blocked until the C++ call finishes or crashes. "
+                                "After cancel_job, use restart_freecad to fully recover a stuck GUI thread.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "job_id": {
+                                "type": "string",
+                                "description": "Job ID to cancel (from execute_python_async)"
+                            }
+                        },
+                        "required": ["job_id"]
+                    }
+                ),
+                types.Tool(
                     name="continue_selection",
                     description="Continue an interactive selection operation after selecting elements in FreeCAD",
                     inputSchema={
@@ -725,7 +743,7 @@ async def main():
                       "cam_machines", "mesh_operations", "measurement_operations",
                       "spreadsheet_operations", "draft_operations", "get_debug_logs",
                       "execute_python", "execute_python_async", "poll_job", "list_jobs",
-                      "cancel_operation"]:
+                      "cancel_operation", "cancel_job"]:
             args = arguments or {}
 
             # Check if this is a continuation from interactive selection

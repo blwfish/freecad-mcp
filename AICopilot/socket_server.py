@@ -318,16 +318,61 @@ class FreeCADSocketServer:
     # -----------------------------------------------------------------
 
     def _process_gui_tasks(self):
-        """Process queued tasks on the Qt main thread (called by QTimer)."""
+        """Process queued tasks on the Qt main thread (called by QTimer).
+
+        Handles both synchronous tasks (req_id is an int, result goes to
+        _gui_response_queue) and async jobs (req_id is "async:<job_id>",
+        result stored in _async_jobs dict).
+        """
         while not self._gui_task_queue.empty():
+            req_id = None
             try:
                 req_id, task = self._gui_task_queue.get_nowait()
-                result = task()
-                self._gui_response_queue.put((req_id, result))
+
+                # Async job path
+                if isinstance(req_id, str) and req_id.startswith("async:"):
+                    job_id = req_id[6:]
+                    job = self._async_jobs.get(job_id)
+                    if job is None or job.get("status") != "running":
+                        # Job was cancelled before it even started — skip
+                        FreeCAD.Console.PrintMessage(
+                            f"[MCP] Skipping cancelled/missing async job {job_id}\n"
+                        )
+                        continue
+                    result = task()
+                    job.update({
+                        "status": "done",
+                        "result": result,
+                        "elapsed": time.time() - job["started"],
+                    })
+                    FreeCAD.Console.PrintMessage(
+                        f"[MCP] async job {job_id} done\n"
+                    )
+
+                # Synchronous path
+                else:
+                    result = task()
+                    self._gui_response_queue.put((req_id, result))
+
             except queue.Empty:
                 break
             except Exception as e:
-                self._gui_response_queue.put((req_id, {"error": f"GUI task error: {e}"}))
+                tb = tb_module.format_exc()
+                if isinstance(req_id, str) and req_id.startswith("async:"):
+                    job_id = req_id[6:]
+                    job = self._async_jobs.get(job_id)
+                    if job is not None:
+                        job.update({
+                            "status": "error",
+                            "error": str(e),
+                            "traceback": tb,
+                            "elapsed": time.time() - job["started"],
+                        })
+                        FreeCAD.Console.PrintMessage(
+                            f"[MCP] async job {job_id} error: {e}\n"
+                        )
+                elif req_id is not None:
+                    self._gui_response_queue.put((req_id, {"error": f"GUI task error: {e}"}))
 
         if QtCore:
             QtCore.QTimer.singleShot(100, self._process_gui_tasks)
@@ -381,9 +426,18 @@ class FreeCADSocketServer:
         """Schedule task_fn on the Qt GUI thread without blocking the caller.
 
         The result is stored in self._async_jobs[job_id] when complete.
-        QTimer.singleShot is thread-safe and always fires on the Qt main thread.
+
+        Uses the same _gui_task_queue / _process_gui_tasks mechanism as
+        synchronous execution.  QTimer.singleShot called from a non-Qt thread
+        (the socket handler thread) does NOT post to the main-thread event loop
+        — the callback silently never fires — so we must go through the queue
+        that was set up on the main thread at startup.
         """
-        def wrapper():
+        if QtCore:
+            # Tag the request so _process_gui_tasks routes it to the job dict
+            self._gui_task_queue.put((f"async:{job_id}", task_fn))
+        else:
+            # Console mode: no event loop, run inline
             try:
                 result = task_fn()
                 self._async_jobs[job_id].update({
@@ -398,15 +452,6 @@ class FreeCADSocketServer:
                     "traceback": tb_module.format_exc(),
                     "elapsed": time.time() - self._async_jobs[job_id]["started"],
                 })
-            FreeCAD.Console.PrintMessage(
-                f"[MCP] async job {job_id} finished: {self._async_jobs[job_id]['status']}\n"
-            )
-
-        if QtCore:
-            QtCore.QTimer.singleShot(0, wrapper)
-        else:
-            # Fallback: run synchronously (console mode)
-            wrapper()
 
     def _execute_python_async(self, args: Dict[str, Any]) -> str:
         """Submit Python code for async GUI-safe execution; returns job_id immediately.
@@ -447,7 +492,17 @@ class FreeCADSocketServer:
         elapsed = round(time.time() - job["started"], 1)
 
         if job["status"] == "running":
-            return json.dumps({"status": "running", "elapsed_s": elapsed})
+            response = {"status": "running", "elapsed_s": elapsed}
+            if elapsed > 120:
+                response["warning"] = (
+                    f"Job has been running for {elapsed:.0f}s. "
+                    f"If FreeCAD CPU is near zero, the Qt main thread may be blocked "
+                    f"by a long OCCT operation (booleans on complex geometry can take "
+                    f"many minutes or stall). "
+                    f"Call cancel_job(job_id='{job_id}') to mark it failed, "
+                    f"then restart_freecad to unblock the GUI thread."
+                )
+            return json.dumps(response)
 
         # Done or error — retrieve and clean up
         del self._async_jobs[job_id]
@@ -472,6 +527,58 @@ class FreeCADSocketServer:
                 "error": job.get("error", "unknown error"),
                 "elapsed_s": round(job.get("elapsed", elapsed), 1),
             })
+
+    def _cancel_job(self, args: Dict[str, Any]) -> str:
+        """Mark a running async job as cancelled and attempt to interrupt the operation.
+
+        Marks the job registry entry as error immediately so future poll_job calls
+        return an error instead of running forever.
+
+        NOTE: If the job is executing an OCCT boolean (common, fuse, cut) on the
+        Qt GUI thread, that C++ call will NOT be interrupted — it runs to completion
+        or crashes regardless.  The GUI thread remains blocked until the operation
+        finishes.  Use restart_freecad to fully recover a blocked GUI thread.
+        """
+        job_id = args.get("job_id", "")
+        if not job_id:
+            return json.dumps({"error": "job_id required"})
+        if job_id not in self._async_jobs:
+            return json.dumps({"error": f"Unknown job_id: {job_id!r}. Already retrieved or never submitted."})
+
+        job = self._async_jobs[job_id]
+        if job["status"] != "running":
+            return json.dumps({"error": f"Job {job_id} is not running (status: {job['status']})"})
+
+        elapsed = round(time.time() - job["started"], 1)
+        job.update({
+            "status": "error",
+            "error": f"Cancelled by user after {elapsed}s",
+            "elapsed": elapsed,
+        })
+
+        # Attempt to set the FreeCAD cancellation flag (works for PartDesign/Thickness ops;
+        # does NOT interrupt raw OCCT API calls like Shape.common/fuse/cut).
+        cancel_note = ""
+        try:
+            if FreeCADGui:
+                FreeCADGui.cancelOperation()
+                cancel_note = " FreeCAD cancel flag set."
+        except Exception:
+            pass
+
+        FreeCAD.Console.PrintWarning(
+            f"[MCP] Job {job_id} cancelled after {elapsed}s.{cancel_note} "
+            f"GUI thread may still be blocked if OCCT boolean is running.\n"
+        )
+
+        return json.dumps({
+            "result": (
+                f"Job {job_id} marked as cancelled after {elapsed}s.{cancel_note} "
+                f"If the underlying OCCT operation is still executing on the GUI thread, "
+                f"FreeCAD will remain unresponsive until it completes or crashes. "
+                f"Use restart_freecad to fully recover."
+            )
+        })
 
     def _list_jobs(self, args: Dict[str, Any]) -> str:
         """List all tracked async jobs and their current status."""
@@ -686,6 +793,8 @@ class FreeCADSocketServer:
             return self._list_jobs(args)
         if tool_name == "cancel_operation":
             return self._cancel_operation(args)
+        if tool_name == "cancel_job":
+            return self._cancel_job(args)
         if tool_name == "get_debug_logs":
             return self._get_debug_logs(args)
         if tool_name == "restart_freecad":
