@@ -1,6 +1,6 @@
 # freecad-mcp
 
-MCP server for FreeCAD — 19 tools for AI-assisted 3D CAD modeling via the [Model Context Protocol](https://modelcontextprotocol.io/).
+MCP server for FreeCAD — 20 tools for AI-assisted 3D CAD modeling via the [Model Context Protocol](https://modelcontextprotocol.io/).
 
 Design parametric parts, generate CAM toolpaths, take screenshots, and execute Python scripts — all driven by an AI assistant like Claude.
 
@@ -32,7 +32,7 @@ Design parametric parts, generate CAM toolpaths, take screenshots, and execute P
 
 See [INSTALL.md](INSTALL.md) for Claude Desktop config, other platforms, and troubleshooting.
 
-## Tools (17)
+## Tools (20)
 
 ### Smart Dispatchers (8 tools)
 
@@ -49,7 +49,7 @@ Each dispatcher accepts an `operation` argument routing to many sub-operations.
 | `spreadsheet_operations` | 8 | Parametric spreadsheet data management |
 | `draft_operations` | 5 | 2D drafting, clones, arrays |
 
-### Utility Tools (9 tools)
+### Utility Tools (12 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -57,8 +57,11 @@ Each dispatcher accepts an `operation` argument routing to many sub-operations.
 | `execute_python_async` | Submit long-running Python for async execution; returns a job ID immediately |
 | `poll_job` | Check status of an async job (running/done/error) |
 | `list_jobs` | List all tracked async jobs |
+| `cancel_operation` | Cancel a running FreeCAD operation (Thickness, boolean, etc.) |
+| `cancel_job` | Cancel a running async job |
 | `get_debug_logs` | Retrieve recent operation logs for troubleshooting |
 | `continue_selection` | Complete interactive edge/face selection (fillet, chamfer, hole workflows) |
+| `restart_freecad` | Restart FreeCAD, optionally saving and reopening documents |
 | `check_freecad_connection` | Verify FreeCAD is running with AICopilot loaded |
 | `mesh_operations` | Import/export meshes, mesh-to-solid conversion, validation, simplification |
 | `test_echo` | Connectivity test |

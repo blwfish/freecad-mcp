@@ -1,6 +1,6 @@
 # FreeCAD MCP — Instructions for Claude
 
-You have access to 19 MCP tools for controlling FreeCAD. Follow these instructions when using them.
+You have access to 20 MCP tools for controlling FreeCAD. Follow these instructions when using them.
 
 ## Mandatory Rules
 

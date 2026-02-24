@@ -460,25 +460,30 @@ class TestDispatchPartOperations:
 
 class TestDispatchViewControl:
     def test_known_operations(self, server):
-        """All mapped view_control operations should route."""
-        ops = ["screenshot", "set_view", "fit_all", "zoom_in", "zoom_out",
-               "create_document", "save_document", "list_objects",
-               "select_object", "clear_selection", "get_selection"]
-        for op in ops:
-            # view_control calls handler methods directly (they manage own GUI safety)
-            handler_method = MagicMock(return_value="ok")
+        """All mapped view_control operations should route.
 
-            # Patch the operation map lookup
-            with patch.object(server, 'view_ops') as mock_view, \
-                 patch.object(server, 'document_ops') as mock_doc:
-                mock_view.take_screenshot = handler_method
-                mock_view.set_view = handler_method
-                mock_view.fit_all = handler_method
-                mock_view.zoom_in = handler_method
-                mock_view.zoom_out = handler_method
-                mock_view.select_object = handler_method
-                mock_view.clear_selection = handler_method
-                mock_view.get_selection = handler_method
+        GUI ops go through _run_on_gui_thread; safe ops call handlers directly.
+        We mock _run_on_gui_thread to return a success JSON string so tests
+        don't block waiting for the (absent) GUI thread.
+        """
+        gui_ops = ["screenshot", "set_view", "fit_all", "zoom_in", "zoom_out",
+                   "select_object", "clear_selection", "get_selection",
+                   "hide_object", "show_object", "delete_object",
+                   "undo", "redo", "activate_workbench"]
+        safe_ops = ["create_document", "save_document", "list_objects"]
+
+        # GUI ops: mock _run_on_gui_thread to avoid blocking
+        for op in gui_ops:
+            with patch.object(server, '_run_on_gui_thread',
+                              return_value=json.dumps({"result": "ok"})):
+                result = server._dispatch_view_control({"operation": op})
+                parsed = json.loads(result)
+                assert "error" not in parsed, f"view_control {op} returned error: {parsed}"
+
+        # Safe ops: mock the handler methods directly
+        handler_method = MagicMock(return_value="ok")
+        for op in safe_ops:
+            with patch.object(server, 'document_ops') as mock_doc:
                 mock_doc.create_document = handler_method
                 mock_doc.save_document = handler_method
                 mock_doc.list_objects = handler_method
@@ -493,11 +498,31 @@ class TestDispatchViewControl:
         assert "Unknown view control operation" in parsed["error"]
 
     def test_handler_exception(self, server):
-        """If the handler raises, view_control should catch and return error."""
+        """If the handler raises, view_control should catch and return error.
+
+        GUI ops wrap the handler call in a task closure that catches exceptions
+        and returns an error dict. _run_on_gui_thread serializes that dict.
+        We mock _run_on_gui_thread to execute the task inline (simulating the
+        GUI thread) so the exception propagates through the normal path.
+        """
         server.view_ops.take_screenshot = MagicMock(side_effect=RuntimeError("screenshot failed"))
-        result = server._dispatch_view_control({"operation": "screenshot"})
+
+        def run_inline(task_fn, timeout=10.0):
+            """Execute the task immediately and return JSON result."""
+            result = task_fn()
+            return json.dumps(result)
+
+        with patch.object(server, '_run_on_gui_thread', side_effect=run_inline):
+            result = server._dispatch_view_control({"operation": "screenshot"})
+            parsed = json.loads(result)
+            assert "screenshot failed" in parsed["error"]
+
+    def test_safe_op_exception(self, server):
+        """If a safe (non-GUI) handler raises, view_control should catch and return error."""
+        server.document_ops.list_objects = MagicMock(side_effect=RuntimeError("list failed"))
+        result = server._dispatch_view_control({"operation": "list_objects"})
         parsed = json.loads(result)
-        assert "screenshot failed" in parsed["error"]
+        assert "list failed" in parsed["error"]
 
 
 # ---------------------------------------------------------------------------
