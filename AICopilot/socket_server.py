@@ -871,32 +871,60 @@ class FreeCADSocketServer:
         return self._call_on_gui_thread(method, args, f"Part {operation}")
 
     def _dispatch_view_control(self, args: Dict[str, Any]) -> str:
-        """Route view control operations (mixes view_ops and document_ops)."""
+        """Route view control operations (mixes view_ops and document_ops).
+
+        Operations that touch the GUI (screenshots, view changes, selection,
+        hide/show, undo/redo) are routed through _call_on_gui_thread to
+        prevent crashes from calling Qt/Coin3D from the socket thread.
+
+        Screenshot gets a longer timeout (60s) because saveImage() on
+        complex scenes can be slow.
+        """
         operation = args.get("operation", "")
 
-        operation_map = {
-            "screenshot": self.view_ops.take_screenshot,
-            "set_view": self.view_ops.set_view,
-            "fit_all": self.view_ops.fit_all,
-            "zoom_in": self.view_ops.zoom_in,
-            "zoom_out": self.view_ops.zoom_out,
-            "create_document": self.document_ops.create_document,
-            "save_document": self.document_ops.save_document,
-            "list_objects": self.document_ops.list_objects,
-            "select_object": self.view_ops.select_object,
-            "clear_selection": self.view_ops.clear_selection,
-            "get_selection": self.view_ops.get_selection,
+        # --- Operations that MUST run on the GUI thread ---
+        gui_ops = {
+            "screenshot":    (self.view_ops.take_screenshot, 60.0),
+            "set_view":      (self.view_ops.set_view, 10.0),
+            "fit_all":       (self.view_ops.fit_all, 10.0),
+            "zoom_in":       (self.view_ops.zoom_in, 10.0),
+            "zoom_out":      (self.view_ops.zoom_out, 10.0),
+            "select_object": (self.view_ops.select_object, 10.0),
+            "clear_selection": (self.view_ops.clear_selection, 5.0),
+            "get_selection": (self.view_ops.get_selection, 5.0),
+            "hide_object":   (self.view_ops.hide_object, 5.0),
+            "show_object":   (self.view_ops.show_object, 5.0),
+            "delete_object": (self.view_ops.delete_object, 10.0),
+            "undo":          (self.view_ops.undo, 10.0),
+            "redo":          (self.view_ops.redo, 10.0),
+            "activate_workbench": (self.view_ops.activate_workbench, 10.0),
         }
 
-        if operation not in operation_map:
-            return json.dumps({"error": f"Unknown view control operation: {operation}"})
+        # --- Operations safe to call from any thread ---
+        safe_ops = {
+            "create_document": self.document_ops.create_document,
+            "save_document":   self.document_ops.save_document,
+            "list_objects":    self.document_ops.list_objects,
+        }
 
-        # view_control handlers manage their own GUI thread safety via their queues
-        try:
-            result = operation_map[operation](args)
-            return json.dumps({"result": result})
-        except Exception as e:
-            return json.dumps({"error": f"View control {operation} error: {e}"})
+        if operation in gui_ops:
+            method, timeout = gui_ops[operation]
+            def task():
+                try:
+                    result = method(args)
+                    return {"success": True, "result": result}
+                except Exception as e:
+                    return {"error": f"View control {operation} error: {e}"}
+            return self._run_on_gui_thread(task, timeout=timeout)
+
+        if operation in safe_ops:
+            try:
+                result = safe_ops[operation](args)
+                return json.dumps({"result": result})
+            except Exception as e:
+                return json.dumps({"error": f"View control {operation} error: {e}"})
+
+        return json.dumps({"error": f"Unknown view control operation: {operation}"})
 
     # -----------------------------------------------------------------
     # execute_python
