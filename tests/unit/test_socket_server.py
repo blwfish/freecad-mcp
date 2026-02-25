@@ -179,13 +179,21 @@ class TestRunOnGuiThread:
         assert "Something broke" in parsed["error"]
 
     def test_timeout(self, server):
-        """If no one processes the task, should return timeout error."""
+        """In headless mode (QtCore=None) tasks run inline — no queue, no timeout.
+
+        The GUI-mode timeout path (queue + QTimer) is only exercised when a real
+        Qt event loop is present.  In the test environment FreeCAD.GuiUp=False so
+        QtCore=None and _run_on_gui_thread runs the task synchronously and returns
+        a result rather than a timeout error.
+        """
         def fake_task():
-            return {"success": True, "result": "never happens"}
+            return {"success": True, "result": "ran inline"}
 
         response = server._run_on_gui_thread(fake_task, timeout=0.1)
         parsed = json.loads(response)
-        assert "timeout" in parsed["error"].lower()
+        # Headless: task ran inline, no error
+        assert "error" not in parsed
+        assert "ran inline" in parsed.get("result", "")
 
     def test_non_dict_result(self, server):
         """A task returning a plain value should be stringified."""
@@ -653,7 +661,7 @@ class TestConfiguration:
         assert ss_module.WINDOWS_PORT == 23456
 
     def test_version(self, ss_module):
-        assert ss_module.__version__ == "5.3.0"
+        assert ss_module.__version__ == "5.4.0"
 
     def test_max_message_size(self, ss_module):
         assert ss_module.MAX_MESSAGE_SIZE == 50 * 1024

@@ -4,7 +4,7 @@
 # Version: 5.0.0 - Core rewrite: eliminated dead code, unified dispatch,
 #                   replaced busy-wait polling with Queue.get(timeout)
 
-__version__ = "5.3.0"
+__version__ = "5.4.0"
 REQUIRED_VERSIONS = {
     "freecad_debug": ">=1.1.0",
     "freecad_health": ">=1.0.1",
@@ -383,7 +383,25 @@ class FreeCADSocketServer:
         This is the single entry point for all GUI-safe execution.
         Uses request IDs to prevent stale responses from previous
         timed-out calls from being confused with the current response.
+
+        In headless mode (QtCore is None) there is no Qt event loop, so the
+        GUI task queue is never drained.  We run the callable inline on the
+        socket-handler thread instead — safe because there is no competing
+        Qt main thread in that case.
         """
+        if QtCore is None:
+            # Headless / console mode: run inline, no queue needed.
+            try:
+                result = task_fn()
+                if isinstance(result, dict):
+                    if "error" in result:
+                        return json.dumps({"error": result["error"]})
+                    if "result" in result:
+                        return json.dumps({"result": result["result"]})
+                return json.dumps({"result": str(result)})
+            except Exception as e:
+                return json.dumps({"error": f"Headless task error: {e}"})
+
         self._request_counter += 1
         req_id = self._request_counter
         self._gui_task_queue.put((req_id, task_fn))

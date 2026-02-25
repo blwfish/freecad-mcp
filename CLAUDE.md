@@ -1,6 +1,6 @@
 # FreeCAD MCP — Instructions for Claude
 
-You have access to 20 MCP tools for controlling FreeCAD. Follow these instructions when using them.
+You have access to 24 MCP tools for controlling FreeCAD. Follow these instructions when using them.
 
 ## Mandatory Rules
 
@@ -75,6 +75,9 @@ view_control(operation="screenshot")
 | Store parametric values | `spreadsheet_operations` |
 | Run arbitrary FreeCAD code | `execute_python` |
 | Debug a failed operation | `get_debug_logs` |
+| Spawn a headless FC instance | `spawn_freecad_instance` |
+| List / switch instances | `list_freecad_instances` / `select_freecad_instance` |
+| Stop a spawned instance | `stop_freecad_instance` |
 
 ## Known Issues
 
@@ -89,12 +92,14 @@ These operations cannot programmatically select edges — the user must click ed
 
 ## Technical Notes
 
-- **Bridge** (`working_bridge.py`): 19 MCP tools, async, communicates via MCP protocol over stdio
-- **Socket server** (`AICopilot/socket_server.py` v5.0.0): 25 dispatch routes, 732 lines, runs inside FreeCAD
+- **Bridge** (`working_bridge.py`): 24 MCP tools, async, communicates via MCP protocol over stdio
+- **Socket server** (`AICopilot/socket_server.py` v5.4.0): 25 dispatch routes, runs inside FreeCAD
 - **Message protocol**: Length-prefixed JSON (4-byte uint32 BE + UTF-8), 50KB max message size
 - **Socket**: Unix domain at `/tmp/freecad_mcp.sock` (TCP `localhost:23456` on Windows)
 - **Handlers**: 14 classes in `AICopilot/handlers/`, each inherits `BaseHandler`, returns strings
-- **GUI thread safety**: Operations touching FreeCAD GUI use `_run_on_gui_thread()` / Qt task queues
+- **GUI thread safety**: Operations touching FreeCAD GUI use `_run_on_gui_thread()` / Qt task queues; headless mode runs inline (no queue)
+- **Instance management**: `_BridgeCtx` tracks spawned headless instances; `FREECAD_MCP_SOCKET` selects the active instance
+- **Headless entry point**: `AICopilot/headless_server.py` — launched by bridge via `FreeCADCmd`
 - **Debug logs**: `/tmp/freecad_mcp_debug/` (optional, auto-enabled if `freecad_debug.py` present)
 - **Crash logs**: `/tmp/freecad_mcp_crashes/` (optional, auto-enabled if `freecad_health.py` present)
 
@@ -110,14 +115,21 @@ To verify which path FreeCAD loads: `execute_python("import os, AICopilot.handle
 
 ### Commands
 ```bash
-python3 -m pytest                 # Run 127 unit tests (no FreeCAD needed)
+python3 -m pytest                 # Run 174 unit tests (no FreeCAD needed)
 rsync -av --delete AICopilot/ /Volumes/Files/claude/FreeCAD-prefs/Mod/AICopilot/
 rsync -av --delete AICopilot/ /Volumes/Files/claude/FreeCAD-prefs/v1-2/Mod/AICopilot/
 cp working_bridge.py mcp_bridge_framing.py ~/.freecad-mcp/
 ```
 
+### Environment Variables
+| Variable | Purpose | Default |
+|---|---|---|
+| `FREECAD_MCP_SOCKET` | Unix socket path for active FC instance | `/tmp/freecad_mcp.sock` |
+| `FREECAD_MCP_FREECAD_BIN` | Override path to `FreeCADCmd` binary | auto-detected |
+| `FREECAD_MCP_MODULE_DIR` | Override path to `AICopilot/` module dir | auto-detected |
+
 ### Versions
-- socket_server.py: v5.0.0 (target 700–750 lines)
+- socket_server.py: v5.4.0 (target 700–750 lines)
 - freecad_debug.py: v1.1.0
 - freecad_health.py: v1.0.1
 

@@ -10,7 +10,143 @@ import os
 import sys
 import socket
 import platform
+import subprocess
+import shutil
+import time
+import uuid
 from typing import Any
+
+
+# =============================================================================
+# Mutable bridge state — socket target + spawned instance registry
+# =============================================================================
+
+class _BridgeCtx:
+    """Holds the active socket path and all spawned instance metadata.
+
+    Using a class instance (rather than closure variables) lets nested async
+    functions read and write the active target without nonlocal gymnastics.
+    """
+
+    def __init__(self):
+        if platform.system() == "Windows":
+            self.socket_path: str = "localhost:23456"
+        else:
+            self.socket_path: str = os.environ.get(
+                "FREECAD_MCP_SOCKET", "/tmp/freecad_mcp.sock"
+            )
+        # socket_path -> {pid, proc, label, headless, started_at}
+        self.instances: dict = {}
+
+    @property
+    def freecad_available(self) -> bool:
+        if platform.system() == "Windows":
+            return True
+        return os.path.exists(self.socket_path)
+
+    def register(self, sock_path: str, pid: int, proc, label: str, headless: bool = True):
+        self.instances[sock_path] = {
+            "socket_path": sock_path,
+            "pid": pid,
+            "proc": proc,
+            "label": label,
+            "headless": headless,
+            "started_at": time.time(),
+        }
+
+    def unregister(self, sock_path: str):
+        self.instances.pop(sock_path, None)
+
+    def list_all(self) -> list:
+        result = []
+        # Current socket (may or may not be a spawned instance)
+        if self.socket_path not in self.instances:
+            result.append({
+                "socket_path": self.socket_path,
+                "label": "default",
+                "headless": False,
+                "managed": False,
+                "is_current": True,
+                "available": self.freecad_available,
+            })
+        for sp, info in self.instances.items():
+            result.append({
+                **info,
+                "managed": True,
+                "is_current": sp == self.socket_path,
+                "available": os.path.exists(sp) if platform.system() != "Windows" else True,
+            })
+        return result
+
+
+_ctx = _BridgeCtx()
+
+
+# =============================================================================
+# FreeCADCmd / headless_server.py discovery helpers
+# =============================================================================
+
+def _find_freecadcmd() -> str | None:
+    """Return path to FreeCADCmd binary, or None if not found.
+
+    Search order:
+      1. FREECAD_MCP_FREECAD_BIN env var (explicit override)
+      2. shutil.which for common binary names
+      3. macOS app bundle locations
+      4. Linux/common system paths
+    """
+    override = os.environ.get("FREECAD_MCP_FREECAD_BIN")
+    if override and os.path.isfile(override):
+        return override
+
+    for name in ("FreeCADCmd", "freecadcmd", "FreeCAD", "freecad"):
+        path = shutil.which(name)
+        if path:
+            return path
+
+    mac_candidates = [
+        "/Applications/FreeCAD.app/Contents/MacOS/FreeCADCmd",
+        "/Applications/FreeCAD 1.0.app/Contents/MacOS/FreeCADCmd",
+        "/Applications/FreeCAD 1.1.app/Contents/MacOS/FreeCADCmd",
+        "/Applications/FreeCAD 1.2.app/Contents/MacOS/FreeCADCmd",
+    ]
+    for p in mac_candidates:
+        if os.path.isfile(p):
+            return p
+
+    return None
+
+
+def _find_headless_script() -> str | None:
+    """Return path to headless_server.py, or None if not found.
+
+    Search order:
+      1. FREECAD_MCP_MODULE_DIR env var / headless_server.py
+      2. Alongside the bridge script (for dev workflows)
+      3. ~/.freecad-mcp/ (standard install)
+      4. Known FreeCAD addon paths from MEMORY.md
+    """
+    override_dir = os.environ.get("FREECAD_MCP_MODULE_DIR")
+    if override_dir:
+        p = os.path.join(override_dir, "headless_server.py")
+        if os.path.isfile(p):
+            return p
+
+    bridge_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        # Dev: AICopilot/ sibling of bridge
+        os.path.join(bridge_dir, "AICopilot", "headless_server.py"),
+        # Standard install
+        os.path.expanduser("~/.freecad-mcp/AICopilot/headless_server.py"),
+        # Known addon paths (from MEMORY.md)
+        "/Volumes/Files/claude/FreeCAD-prefs/Mod/AICopilot/headless_server.py",
+        "/Volumes/Files/claude/FreeCAD-prefs/v1-2/Mod/AICopilot/headless_server.py",
+    ]
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+
+    return None
 
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -61,16 +197,7 @@ async def main():
 
     # Create server with freecad naming
     server = Server("freecad")
-    
-    # Check if FreeCAD is available (cross-platform)
-    # Socket path is configurable via env var (matches server-side convention)
-    if platform.system() == "Windows":
-        socket_path = "localhost:23456"
-        freecad_available = True  # We'll check connection when needed
-    else:
-        socket_path = os.environ.get("FREECAD_MCP_SOCKET", "/tmp/freecad_mcp.sock")
-        freecad_available = os.path.exists(socket_path)
-    
+
     @debug_decorator(track_state=False, track_performance=True)
     async def send_to_freecad(tool_name: str, args: dict) -> str:
         """Send command to FreeCAD via socket (cross-platform)"""
@@ -80,10 +207,11 @@ async def main():
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.connect(('localhost', 23456))
             else:
-                if not os.path.exists(socket_path):
-                    return json.dumps({"error": "FreeCAD socket not available. Please start FreeCAD with AICopilot installed"})
+                current_path = _ctx.socket_path
+                if not os.path.exists(current_path):
+                    return json.dumps({"error": "FreeCAD socket not available. Please start FreeCAD with AICopilot installed, or call spawn_freecad_instance."})
                 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                sock.connect(socket_path)
+                sock.connect(current_path)
             
             # Send command with length-prefixed protocol (v2.1.1)
             command = json.dumps({"tool": tool_name, "args": args})
@@ -204,8 +332,9 @@ async def main():
             )
         ]
         
-        # Add Phase 1 Smart Dispatchers if socket is available
-        if freecad_available:
+        # Always expose all smart dispatchers; check_freecad_connection / spawn
+        # let callers inspect or establish a connection at runtime.
+        if True:
             smart_dispatchers = [
                 types.Tool(
                     name="partdesign_operations", 
@@ -656,10 +785,91 @@ async def main():
                         },
                         "required": ["operation_id"]
                     }
-                )
+                ),
+                # ------------------------------------------------------------------
+                # Instance management tools
+                # ------------------------------------------------------------------
+                types.Tool(
+                    name="spawn_freecad_instance",
+                    description=(
+                        "Spawn a new headless FreeCAD instance managed by this bridge. "
+                        "Returns the socket path and PID. By default selects the new "
+                        "instance as the active target."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "label": {
+                                "type": "string",
+                                "description": "Human-readable label for this instance (optional)"
+                            },
+                            "socket_path": {
+                                "type": "string",
+                                "description": "Explicit socket path (auto-generated UUID path if omitted)"
+                            },
+                            "select": {
+                                "type": "boolean",
+                                "description": "Make this instance the active target (default true)",
+                                "default": True
+                            }
+                        }
+                    }
+                ),
+                types.Tool(
+                    name="list_freecad_instances",
+                    description=(
+                        "List all known FreeCAD instances: the current default socket "
+                        "and any instances spawned by this bridge."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {}
+                    }
+                ),
+                types.Tool(
+                    name="select_freecad_instance",
+                    description=(
+                        "Switch the active FreeCAD instance. All subsequent tool calls "
+                        "will be routed to this instance. Use list_freecad_instances to "
+                        "see available socket paths / labels."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "socket_path": {
+                                "type": "string",
+                                "description": "Socket path of the instance to activate"
+                            },
+                            "label": {
+                                "type": "string",
+                                "description": "Label of the instance to activate (alternative to socket_path)"
+                            }
+                        }
+                    }
+                ),
+                types.Tool(
+                    name="stop_freecad_instance",
+                    description=(
+                        "Stop a headless FreeCAD instance that was spawned by this bridge. "
+                        "Has no effect on externally-launched instances."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "socket_path": {
+                                "type": "string",
+                                "description": "Socket path of the instance to stop"
+                            },
+                            "label": {
+                                "type": "string",
+                                "description": "Label of the instance to stop (alternative to socket_path)"
+                            }
+                        }
+                    }
+                ),
             ]
             return base_tools + smart_dispatchers
-        
+
         return base_tools
 
     @server.call_tool()
@@ -669,11 +879,13 @@ async def main():
         """Handle tool calls with smart dispatcher routing"""
         
         if name == "check_freecad_connection":
+            available = _ctx.freecad_available
             status = {
-                "freecad_socket_exists": freecad_available,
-                "socket_path": socket_path,
-                "status": "FreeCAD running with AICopilot" if freecad_available
-                         else "FreeCAD not running. Please start FreeCAD with AICopilot installed"
+                "freecad_socket_exists": available,
+                "socket_path": _ctx.socket_path,
+                "status": "FreeCAD running with AICopilot" if available
+                         else "FreeCAD not running. Start FreeCAD or call spawn_freecad_instance.",
+                "instances": _ctx.list_all(),
             }
             return [types.TextContent(
                 type="text",
@@ -689,13 +901,12 @@ async def main():
 
         elif name == "restart_freecad":
             # Send restart command, then wait for new instance
-            import asyncio
             result = await send_to_freecad("restart_freecad", arguments or {})
             # Wait for old instance to die and new one to start
             await asyncio.sleep(3)
             # Poll for new instance (up to 30s)
             for i in range(30):
-                if os.path.exists(socket_path):
+                if os.path.exists(_ctx.socket_path):
                     try:
                         test = await send_to_freecad("test_echo", {"message": "ping"})
                         parsed = json.loads(test)
@@ -781,6 +992,192 @@ async def main():
                 text=response
             )]
             
+        # ------------------------------------------------------------------
+        # Instance management handlers
+        # ------------------------------------------------------------------
+
+        elif name == "list_freecad_instances":
+            return [types.TextContent(
+                type="text",
+                text=json.dumps({"instances": _ctx.list_all()}, indent=2)
+            )]
+
+        elif name == "select_freecad_instance":
+            args = arguments or {}
+            target_path = args.get("socket_path")
+            target_label = args.get("label")
+
+            # Resolve label → socket_path if needed
+            if not target_path and target_label:
+                for sp, info in _ctx.instances.items():
+                    if info.get("label") == target_label:
+                        target_path = sp
+                        break
+                if not target_path:
+                    return [types.TextContent(
+                        type="text",
+                        text=json.dumps({"error": f"No instance with label '{target_label}'"})
+                    )]
+
+            if not target_path:
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({"error": "Provide socket_path or label"})
+                )]
+
+            _ctx.socket_path = target_path
+            return [types.TextContent(
+                type="text",
+                text=json.dumps({
+                    "result": f"Active instance set to {target_path}",
+                    "socket_path": target_path,
+                })
+            )]
+
+        elif name == "spawn_freecad_instance":
+            args = arguments or {}
+            label = args.get("label")
+            sock_path = args.get("socket_path") or f"/tmp/freecad_mcp_{uuid.uuid4().hex[:8]}.sock"
+            select_new = args.get("select", True)
+
+            freecadcmd = _find_freecadcmd()
+            if not freecadcmd:
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({
+                        "error": (
+                            "Cannot find FreeCADCmd binary. "
+                            "Set FREECAD_MCP_FREECAD_BIN env var to its path."
+                        )
+                    })
+                )]
+
+            headless_script = _find_headless_script()
+            if not headless_script:
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({
+                        "error": (
+                            "Cannot find headless_server.py. "
+                            "Set FREECAD_MCP_MODULE_DIR env var, or deploy AICopilot "
+                            "to ~/.freecad-mcp/AICopilot/."
+                        )
+                    })
+                )]
+
+            env = os.environ.copy()
+            env["FREECAD_MCP_SOCKET"] = sock_path
+            try:
+                proc = subprocess.Popen(
+                    [freecadcmd, headless_script, "--socket-path", sock_path],
+                    env=env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except OSError as e:
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({"error": f"Failed to spawn FreeCAD: {e}"})
+                )]
+
+            # Wait for socket to appear and respond (up to 30 s)
+            deadline = time.time() + 30
+            ready = False
+            while time.time() < deadline:
+                if os.path.exists(sock_path):
+                    try:
+                        test_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                        test_sock.settimeout(2)
+                        test_sock.connect(sock_path)
+                        test_sock.close()
+                        ready = True
+                        break
+                    except OSError:
+                        pass
+                await asyncio.sleep(0.5)
+
+            if not ready:
+                proc.kill()
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({
+                        "error": "Headless FreeCAD did not become ready within 30 s",
+                        "socket_path": sock_path,
+                    })
+                )]
+
+            _ctx.register(sock_path, proc.pid, proc, label or sock_path, headless=True)
+            if select_new:
+                _ctx.socket_path = sock_path
+
+            return [types.TextContent(
+                type="text",
+                text=json.dumps({
+                    "result": "Headless FreeCAD instance spawned and ready",
+                    "socket_path": sock_path,
+                    "pid": proc.pid,
+                    "label": label or sock_path,
+                    "selected": select_new,
+                })
+            )]
+
+        elif name == "stop_freecad_instance":
+            args = arguments or {}
+            target_path = args.get("socket_path")
+            target_label = args.get("label")
+
+            if not target_path and target_label:
+                for sp, info in _ctx.instances.items():
+                    if info.get("label") == target_label:
+                        target_path = sp
+                        break
+
+            if not target_path:
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({"error": "Provide socket_path or label of instance to stop"})
+                )]
+
+            info = _ctx.instances.get(target_path)
+            if not info:
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({"error": f"Instance '{target_path}' not managed by this bridge"})
+                )]
+
+            proc = info.get("proc")
+            if proc:
+                try:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                except OSError:
+                    pass
+
+            # Clean up socket file if it still exists
+            if os.path.exists(target_path):
+                try:
+                    os.remove(target_path)
+                except OSError:
+                    pass
+
+            _ctx.unregister(target_path)
+
+            # If we just stopped the active instance, revert to default
+            if _ctx.socket_path == target_path:
+                _ctx.socket_path = os.environ.get("FREECAD_MCP_SOCKET", "/tmp/freecad_mcp.sock")
+
+            return [types.TextContent(
+                type="text",
+                text=json.dumps({
+                    "result": f"Instance {target_path} stopped",
+                    "active_socket": _ctx.socket_path,
+                })
+            )]
+
         else:
             return [types.TextContent(
                 type="text",
