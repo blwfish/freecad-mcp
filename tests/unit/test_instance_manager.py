@@ -169,8 +169,13 @@ class TestFindHeadlessScript:
 class TestRunOnGuiThreadHeadless:
     """Verify that _run_on_gui_thread runs inline when QtCore is None."""
 
-    def _make_server(self):
-        """Instantiate FreeCADSocketServer with FreeCAD and handlers mocked."""
+    def _make_server(self, monkeypatch):
+        """Instantiate FreeCADSocketServer with FreeCAD and handlers mocked.
+
+        Uses monkeypatch.setitem for all sys.modules entries so they are
+        automatically restored after each test (prevents pollution of later
+        tests that patch 'handlers.view_ops' etc.).
+        """
         aicopilot_dir = os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot")
         sys.path.insert(0, aicopilot_dir)
 
@@ -184,7 +189,7 @@ class TestRunOnGuiThreadHeadless:
             PrintError=lambda s: None,
             PrintWarning=lambda s: None,
         )
-        sys.modules["FreeCAD"] = fc
+        monkeypatch.setitem(sys.modules, "FreeCAD", fc)
 
         # Handler stubs
         handler_names = [
@@ -198,7 +203,7 @@ class TestRunOnGuiThreadHeadless:
         for n in handler_names:
             cls = MagicMock(return_value=MagicMock())
             setattr(hmod, n, cls)
-        sys.modules["handlers"] = hmod
+        monkeypatch.setitem(sys.modules, "handlers", hmod)
 
         # Use the same _ImportBlocker pattern as conftest.py / test_socket_server.py:
         # any attribute access raises ImportError, so socket_server takes fallback paths.
@@ -207,7 +212,7 @@ class TestRunOnGuiThreadHeadless:
                 raise ImportError(f"mocked optional module: {name}")
 
         for opt in ("freecad_debug", "freecad_health", "mcp_versions"):
-            sys.modules[opt] = _ImportBlocker()  # type: ignore
+            monkeypatch.setitem(sys.modules, opt, _ImportBlocker())  # type: ignore
 
         spec = importlib.util.spec_from_file_location(
             "socket_server_test",
@@ -217,8 +222,8 @@ class TestRunOnGuiThreadHeadless:
         spec.loader.exec_module(mod)
         return mod.FreeCADSocketServer()
 
-    def test_headless_runs_inline_not_queue(self):
-        server = self._make_server()
+    def test_headless_runs_inline_not_queue(self, monkeypatch):
+        server = self._make_server(monkeypatch)
         # In headless mode QtCore is None — task must run inline
         called = []
         def my_task():
@@ -229,9 +234,9 @@ class TestRunOnGuiThreadHeadless:
         assert called, "_run_on_gui_thread did not call task in headless mode"
         assert "ok" in result
 
-    def test_headless_task_exception_returns_error_json(self):
+    def test_headless_task_exception_returns_error_json(self, monkeypatch):
         import json
-        server = self._make_server()
+        server = self._make_server(monkeypatch)
         def bad_task():
             raise ValueError("intentional error")
 
