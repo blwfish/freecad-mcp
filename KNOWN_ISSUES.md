@@ -4,57 +4,25 @@
 
 ### Issue: Document Creation from Socket Thread Causes Crashes
 
-**Status**: Partially Fixed
-**Severity**: High (Causes FreeCAD crashes)
+**Status**: FIXED (2026-02-27)
+**Severity**: High (Caused FreeCAD crashes)
 **Affected**: v3.4.1+
 
 #### Problem
 
-Calling `FreeCAD.newDocument()` from the socket server thread causes Python GIL deadlocks when Qt tries to update the GUI. This manifests as:
-
-```
-Thread 0::  Dispatch queue: com.apple.main-thread
-0   libsystem_kernel.dylib    __psynch_cvwait + 8
-1   libsystem_pthread.dylib   _pthread_cond_wait + 984
-2   libpython3.11.dylib       take_gil + 296
-3   libpython3.11.dylib       PyGILState_Ensure + 128
-4   QWidgetWrapper::eventFilter(QObject*, QEvent*) + 76
-```
+Calling `FreeCAD.newDocument()` from the socket server thread causes Python GIL deadlocks when Qt tries to update the GUI.
 
 #### Root Cause
 
-`BaseHandler.get_document(create_if_missing=True)` calls `FreeCAD.newDocument()` from the socket server thread (not the GUI thread). When FreeCAD creates a document, it triggers Qt GUI updates. Qt's event filter tries to acquire the Python GIL, but the GIL is already held by the socket thread, causing a deadlock.
+`BaseHandler.get_document(create_if_missing=True)` called `FreeCAD.newDocument()` directly from the socket server thread. When FreeCAD creates a document, it triggers Qt GUI updates. Qt's event filter tries to acquire the Python GIL, but the GIL is already held by the socket thread, causing a deadlock.
 
-#### Affected Handlers
+#### Fix Applied
 
-- `spreadsheet_ops.py` - `create_spreadsheet()` - **FIXED**
-- `primitives.py` - All create methods (box, cylinder, sphere, cone, torus, wedge) - **NOT FIXED**
-- `sketch_ops.py` - `create_sketch()` - **NOT FIXED**
-
-#### Fixes Applied
-
-1. **spreadsheet_ops.py** (2025-12-11):
-   - Changed `create_spreadsheet()` to use `create_if_missing=False`
-   - Returns "Error: No active document" instead of crashing
-   - Also fixed parameter name mismatch (accepts both `name` and `spreadsheet_name`)
-
-#### Still TODO
-
-1. Fix primitives.py handlers (box, cylinder, sphere, cone, torus, wedge)
-2. Fix sketch_ops.py create_sketch handler
-3. Consider adding threading protection to BaseHandler.get_document()
-4. Consider queuing document creation to GUI thread using Qt signals
-
-#### Workaround
-
-Users should create a document in FreeCAD GUI before calling operations that create objects. The MCP tools will return proper error messages instead of crashing.
-
-#### Long-term Solution
-
-Implement proper thread-safe document creation:
-- Queue document creation to GUI thread
-- Use Qt signals/slots or QTimer.singleShot
-- Wait for confirmation before proceeding with operation
+`base.py` - `get_document()` and `create_body_if_needed()` (2026-02-27):
+- `get_document(create_if_missing=True)` now routes `FreeCAD.newDocument()` through the GUI thread via `run_on_gui_thread()`, using the same QTimer-based task queue that `document_ops.create_document()` uses
+- `create_body_if_needed()` delegates to `get_document(create_if_missing=True)` instead of calling `FreeCAD.newDocument()` directly
+- All handlers that use `create_if_missing=True` (primitives, sketch, partdesign) are now safe automatically
+- Falls back to direct call in headless/console mode where there is no Qt event loop
 
 ## Large Document Handling
 

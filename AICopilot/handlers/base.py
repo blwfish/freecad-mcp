@@ -95,6 +95,10 @@ class BaseHandler:
     def get_document(self, create_if_missing: bool = False) -> FreeCAD.Document:
         """Get active document, optionally creating one if missing.
 
+        When create_if_missing is True, document creation is routed through
+        the GUI thread to avoid GIL deadlock (FreeCAD.newDocument() acquires
+        the Qt GUI lock, which deadlocks when called from the socket thread).
+
         Args:
             create_if_missing: If True, create a new document if none exists
 
@@ -103,7 +107,31 @@ class BaseHandler:
         """
         doc = FreeCAD.ActiveDocument
         if not doc and create_if_missing:
-            doc = FreeCAD.newDocument()
+            import json as _json
+
+            def _create_doc():
+                try:
+                    new_doc = FreeCAD.newDocument()
+                    new_doc.recompute()
+                    return {"result": new_doc.Name}
+                except Exception as e:
+                    return {"error": str(e)}
+
+            result_json = self.run_on_gui_thread(_create_doc, timeout=5.0)
+            # run_on_gui_thread returns JSON string when server is available,
+            # or the raw return value in fallback/console mode
+            if isinstance(result_json, str):
+                try:
+                    parsed = _json.loads(result_json)
+                    if "error" in parsed:
+                        FreeCAD.Console.PrintError(
+                            f"get_document: failed to create document: {parsed['error']}\n"
+                        )
+                        return None
+                except (ValueError, TypeError):
+                    pass  # Not JSON — fallback mode returned a string directly
+            # Document should now exist
+            doc = FreeCAD.ActiveDocument
         return doc
 
     def get_object(self, object_name: str, doc: FreeCAD.Document = None):
@@ -173,6 +201,8 @@ class BaseHandler:
     def create_body_if_needed(self, doc: FreeCAD.Document = None):
         """Create a PartDesign Body if one doesn't exist.
 
+        If no document exists, creates one via GUI thread to avoid GIL deadlock.
+
         Args:
             doc: Document to create body in (uses active document if not specified)
 
@@ -182,7 +212,9 @@ class BaseHandler:
         if doc is None:
             doc = FreeCAD.ActiveDocument
         if doc is None:
-            doc = FreeCAD.newDocument()
+            doc = self.get_document(create_if_missing=True)
+        if doc is None:
+            return None
 
         body = self.find_body(doc)
         if not body:

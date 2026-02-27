@@ -31,8 +31,8 @@ def test_readme_tool_count():
     readme_path = os.path.join(os.path.dirname(BRIDGE_PATH), "README.md")
     with open(readme_path) as f:
         content = f.read()
-    m = re.search(r"(\d+) tools for", content)
-    assert m, "README.md should contain '<N> tools for' pattern"
+    m = re.search(r"(\d+) tools (for|covering)", content)
+    assert m, "README.md should contain '<N> tools for' or '<N> tools covering' pattern"
     readme_count = int(m.group(1))
     assert readme_count == EXPECTED_TOOL_COUNT, (
         f"README.md says {readme_count} tools but expected {EXPECTED_TOOL_COUNT}"
