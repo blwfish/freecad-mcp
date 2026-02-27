@@ -257,6 +257,21 @@ class FreeCADSocketServer:
 
         FreeCAD.Console.PrintMessage("Socket server initialized with modular handlers\n")
 
+        # Version check: warn if FreeCAD is below 1.2
+        try:
+            ver = FreeCAD.Version()
+            major, minor = int(ver[0]), int(ver[1])
+            if major < 1 or (major == 1 and minor < 2):
+                FreeCAD.Console.PrintWarning(
+                    f"[MCP] FreeCAD {major}.{minor} detected. "
+                    f"AICopilot requires 1.2+. CAM, PartDesign, and mesh operations "
+                    f"may fail or produce incorrect results.\n"
+                )
+            else:
+                FreeCAD.Console.PrintMessage(f"[MCP] FreeCAD {major}.{minor} — OK\n")
+        except Exception:
+            pass  # Don't crash on version check failure
+
     # -----------------------------------------------------------------
     # Server lifecycle
     # -----------------------------------------------------------------
