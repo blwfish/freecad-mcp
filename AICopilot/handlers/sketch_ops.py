@@ -42,17 +42,31 @@ class SketchOpsHandler(BaseHandler):
                     FreeCAD.Rotation(0, 1, 0, 1)
                 )
 
+            # Try to add sketch to active PartDesign Body if one exists
+            body = None
+            for obj in doc.Objects:
+                if obj.TypeId == 'PartDesign::Body':
+                    body = obj
+                    break
+            if body:
+                body.addObject(sketch)
+
             self.recompute(doc)
 
-            return f"Created sketch: {sketch.Name} on {plane} plane"
+            in_body = f" (in Body: {body.Name})" if body else ""
+            return f"Created sketch: {sketch.Name} on {plane} plane{in_body}"
 
         except Exception as e:
             return f"Error creating sketch: {e}"
 
     def close_sketch(self, args: Dict[str, Any]) -> str:
-        """Close/constrain a sketch (add coincident constraints to close the profile)."""
+        """Close/finalize a sketch — recompute and report constraint status.
+
+        Does NOT add any constraints automatically. Constraints should be
+        added by add_rectangle, add_circle, add_polygon, etc. or explicitly
+        via add_constraint. This method just finalizes the sketch.
+        """
         try:
-            import Sketcher
             sketch_name = args.get('sketch_name', '')
 
             doc = self.get_document()
@@ -63,25 +77,15 @@ class SketchOpsHandler(BaseHandler):
             if not sketch:
                 return f"Sketch not found: {sketch_name}"
 
-            # Try to auto-constrain
-            geo_count = sketch.GeometryCount
-            if geo_count < 2:
-                return f"Sketch {sketch_name} needs at least 2 geometry elements to close"
-
-            # Add coincident constraints between consecutive endpoints
-            for i in range(geo_count - 1):
-                sketch.addConstraint(
-                    Sketcher.Constraint('Coincident', i, 2, i + 1, 1)
-                )
-
-            # Close the loop
-            sketch.addConstraint(
-                Sketcher.Constraint('Coincident', geo_count - 1, 2, 0, 1)
-            )
-
             self.recompute(doc)
 
-            return f"Closed sketch {sketch_name} with coincident constraints"
+            fc = getattr(sketch, 'FullyConstrained', None)
+            geo_count = sketch.GeometryCount
+            con_count = sketch.ConstraintCount
+
+            return (f"Closed sketch {sketch_name}: "
+                    f"{geo_count} geometries, {con_count} constraints, "
+                    f"fully constrained: {fc}")
 
         except Exception as e:
             return f"Error closing sketch: {e}"
@@ -224,12 +228,21 @@ class SketchOpsHandler(BaseHandler):
                 return f"Sketch not found: {sketch_name}"
 
             import Part
+            import Sketcher
             circle = Part.Circle(
                 FreeCAD.Vector(x, y, 0),
                 FreeCAD.Vector(0, 0, 1),
                 radius
             )
             geo_id = sketch.addGeometry(circle)
+
+            # Add dimensional constraints to fully constrain the circle
+            # Position: fix center relative to origin (point 3 = center)
+            sketch.addConstraint(Sketcher.Constraint('DistanceX', -1, 1, geo_id, 3, x))
+            sketch.addConstraint(Sketcher.Constraint('DistanceY', -1, 1, geo_id, 3, y))
+            # Size: fix radius
+            sketch.addConstraint(Sketcher.Constraint('Radius', geo_id, radius))
+
             self.recompute(doc)
 
             return f"Added circle to {sketch_name}: center ({x},{y}), radius {radius}, geo_id={geo_id}"
@@ -284,6 +297,12 @@ class SketchOpsHandler(BaseHandler):
                 sketch.addConstraint(Sketcher.Constraint('Horizontal', g2))
                 sketch.addConstraint(Sketcher.Constraint('Vertical', g1))
                 sketch.addConstraint(Sketcher.Constraint('Vertical', g3))
+                # Position: fix bottom-left corner relative to origin
+                sketch.addConstraint(Sketcher.Constraint('DistanceX', -1, 1, g0, 1, x))
+                sketch.addConstraint(Sketcher.Constraint('DistanceY', -1, 1, g0, 1, y))
+                # Size: width and height
+                sketch.addConstraint(Sketcher.Constraint('DistanceX', g0, 1, g0, 2, width))
+                sketch.addConstraint(Sketcher.Constraint('DistanceY', g1, 1, g1, 2, height))
 
             self.recompute(doc)
 

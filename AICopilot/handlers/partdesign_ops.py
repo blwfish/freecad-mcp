@@ -54,8 +54,10 @@ class PartDesignOpsHandler(BaseHandler):
         """Create a pocket (subtractive extrusion) from a sketch."""
         try:
             sketch_name = args.get('sketch_name', '')
-            depth = args.get('depth', 10)
+            # Accept 'length' (matching pad and MCP schema) or 'depth' for compat
+            length = args.get('length', args.get('depth', 10))
             name = args.get('name', 'Pocket')
+            reversed_dir = args.get('reversed', False)
 
             doc = self.get_document()
             if not doc:
@@ -73,11 +75,14 @@ class PartDesignOpsHandler(BaseHandler):
             # Create pocket
             pocket = body.newObject("PartDesign::Pocket", name)
             pocket.Profile = sketch
-            pocket.Length = depth
+            pocket.Length = length
+            if reversed_dir:
+                pocket.Reversed = True
 
             self.recompute(doc)
 
-            return f"Created pocket: {pocket.Name} from {sketch_name} with depth {depth}mm"
+            rev_msg = " (reversed)" if reversed_dir else ""
+            return f"Created pocket: {pocket.Name} from {sketch_name} with depth {length}mm{rev_msg}"
 
         except Exception as e:
             return f"Error creating pocket: {e}"

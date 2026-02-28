@@ -396,6 +396,8 @@ async def main():
                             "offset_x": {"type": "number", "description": "X offset from attached position", "default": 0},
                             "offset_y": {"type": "number", "description": "Y offset from attached position", "default": 0},
                             "offset_z": {"type": "number", "description": "Z offset / normal offset", "default": 0},
+                            # Direction control
+                            "reversed": {"type": "boolean", "description": "Reverse pocket/pad direction (cut/extrude opposite to sketch normal)"},
                             # Advanced parameters
                             "name": {"type": "string", "description": "Name for result feature"}
                         },
@@ -1056,7 +1058,7 @@ async def main():
             )]
             
         # Route smart dispatcher tools to socket with enhanced routing
-        elif name in ["partdesign_operations", "part_operations",
+        elif name in ["partdesign_operations", "sketch_operations", "part_operations",
                       "view_control", "cam_operations", "cam_tools", "cam_tool_controllers",
                       "cam_machines", "mesh_operations", "measurement_operations",
                       "spreadsheet_operations", "draft_operations", "get_debug_logs",
