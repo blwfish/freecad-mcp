@@ -12,7 +12,7 @@ BRIDGE_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "working_bridge.py"
 )
 
-EXPECTED_TOOL_COUNT = 24
+EXPECTED_TOOL_COUNT = 26
 
 
 def test_bridge_tool_count():

@@ -329,9 +329,17 @@ async def main():
                         }
                     },
                 }
-            )
+            ),
+            types.Tool(
+                name="reload_modules",
+                description="Hot-reload all handler modules without restarting FreeCAD. Use after deploying new code (rsync) to pick up changes immediately.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                }
+            ),
         ]
-        
+
         # Always expose all smart dispatchers; check_freecad_connection / spawn
         # let callers inspect or establish a connection at runtime.
         if True:
@@ -346,16 +354,20 @@ async def main():
                                 "type": "string",
                                 "description": "PartDesign operation to perform",
                                 "enum": [
-                                    # Additive features (5)
+                                    # Additive features
                                     "pad", "revolution", "loft", "sweep", "additive_pipe",
-                                    # Subtractive features (2)
-                                    "groove", "subtractive_sweep",
-                                    # Dress-up features (2)
-                                    "fillet", "chamfer",
-                                    # Pattern features (1)
-                                    "mirror",
-                                    # Hole features (3)
-                                    "hole", "counterbore", "countersink"
+                                    # Subtractive features
+                                    "pocket", "groove", "subtractive_loft", "subtractive_sweep",
+                                    # Dress-up features
+                                    "fillet", "chamfer", "draft", "shell", "thickness",
+                                    # Hole features
+                                    "hole", "counterbore", "countersink",
+                                    # Pattern features
+                                    "linear_pattern", "polar_pattern", "mirror",
+                                    # Additional features
+                                    "helix", "rib",
+                                    # Datum features
+                                    "datum_plane", "datum_line", "datum_point"
                                 ]
                             },
                             "sketch_name": {"type": "string", "description": "Sketch name for operations"},
@@ -377,8 +389,96 @@ async def main():
                             "depth": {"type": "number", "description": "Hole depth", "default": 10},
                             "x": {"type": "number", "description": "X position", "default": 0},
                             "y": {"type": "number", "description": "Y position", "default": 0},
+                            # Datum parameters
+                            "map_mode": {"type": "string", "description": "Attachment mode for datums (e.g. FlatFace, ObjectXY, ObjectXZ)"},
+                            "reference": {"type": "string", "description": "Face/edge/vertex reference (e.g. Face1, Edge3)"},
+                            "reference_object": {"type": "string", "description": "Object name containing the reference"},
+                            "offset_x": {"type": "number", "description": "X offset from attached position", "default": 0},
+                            "offset_y": {"type": "number", "description": "Y offset from attached position", "default": 0},
+                            "offset_z": {"type": "number", "description": "Z offset / normal offset", "default": 0},
                             # Advanced parameters
                             "name": {"type": "string", "description": "Name for result feature"}
+                        },
+                        "required": ["operation"]
+                    }
+                ),
+                types.Tool(
+                    name="sketch_operations",
+                    description="Smart dispatcher for all Sketcher workbench operations: geometry creation, constraints, and sketch management. "
+                                "Geometry IDs (geo_id) are assigned in order starting at 0. "
+                                "Point indices: 0=edge itself, 1=start point, 2=end point, 3=center. "
+                                "Special geo_ids: -1=X axis, -2=Y axis, -3 and below=external geometry.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "description": "Sketch operation to perform",
+                                "enum": [
+                                    # Lifecycle
+                                    "create_sketch", "close_sketch", "verify_sketch",
+                                    # Geometry
+                                    "add_line", "add_circle", "add_rectangle", "add_arc",
+                                    "add_polygon", "add_slot", "add_fillet",
+                                    # Constraints
+                                    "add_constraint", "delete_constraint", "list_constraints",
+                                    # External geometry
+                                    "add_external_geometry"
+                                ]
+                            },
+                            # Sketch identification
+                            "sketch_name": {"type": "string", "description": "Name of the sketch to operate on"},
+                            "name": {"type": "string", "description": "Name for new sketch (create_sketch)"},
+                            "plane": {"type": "string", "description": "Sketch plane: XY, XZ, or YZ", "enum": ["XY", "XZ", "YZ"], "default": "XY"},
+                            # Line parameters
+                            "x1": {"type": "number", "description": "Line start X", "default": 0},
+                            "y1": {"type": "number", "description": "Line start Y", "default": 0},
+                            "x2": {"type": "number", "description": "Line end X", "default": 10},
+                            "y2": {"type": "number", "description": "Line end Y", "default": 10},
+                            # Circle/arc/polygon parameters
+                            "x": {"type": "number", "description": "Center X / origin X", "default": 0},
+                            "y": {"type": "number", "description": "Center Y / origin Y", "default": 0},
+                            "radius": {"type": "number", "description": "Radius for circle/arc/polygon/fillet", "default": 5},
+                            "center_x": {"type": "number", "description": "Arc center X", "default": 0},
+                            "center_y": {"type": "number", "description": "Arc center Y", "default": 0},
+                            "start_angle": {"type": "number", "description": "Arc start angle (degrees)", "default": 0},
+                            "end_angle": {"type": "number", "description": "Arc end angle (degrees)", "default": 90},
+                            # Rectangle parameters
+                            "width": {"type": "number", "description": "Rectangle width", "default": 10},
+                            "height": {"type": "number", "description": "Rectangle height", "default": 10},
+                            "constrain": {"type": "boolean", "description": "Auto-add constraints to rectangle/polygon", "default": True},
+                            # Polygon parameters
+                            "sides": {"type": "integer", "description": "Number of polygon sides", "default": 6},
+                            # Slot parameters
+                            "length": {"type": "number", "description": "Slot total length", "default": 20},
+                            # Constraint parameters
+                            "constraint_type": {
+                                "type": "string",
+                                "description": "Constraint type for add_constraint",
+                                "enum": [
+                                    "Coincident", "PointOnObject",
+                                    "Horizontal", "Vertical",
+                                    "Perpendicular", "Parallel", "Tangent", "Equal",
+                                    "Symmetric", "Block", "Fix",
+                                    "Distance", "DistanceX", "DistanceY",
+                                    "Radius", "Diameter", "Angle"
+                                ]
+                            },
+                            "geo_id1": {"type": "integer", "description": "First geometry index (0+ for user geometry, -1=X axis, -2=Y axis)", "default": 0},
+                            "pos_id1": {"type": "integer", "description": "First point index (0=edge, 1=start, 2=end, 3=center)", "default": 0},
+                            "geo_id2": {"type": "integer", "description": "Second geometry index"},
+                            "pos_id2": {"type": "integer", "description": "Second point index", "default": 0},
+                            "value": {"type": "number", "description": "Constraint value (mm for distance, degrees for angle)"},
+                            "sym_geo": {"type": "integer", "description": "Symmetry axis geo_id (Symmetric constraint)", "default": -2},
+                            "sym_pos": {"type": "integer", "description": "Symmetry axis point index", "default": 0},
+                            # Delete constraint
+                            "index": {"type": "integer", "description": "Constraint index for delete_constraint"},
+                            # Fillet parameters
+                            "geo_id": {"type": "integer", "description": "Geometry index for sketch fillet", "default": 0},
+                            "pos_id": {"type": "integer", "description": "Point index for sketch fillet (1=start, 2=end)", "default": 2},
+                            # External geometry
+                            "object_name": {"type": "string", "description": "Object name for external geometry reference"},
+                            "edge_name": {"type": "string", "description": "Edge name for external geometry (e.g. Edge1)"},
                         },
                         "required": ["operation"]
                     }
@@ -929,6 +1029,13 @@ async def main():
                 })
             )]
             
+        elif name == "reload_modules":
+            result = await send_to_freecad("reload_modules", {})
+            return [types.TextContent(
+                type="text",
+                text=result if isinstance(result, str) else json.dumps(result)
+            )]
+
         # Handle continue_selection tool
         elif name == "continue_selection":
             operation_id = arguments.get("operation_id") if arguments else None

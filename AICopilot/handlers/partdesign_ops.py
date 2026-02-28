@@ -1139,3 +1139,184 @@ class PartDesignOpsHandler(BaseHandler):
 
         except Exception as e:
             return f"Error creating rib: {e}"
+
+    # -----------------------------------------------------------------
+    # Datum features
+    # -----------------------------------------------------------------
+
+    def create_datum_plane(self, args: Dict[str, Any]) -> str:
+        """Create a datum plane in the active PartDesign Body.
+
+        A datum plane provides a reference surface for sketching at
+        arbitrary positions/orientations in the body. Common uses:
+        - Offset from a face: map_mode="FlatFace", reference="FaceN", offset_z=10
+        - Standard plane: map_mode="ObjectXY" (or ObjectXZ, ObjectYZ)
+        - Through three points, edge and point, etc.
+
+        Args:
+            name: Name for the datum plane (default "DatumPlane")
+            map_mode: Attachment mode (default "FlatFace"). Common modes:
+                FlatFace, ObjectXY, ObjectXZ, ObjectYZ, Translate, NormalToEdge
+            reference: Face or edge reference, e.g. "Face1", "Edge3"
+            reference_object: Object name containing the reference (default: tip feature)
+            offset_x: Offset in X from attached position (mm)
+            offset_y: Offset in Y from attached position (mm)
+            offset_z: Offset in Z / normal direction (mm)
+        """
+        try:
+            name = args.get('name', 'DatumPlane')
+            map_mode = args.get('map_mode', 'FlatFace')
+            reference = args.get('reference', '')
+            reference_object = args.get('reference_object', '')
+            offset_x = args.get('offset_x', 0)
+            offset_y = args.get('offset_y', 0)
+            offset_z = args.get('offset_z', 0)
+
+            doc = self.get_document()
+            if not doc:
+                return "No active document"
+
+            body = self.create_body_if_needed(doc)
+            if not body:
+                return "Could not find or create PartDesign Body"
+
+            dp = body.newObject('PartDesign::Plane', name)
+
+            # Set attachment mode
+            dp.MapMode = map_mode
+
+            # Set reference if provided
+            if reference:
+                ref_obj = None
+                if reference_object:
+                    ref_obj = self.get_object(reference_object, doc)
+                else:
+                    # Default: use the tip (most recent feature) of the body
+                    if body.Tip:
+                        ref_obj = body.Tip
+
+                if ref_obj:
+                    dp.AttachmentSupport = [(ref_obj, reference)]
+
+            # Set offset
+            if offset_x or offset_y or offset_z:
+                dp.AttachmentOffset = FreeCAD.Placement(
+                    FreeCAD.Vector(offset_x, offset_y, offset_z),
+                    FreeCAD.Rotation(0, 0, 0, 1)
+                )
+
+            self.recompute(doc)
+
+            return (f"Created datum plane: {dp.Name}, mode={map_mode}"
+                    + (f", reference={reference}" if reference else "")
+                    + (f", offset=({offset_x},{offset_y},{offset_z})" if any([offset_x, offset_y, offset_z]) else ""))
+
+        except Exception as e:
+            return f"Error creating datum plane: {e}"
+
+    def create_datum_line(self, args: Dict[str, Any]) -> str:
+        """Create a datum line (axis) in the active PartDesign Body.
+
+        A datum line provides a reference axis for patterns, revolutions, etc.
+
+        Args:
+            name: Name for the datum line (default "DatumLine")
+            map_mode: Attachment mode (default "ObjectX"). Common modes:
+                ObjectX, ObjectY, ObjectZ, TwoPointLine, NormalToFace, Intersection
+            reference: Edge or face reference, e.g. "Edge1", "Face3"
+            reference_object: Object name containing the reference
+        """
+        try:
+            name = args.get('name', 'DatumLine')
+            map_mode = args.get('map_mode', 'ObjectX')
+            reference = args.get('reference', '')
+            reference_object = args.get('reference_object', '')
+
+            doc = self.get_document()
+            if not doc:
+                return "No active document"
+
+            body = self.create_body_if_needed(doc)
+            if not body:
+                return "Could not find or create PartDesign Body"
+
+            dl = body.newObject('PartDesign::Line', name)
+            dl.MapMode = map_mode
+
+            if reference:
+                ref_obj = None
+                if reference_object:
+                    ref_obj = self.get_object(reference_object, doc)
+                elif body.Tip:
+                    ref_obj = body.Tip
+
+                if ref_obj:
+                    dl.AttachmentSupport = [(ref_obj, reference)]
+
+            self.recompute(doc)
+
+            return (f"Created datum line: {dl.Name}, mode={map_mode}"
+                    + (f", reference={reference}" if reference else ""))
+
+        except Exception as e:
+            return f"Error creating datum line: {e}"
+
+    def create_datum_point(self, args: Dict[str, Any]) -> str:
+        """Create a datum point in the active PartDesign Body.
+
+        A datum point provides a reference location for constraints,
+        attachments, and measurements.
+
+        Args:
+            name: Name for the datum point (default "DatumPoint")
+            map_mode: Attachment mode (default "ObjectOrigin"). Common modes:
+                ObjectOrigin, CenterOfCurvature, CenterOfMass, ProximityPoint1
+            reference: Reference element, e.g. "Vertex1", "Edge5", "Face2"
+            reference_object: Object name containing the reference
+            offset_x: Offset in X from attached position (mm)
+            offset_y: Offset in Y from attached position (mm)
+            offset_z: Offset in Z from attached position (mm)
+        """
+        try:
+            name = args.get('name', 'DatumPoint')
+            map_mode = args.get('map_mode', 'ObjectOrigin')
+            reference = args.get('reference', '')
+            reference_object = args.get('reference_object', '')
+            offset_x = args.get('offset_x', 0)
+            offset_y = args.get('offset_y', 0)
+            offset_z = args.get('offset_z', 0)
+
+            doc = self.get_document()
+            if not doc:
+                return "No active document"
+
+            body = self.create_body_if_needed(doc)
+            if not body:
+                return "Could not find or create PartDesign Body"
+
+            dp = body.newObject('PartDesign::Point', name)
+            dp.MapMode = map_mode
+
+            if reference:
+                ref_obj = None
+                if reference_object:
+                    ref_obj = self.get_object(reference_object, doc)
+                elif body.Tip:
+                    ref_obj = body.Tip
+
+                if ref_obj:
+                    dp.AttachmentSupport = [(ref_obj, reference)]
+
+            if offset_x or offset_y or offset_z:
+                dp.AttachmentOffset = FreeCAD.Placement(
+                    FreeCAD.Vector(offset_x, offset_y, offset_z),
+                    FreeCAD.Rotation(0, 0, 0, 1)
+                )
+
+            self.recompute(doc)
+
+            return (f"Created datum point: {dp.Name}, mode={map_mode}"
+                    + (f", reference={reference}" if reference else ""))
+
+        except Exception as e:
+            return f"Error creating datum point: {e}"

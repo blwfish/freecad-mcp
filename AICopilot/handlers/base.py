@@ -95,9 +95,11 @@ class BaseHandler:
     def get_document(self, create_if_missing: bool = False) -> FreeCAD.Document:
         """Get active document, optionally creating one if missing.
 
-        When create_if_missing is True, document creation is routed through
-        the GUI thread to avoid GIL deadlock (FreeCAD.newDocument() acquires
-        the Qt GUI lock, which deadlocks when called from the socket thread).
+        Handlers are always invoked on the GUI thread (via _call_on_gui_thread
+        or inline in headless mode), so FreeCAD.newDocument() is safe to call
+        directly here.  An earlier version routed creation through
+        run_on_gui_thread, but that deadlocked when the handler was already
+        on the GUI thread.
 
         Args:
             create_if_missing: If True, create a new document if none exists
@@ -107,31 +109,14 @@ class BaseHandler:
         """
         doc = FreeCAD.ActiveDocument
         if not doc and create_if_missing:
-            import json as _json
-
-            def _create_doc():
-                try:
-                    new_doc = FreeCAD.newDocument()
-                    new_doc.recompute()
-                    return {"result": new_doc.Name}
-                except Exception as e:
-                    return {"error": str(e)}
-
-            result_json = self.run_on_gui_thread(_create_doc, timeout=5.0)
-            # run_on_gui_thread returns JSON string when server is available,
-            # or the raw return value in fallback/console mode
-            if isinstance(result_json, str):
-                try:
-                    parsed = _json.loads(result_json)
-                    if "error" in parsed:
-                        FreeCAD.Console.PrintError(
-                            f"get_document: failed to create document: {parsed['error']}\n"
-                        )
-                        return None
-                except (ValueError, TypeError):
-                    pass  # Not JSON — fallback mode returned a string directly
-            # Document should now exist
-            doc = FreeCAD.ActiveDocument
+            try:
+                doc = FreeCAD.newDocument()
+                doc.recompute()
+            except Exception as e:
+                FreeCAD.Console.PrintError(
+                    f"get_document: failed to create document: {e}\n"
+                )
+                return None
         return doc
 
     def get_object(self, object_name: str, doc: FreeCAD.Document = None):

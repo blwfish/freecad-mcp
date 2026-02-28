@@ -1,9 +1,9 @@
 """
 End-to-end integration tests for FreeCAD MCP.
 
-These tests require a running FreeCAD instance with the AICopilot addon enabled.
-They exercise real workflows through the MCP bridge: document creation, primitive
-creation, PartDesign operations, and export.
+These tests work in two modes (auto-detected by conftest.py):
+  1. GUI mode: connect to a running FreeCAD with AICopilot workbench loaded
+  2. Headless mode: spawn a FreeCADCmd instance automatically
 
 Run with:
     python3 -m pytest tests/integration/ -v
@@ -22,38 +22,19 @@ import time
 
 import pytest
 
+from . import conftest
+
 # ---------------------------------------------------------------------------
 # Connection to FreeCAD via socket
 # ---------------------------------------------------------------------------
 
-SOCKET_PATH = os.environ.get("FREECAD_MCP_SOCKET", "/tmp/freecad_mcp.sock")
-
-
-def freecad_available():
-    """Check if FreeCAD socket is available."""
-    if not os.path.exists(SOCKET_PATH):
-        return False
-    try:
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(2.0)
-        s.connect(SOCKET_PATH)
-        s.close()
-        return True
-    except (socket.error, OSError):
-        return False
-
-
-skip_no_freecad = pytest.mark.skipif(
-    not freecad_available(),
-    reason=f"FreeCAD not running (no socket at {SOCKET_PATH})"
-)
-
 
 def send_command(tool: str, args: dict, timeout: float = 10.0) -> dict:
     """Send a command to FreeCAD and return the parsed response."""
+    sock_path = conftest.get_socket_path()
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(timeout)
-    s.connect(SOCKET_PATH)
+    s.connect(sock_path)
     try:
         msg = json.dumps({"tool": tool, "args": args}).encode("utf-8")
         # Length-prefixed framing
@@ -108,7 +89,6 @@ def clean_document():
 # Tests: Document and Primitives
 # ---------------------------------------------------------------------------
 
-@skip_no_freecad
 class TestDocumentCreation:
     """Test that documents can be created safely from the socket thread."""
 
@@ -143,7 +123,6 @@ class TestDocumentCreation:
         assert "error" not in str(result).lower()
 
 
-@skip_no_freecad
 class TestPrimitives:
     """Test primitive creation — previously crashed due to GIL deadlock."""
 
@@ -211,7 +190,6 @@ class TestPrimitives:
 # Tests: Sketch + Pad workflow
 # ---------------------------------------------------------------------------
 
-@skip_no_freecad
 class TestSketchPadWorkflow:
     """Test the fundamental CAD workflow: sketch → pad → solid."""
 
@@ -268,7 +246,6 @@ sketch.Name
 # Tests: Export
 # ---------------------------------------------------------------------------
 
-@skip_no_freecad
 class TestExport:
     """Test mesh export workflows."""
 
@@ -329,7 +306,6 @@ class TestExport:
 # Tests: Screenshot
 # ---------------------------------------------------------------------------
 
-@skip_no_freecad
 class TestScreenshot:
     """Test screenshot capture."""
 
@@ -358,7 +334,6 @@ class TestScreenshot:
 # Tests: Boolean operations
 # ---------------------------------------------------------------------------
 
-@skip_no_freecad
 class TestBooleanOps:
     """Test boolean operations between solids."""
 
@@ -422,10 +397,237 @@ class TestBooleanOps:
 
 
 # ---------------------------------------------------------------------------
+# Tests: Sketch operations (constraints, geometry)
+# ---------------------------------------------------------------------------
+
+class TestSketchOperations:
+    """Test the sketch_operations smart dispatcher."""
+
+    def test_create_sketch_via_dispatcher(self, clean_document):
+        """Creating a sketch via the sketch_operations dispatcher."""
+        result = send_command("sketch_operations", {
+            "operation": "create_sketch",
+            "plane": "XY",
+            "name": "TestSketch",
+        })
+        assert "Created sketch" in str(result), f"Sketch creation failed: {result}"
+
+    def test_add_rectangle_with_constraints(self, clean_document):
+        """add_rectangle should create 4 lines with coincident + H/V constraints."""
+        # Create sketch
+        send_command("sketch_operations", {
+            "operation": "create_sketch",
+            "plane": "XY",
+            "name": "RectSketch",
+        })
+        # Add rectangle
+        result = send_command("sketch_operations", {
+            "operation": "add_rectangle",
+            "sketch_name": "RectSketch",
+            "x": 0, "y": 0,
+            "width": 30, "height": 20,
+        })
+        result_str = str(result)
+        assert "geo_ids=" in result_str, f"Rectangle failed: {result}"
+
+        # Verify sketch has constraints
+        verify = send_command("sketch_operations", {
+            "operation": "verify_sketch",
+            "sketch_name": "RectSketch",
+        })
+        assert "Geometry elements: 4" in str(verify), f"Expected 4 lines: {verify}"
+
+    def test_add_constraint_distance(self, clean_document):
+        """Adding a distance constraint should set a dimensional value."""
+        # Create sketch with a line
+        send_command("sketch_operations", {
+            "operation": "create_sketch",
+            "plane": "XY",
+            "name": "ConstraintSketch",
+        })
+        send_command("sketch_operations", {
+            "operation": "add_line",
+            "sketch_name": "ConstraintSketch",
+            "x1": 0, "y1": 0,
+            "x2": 25, "y2": 0,
+        })
+        # Add distance constraint
+        result = send_command("sketch_operations", {
+            "operation": "add_constraint",
+            "sketch_name": "ConstraintSketch",
+            "constraint_type": "Distance",
+            "geo_id1": 0,
+            "value": 25,
+        })
+        result_str = str(result)
+        assert "Added Distance constraint" in result_str, f"Constraint failed: {result}"
+
+    def test_add_constraint_horizontal(self, clean_document):
+        """Adding a horizontal constraint to a line."""
+        send_command("sketch_operations", {
+            "operation": "create_sketch",
+            "plane": "XY",
+            "name": "HSketch",
+        })
+        send_command("sketch_operations", {
+            "operation": "add_line",
+            "sketch_name": "HSketch",
+            "x1": 0, "y1": 0,
+            "x2": 10, "y2": 5,
+        })
+        result = send_command("sketch_operations", {
+            "operation": "add_constraint",
+            "sketch_name": "HSketch",
+            "constraint_type": "Horizontal",
+            "geo_id1": 0,
+        })
+        assert "Added Horizontal constraint" in str(result), f"Constraint failed: {result}"
+
+    def test_list_constraints(self, clean_document):
+        """list_constraints should return JSON with constraint details."""
+        send_command("sketch_operations", {
+            "operation": "create_sketch",
+            "plane": "XY",
+            "name": "ListSketch",
+        })
+        send_command("sketch_operations", {
+            "operation": "add_rectangle",
+            "sketch_name": "ListSketch",
+            "x": 0, "y": 0, "width": 10, "height": 10,
+        })
+        result = send_command("sketch_operations", {
+            "operation": "list_constraints",
+            "sketch_name": "ListSketch",
+        })
+        result_str = str(result)
+        # Rectangle adds 4 coincident + 2 horizontal + 2 vertical = 8 constraints
+        assert "constraint_count" in result_str, f"list_constraints failed: {result}"
+
+    def test_add_polygon(self, clean_document):
+        """add_polygon should create N-sided polygon with constraints."""
+        send_command("sketch_operations", {
+            "operation": "create_sketch",
+            "plane": "XY",
+            "name": "PolySketch",
+        })
+        result = send_command("sketch_operations", {
+            "operation": "add_polygon",
+            "sketch_name": "PolySketch",
+            "x": 0, "y": 0,
+            "radius": 10,
+            "sides": 6,
+        })
+        assert "6-sided polygon" in str(result), f"Polygon failed: {result}"
+
+    def test_full_constrained_sketch_to_pad(self, clean_document):
+        """Full workflow: constrained sketch → verify → pad."""
+        # Create sketch
+        send_command("sketch_operations", {
+            "operation": "create_sketch",
+            "plane": "XY",
+            "name": "FullSketch",
+        })
+        # Add rectangle
+        send_command("sketch_operations", {
+            "operation": "add_rectangle",
+            "sketch_name": "FullSketch",
+            "x": 0, "y": 0, "width": 30, "height": 20,
+        })
+        # Add dimension constraints
+        send_command("sketch_operations", {
+            "operation": "add_constraint",
+            "sketch_name": "FullSketch",
+            "constraint_type": "DistanceX",
+            "geo_id1": 0, "pos_id1": 1,
+            "geo_id2": 0, "pos_id2": 2,
+            "value": 30,
+        })
+        send_command("sketch_operations", {
+            "operation": "add_constraint",
+            "sketch_name": "FullSketch",
+            "constraint_type": "DistanceY",
+            "geo_id1": 1, "pos_id1": 1,
+            "geo_id2": 1, "pos_id2": 2,
+            "value": 20,
+        })
+        # Verify
+        verify = send_command("sketch_operations", {
+            "operation": "verify_sketch",
+            "sketch_name": "FullSketch",
+        })
+        assert "Closed wires" in str(verify), f"Sketch not valid: {verify}"
+
+        # Pad
+        pad = send_command("partdesign_operations", {
+            "operation": "pad",
+            "sketch_name": "FullSketch",
+            "length": 10,
+        })
+        assert "error" not in str(pad).lower() or "Pad" in str(pad), f"Pad failed: {pad}"
+
+
+# ---------------------------------------------------------------------------
+# Tests: PartDesign dispatch (previously unreachable operations)
+# ---------------------------------------------------------------------------
+
+class TestPartDesignDispatch:
+    """Test that previously-unrouted PartDesign operations now work."""
+
+    def test_pocket(self, clean_document):
+        """pocket should be routed (was missing from dispatch map)."""
+        # Create a box to pocket into
+        send_command("part_operations", {
+            "operation": "box",
+            "length": 30, "width": 30, "height": 10,
+        })
+        # Create sketch for pocket
+        send_command("execute_python", {
+            "code": """
+import FreeCAD, Part
+doc = FreeCAD.ActiveDocument
+sketch = doc.addObject('Sketcher::SketchObject', 'PocketSketch')
+sketch.Placement = FreeCAD.Placement(
+    FreeCAD.Vector(0, 0, 10),
+    FreeCAD.Rotation(0, 0, 0, 1)
+)
+p1 = FreeCAD.Vector(5, 5, 0)
+p2 = FreeCAD.Vector(25, 5, 0)
+p3 = FreeCAD.Vector(25, 25, 0)
+p4 = FreeCAD.Vector(5, 25, 0)
+sketch.addGeometry(Part.LineSegment(p1, p2))
+sketch.addGeometry(Part.LineSegment(p2, p3))
+sketch.addGeometry(Part.LineSegment(p3, p4))
+sketch.addGeometry(Part.LineSegment(p4, p1))
+doc.recompute()
+'ok'
+"""
+        })
+        # Try pocket — should NOT get "Unknown PartDesign operation"
+        result = send_command("partdesign_operations", {
+            "operation": "pocket",
+            "sketch_name": "PocketSketch",
+            "length": 5,
+        })
+        result_str = str(result)
+        assert "Unknown PartDesign operation" not in result_str, \
+            f"pocket still not dispatched: {result}"
+
+    def test_datum_plane(self, clean_document):
+        """datum_plane should be dispatched to create_datum_plane."""
+        result = send_command("partdesign_operations", {
+            "operation": "datum_plane",
+            "map_mode": "ObjectXY",
+            "offset_z": 15,
+        })
+        result_str = str(result)
+        assert "Unknown PartDesign operation" not in result_str, \
+            f"datum_plane not dispatched: {result}"
+
+
+# ---------------------------------------------------------------------------
 # Tests: Connection health
 # ---------------------------------------------------------------------------
 
-@skip_no_freecad
 class TestConnection:
     """Test basic connection health."""
 

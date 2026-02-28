@@ -4,7 +4,7 @@ This tool enables your AI agent to use [FreeCAD](https://www.freecad.org/) — t
 
 ## What This Does
 
-You describe what you need — "design a mounting bracket with these dimensions" or "generate G-code for this part" — and your AI agent does the rest: creating parametric sketches, padding and pocketing features, adding fillets, setting up CAM jobs, and exporting files. All using the same FreeCAD that engineers and makers use, with 24 tools covering parametric design, CNC toolpath generation, and mesh operations.
+You describe what you need — "design a mounting bracket with these dimensions" or "generate G-code for this part" — and your AI agent does the rest: creating parametric sketches, padding and pocketing features, adding fillets, setting up CAM jobs, and exporting files. All using the same FreeCAD that engineers and makers use, with 26 tools covering parametric design, CNC toolpath generation, and mesh operations.
 
 You don't need to know FreeCAD. You don't need to know what parametric CAD means. You just need an AI agent (like [Claude](https://claude.ai/)).
 

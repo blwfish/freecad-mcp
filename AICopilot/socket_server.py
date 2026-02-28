@@ -795,6 +795,9 @@ class FreeCADSocketServer:
         # PartDesign has explicit method mapping (operation names differ from method names)
         if tool_name == "partdesign_operations":
             return self._dispatch_partdesign(args)
+        # Sketch operations — explicit method mapping
+        if tool_name == "sketch_operations":
+            return self._dispatch_sketch(args)
         # Part operations have mixed routing across multiple handlers
         if tool_name == "part_operations":
             return self._dispatch_part_operations(args)
@@ -832,6 +835,8 @@ class FreeCADSocketServer:
             return self._get_debug_logs(args)
         if tool_name == "restart_freecad":
             return self._restart_freecad(args)
+        if tool_name == "reload_modules":
+            return self._reload_handlers()
 
         return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
@@ -866,23 +871,74 @@ class FreeCADSocketServer:
         operation = args.get("operation", "")
 
         operation_map = {
+            # Additive features
             "pad": self.partdesign_ops.pad_sketch,
-            "fillet": self.partdesign_ops.fillet_edges,
-            "chamfer": self.partdesign_ops.chamfer_edges,
-            "hole": self.partdesign_ops.hole_wizard,
-            "linear_pattern": self.partdesign_ops.linear_pattern,
-            "mirror": self.partdesign_ops.mirror_feature,
             "revolution": self.partdesign_ops.revolution,
             "loft": self.partdesign_ops.loft_profiles,
             "sweep": self.partdesign_ops.sweep_path,
+            "additive_pipe": self.partdesign_ops.additive_pipe,
+            # Subtractive features
+            "pocket": self.partdesign_ops.pocket,
+            "groove": self.partdesign_ops.groove,
+            "subtractive_loft": self.partdesign_ops.subtractive_loft,
+            "subtractive_sweep": self.partdesign_ops.subtractive_sweep,
+            # Dress-up features
+            "fillet": self.partdesign_ops.fillet_edges,
+            "chamfer": self.partdesign_ops.chamfer_edges,
             "draft": self.partdesign_ops.draft_faces,
             "shell": self.partdesign_ops.shell_solid,
+            "thickness": self.partdesign_ops.add_thickness,
+            # Hole features
+            "hole": self.partdesign_ops.hole_wizard,
+            "counterbore": self.partdesign_ops.hole_wizard,
+            "countersink": self.partdesign_ops.hole_wizard,
+            # Pattern features
+            "linear_pattern": self.partdesign_ops.linear_pattern,
+            "polar_pattern": self.partdesign_ops.polar_pattern,
+            "mirror": self.partdesign_ops.mirror_feature,
+            # Additional features
+            "helix": self.partdesign_ops.create_helix,
+            "rib": self.partdesign_ops.create_rib,
+            # Datum features
+            "datum_plane": self.partdesign_ops.create_datum_plane,
+            "datum_line": self.partdesign_ops.create_datum_line,
+            "datum_point": self.partdesign_ops.create_datum_point,
         }
 
         if operation not in operation_map:
             return json.dumps({"error": f"Unknown PartDesign operation: {operation}"})
 
         return self._call_on_gui_thread(operation_map[operation], args, f"PartDesign {operation}")
+
+    def _dispatch_sketch(self, args: Dict[str, Any]) -> str:
+        """Route Sketch operations (explicit mapping)."""
+        operation = args.get("operation", "")
+
+        operation_map = {
+            # Lifecycle
+            "create_sketch": self.sketch_ops.create_sketch,
+            "close_sketch": self.sketch_ops.close_sketch,
+            "verify_sketch": self.sketch_ops.verify_sketch,
+            # Geometry
+            "add_line": self.sketch_ops.add_line,
+            "add_circle": self.sketch_ops.add_circle,
+            "add_rectangle": self.sketch_ops.add_rectangle,
+            "add_arc": self.sketch_ops.add_arc,
+            "add_polygon": self.sketch_ops.add_polygon,
+            "add_slot": self.sketch_ops.add_slot,
+            "add_fillet": self.sketch_ops.add_fillet,
+            # Constraints
+            "add_constraint": self.sketch_ops.add_constraint,
+            "delete_constraint": self.sketch_ops.delete_constraint,
+            "list_constraints": self.sketch_ops.list_constraints,
+            # External geometry
+            "add_external_geometry": self.sketch_ops.add_external_geometry,
+        }
+
+        if operation not in operation_map:
+            return json.dumps({"error": f"Unknown Sketch operation: {operation}"})
+
+        return self._call_on_gui_thread(operation_map[operation], args, f"Sketch {operation}")
 
     def _dispatch_part_operations(self, args: Dict[str, Any]) -> str:
         """Route Part operations across multiple handlers."""
@@ -1060,6 +1116,102 @@ class FreeCADSocketServer:
     # -----------------------------------------------------------------
     # Restart FreeCAD
     # -----------------------------------------------------------------
+
+    def _reload_handlers(self) -> str:
+        """Hot-reload all handler modules and re-create handler instances.
+
+        After deploying new code (rsync), call this instead of restarting
+        FreeCAD.  Reloads every handler module in dependency order (base
+        first), then re-imports the classes and re-creates instances on
+        this server.
+        """
+        import importlib
+
+        try:
+            # Reload base first (other handlers inherit from it)
+            import handlers.base as _base
+            importlib.reload(_base)
+
+            # Reload each handler module
+            handler_modules = [
+                'handlers.primitives',
+                'handlers.boolean_ops',
+                'handlers.transforms',
+                'handlers.sketch_ops',
+                'handlers.partdesign_ops',
+                'handlers.part_ops',
+                'handlers.cam_ops',
+                'handlers.cam_tools',
+                'handlers.cam_tool_controllers',
+                'handlers.draft_ops',
+                'handlers.view_ops',
+                'handlers.document_ops',
+                'handlers.measurement_ops',
+                'handlers.spreadsheet_ops',
+                'handlers.mesh_ops',
+            ]
+            for mod_name in handler_modules:
+                mod = sys.modules.get(mod_name)
+                if mod:
+                    importlib.reload(mod)
+
+            # Reload the package __init__ so `from handlers import X` picks
+            # up the reloaded classes
+            import handlers as _handlers_pkg
+            importlib.reload(_handlers_pkg)
+
+            # Re-import fresh classes
+            from handlers import (
+                PrimitivesHandler,
+                BooleanOpsHandler,
+                TransformsHandler,
+                SketchOpsHandler,
+                PartDesignOpsHandler,
+                PartOpsHandler,
+                CAMOpsHandler,
+                CAMToolsHandler,
+                CAMToolControllersHandler,
+                DraftOpsHandler,
+                ViewOpsHandler,
+                DocumentOpsHandler,
+                MeasurementOpsHandler,
+                SpreadsheetOpsHandler,
+                MeshOpsHandler,
+            )
+
+            # Re-create handler instances
+            self.primitives = PrimitivesHandler(self, _log_operation, _capture_state)
+            self.boolean_ops = BooleanOpsHandler(self, _log_operation, _capture_state)
+            self.transforms = TransformsHandler(self, _log_operation, _capture_state)
+            self.sketch_ops = SketchOpsHandler(self, _log_operation, _capture_state)
+            self.partdesign_ops = PartDesignOpsHandler(self, _log_operation, _capture_state)
+            self.part_ops = PartOpsHandler(self, _log_operation, _capture_state)
+            self.cam_ops = CAMOpsHandler(self, _log_operation, _capture_state)
+            self.cam_tools = CAMToolsHandler(self, _log_operation, _capture_state)
+            self.cam_tool_controllers = CAMToolControllersHandler(self, _log_operation, _capture_state)
+            self.draft_ops = DraftOpsHandler(self, _log_operation, _capture_state)
+            self.measurement_ops = MeasurementOpsHandler(self, _log_operation, _capture_state)
+            self.spreadsheet_ops = SpreadsheetOpsHandler(self, _log_operation, _capture_state)
+            self.mesh_ops = MeshOpsHandler(self, _log_operation, _capture_state)
+            self.view_ops = ViewOpsHandler(
+                self, self._gui_task_queue, self._gui_response_queue,
+                _log_operation, _capture_state
+            )
+            self.document_ops = DocumentOpsHandler(
+                self, self._gui_task_queue, self._gui_response_queue,
+                _log_operation, _capture_state
+            )
+
+            n = len(handler_modules) + 1  # +1 for base
+            FreeCAD.Console.PrintMessage(f"[MCP] Reloaded {n} handler modules\n")
+            return json.dumps({
+                "result": f"Reloaded {n} handler modules successfully",
+                "modules_reloaded": n,
+            })
+
+        except Exception as e:
+            FreeCAD.Console.PrintError(f"[MCP] Handler reload failed: {e}\n")
+            return json.dumps({"error": f"Handler reload failed: {e}"})
 
     def _restart_freecad(self, args: Dict[str, Any]) -> str:
         """Restart FreeCAD: save documents, spawn new instance, exit current.
