@@ -1063,12 +1063,31 @@ async def main():
                 text=response
             )]
             
+        # execute_python: submit as async job, poll indefinitely (no timeout)
+        elif name == "execute_python":
+            args = arguments or {}
+            submit_resp = json.loads(await send_to_freecad("execute_python_async", {"code": args.get("code", "")}))
+            if "error" in submit_resp:
+                return [types.TextContent(type="text", text=json.dumps(submit_resp))]
+            job_id = submit_resp.get("job_id")
+            if not job_id:
+                return [types.TextContent(type="text", text=json.dumps({"error": "no job_id returned", "response": submit_resp}))]
+            while True:
+                await asyncio.sleep(1.0)
+                poll_resp = json.loads(await send_to_freecad("poll_job", {"job_id": job_id}))
+                status = poll_resp.get("status")
+                if status == "done":
+                    return [types.TextContent(type="text", text=json.dumps({"result": poll_resp.get("result"), "elapsed": poll_resp.get("elapsed")}))]
+                elif status == "error":
+                    return [types.TextContent(type="text", text=json.dumps({"error": poll_resp.get("error"), "elapsed": poll_resp.get("elapsed")}))]
+                # status == "running" → keep polling
+
         # Route smart dispatcher tools to socket with enhanced routing
         elif name in ["partdesign_operations", "sketch_operations", "part_operations",
                       "view_control", "cam_operations", "cam_tools", "cam_tool_controllers",
                       "cam_machines", "mesh_operations", "measurement_operations",
                       "spreadsheet_operations", "draft_operations", "get_debug_logs",
-                      "execute_python", "execute_python_async", "poll_job", "list_jobs",
+                      "execute_python_async", "poll_job", "list_jobs",
                       "cancel_operation", "cancel_job"]:
             args = arguments or {}
 
