@@ -953,6 +953,16 @@ class FreeCADSocketServer:
             method = getattr(self.transforms, f"{operation}_object", None)
         elif operation in ("extrude", "revolve", "loft", "sweep"):
             method = getattr(self.part_ops, operation, None)
+        elif operation == "mirror":
+            method = self.part_ops.mirror_object
+        elif operation == "scale":
+            method = self.part_ops.scale_object
+        elif operation == "section":
+            method = self.part_ops.section
+        elif operation == "compound":
+            method = self.part_ops.compound
+        elif operation == "check_geometry":
+            method = self.part_ops.check_geometry
 
         if not method:
             return json.dumps({"error": f"Unknown Part operation: {operation}"})

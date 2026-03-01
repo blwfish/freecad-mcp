@@ -30,10 +30,13 @@ class BooleanOpsHandler(BaseHandler):
                 else:
                     return f"Object not found: {obj_name}"
 
-            # Create fusion
+            # Create fusion and hide sources
             fusion = doc.addObject("Part::MultiFuse", name)
+            fusion.Label = name
             fusion.Shapes = objs
             self.recompute(doc)
+            for obj in objs:
+                obj.Visibility = False
 
             return f"Created fusion: {fusion.Name} from {len(objects)} objects"
 
@@ -67,11 +70,15 @@ class BooleanOpsHandler(BaseHandler):
                 else:
                     return f"Tool object not found: {tool_name}"
 
-            # Create cut
+            # Create cut and hide sources
             cut = doc.addObject("Part::Cut", name)
+            cut.Label = name
             cut.Base = base_obj
             cut.Tool = tool_objs[0] if len(tool_objs) == 1 else tool_objs
             self.recompute(doc)
+            base_obj.Visibility = False
+            for obj in tool_objs:
+                obj.Visibility = False
 
             return f"Created cut: {cut.Name} from {base} minus {len(tools)} tools"
 
@@ -100,10 +107,13 @@ class BooleanOpsHandler(BaseHandler):
                 else:
                     return f"Object not found: {obj_name}"
 
-            # Create common
+            # Create common and hide sources
             common = doc.addObject("Part::MultiCommon", name)
+            common.Label = name
             common.Shapes = objs
             self.recompute(doc)
+            for obj in objs:
+                obj.Visibility = False
 
             return f"Created intersection: {common.Name} from {len(objects)} objects"
 

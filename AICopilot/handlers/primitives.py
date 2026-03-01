@@ -147,10 +147,12 @@ class PrimitivesHandler(BaseHandler):
             xmax = args.get('xmax', 10)
             ymax = args.get('ymax', 10)
             zmax = args.get('zmax', 10)
+            name = args.get('name', 'Wedge')
 
             doc = self.get_document(create_if_missing=True)
 
-            wedge = doc.addObject("Part::Wedge", "Wedge")
+            wedge = doc.addObject("Part::Wedge", name)
+            wedge.Label = name
             wedge.Xmin = xmin
             wedge.Ymin = ymin
             wedge.Zmin = zmin

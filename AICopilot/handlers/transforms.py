@@ -9,7 +9,11 @@ class TransformsHandler(BaseHandler):
     """Handler for transform operations (move, rotate, copy, array)."""
 
     def move_object(self, args: Dict[str, Any]) -> str:
-        """Move an object to new position."""
+        """Move an object.
+
+        By default moves by a relative offset. Pass relative=False to set
+        an absolute position instead.
+        """
         import time
         start_time = time.time()
 
@@ -18,6 +22,7 @@ class TransformsHandler(BaseHandler):
             x = args.get('x', 0)
             y = args.get('y', 0)
             z = args.get('z', 0)
+            relative = args.get('relative', True)
 
             doc = self.get_document()
             if not doc:
@@ -27,15 +32,18 @@ class TransformsHandler(BaseHandler):
             if not obj:
                 return self.log_and_return("move_object", args, error=Exception(f"Object not found: {object_name}"))
 
-            # Move object
-            obj.Placement.Base = FreeCAD.Vector(
-                obj.Placement.Base.x + x,
-                obj.Placement.Base.y + y,
-                obj.Placement.Base.z + z
-            )
-            self.recompute(doc)
+            if relative:
+                obj.Placement.Base = FreeCAD.Vector(
+                    obj.Placement.Base.x + x,
+                    obj.Placement.Base.y + y,
+                    obj.Placement.Base.z + z
+                )
+                result = f"Moved {object_name} by ({x}, {y}, {z})"
+            else:
+                obj.Placement.Base = FreeCAD.Vector(x, y, z)
+                result = f"Moved {object_name} to ({x}, {y}, {z})"
 
-            result = f"Moved {object_name} by ({x}, {y}, {z})"
+            self.recompute(doc)
             duration = time.time() - start_time
             return self.log_and_return("move_object", args, result=result, duration=duration)
 
