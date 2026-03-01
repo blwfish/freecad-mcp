@@ -18,10 +18,12 @@ class PrimitivesHandler(BaseHandler):
             x = args.get('x', 0)
             y = args.get('y', 0)
             z = args.get('z', 0)
+            name = args.get('name', 'Box')
 
             doc = self.get_document(create_if_missing=True)
 
-            box = doc.addObject("Part::Box", "Box")
+            box = doc.addObject("Part::Box", name)
+            box.Label = name
             box.Length = length
             box.Width = width
             box.Height = height
@@ -42,10 +44,12 @@ class PrimitivesHandler(BaseHandler):
             x = args.get('x', 0)
             y = args.get('y', 0)
             z = args.get('z', 0)
+            name = args.get('name', 'Cylinder')
 
             doc = self.get_document(create_if_missing=True)
 
-            cylinder = doc.addObject("Part::Cylinder", "Cylinder")
+            cylinder = doc.addObject("Part::Cylinder", name)
+            cylinder.Label = name
             cylinder.Radius = radius
             cylinder.Height = height
             cylinder.Placement.Base = FreeCAD.Vector(x, y, z)
@@ -64,10 +68,12 @@ class PrimitivesHandler(BaseHandler):
             x = args.get('x', 0)
             y = args.get('y', 0)
             z = args.get('z', 0)
+            name = args.get('name', 'Sphere')
 
             doc = self.get_document(create_if_missing=True)
 
-            sphere = doc.addObject("Part::Sphere", "Sphere")
+            sphere = doc.addObject("Part::Sphere", name)
+            sphere.Label = name
             sphere.Radius = radius
             sphere.Placement.Base = FreeCAD.Vector(x, y, z)
 
@@ -87,10 +93,12 @@ class PrimitivesHandler(BaseHandler):
             x = args.get('x', 0)
             y = args.get('y', 0)
             z = args.get('z', 0)
+            name = args.get('name', 'Cone')
 
             doc = self.get_document(create_if_missing=True)
 
-            cone = doc.addObject("Part::Cone", "Cone")
+            cone = doc.addObject("Part::Cone", name)
+            cone.Label = name
             cone.Radius1 = radius1
             cone.Radius2 = radius2
             cone.Height = height
@@ -111,10 +119,12 @@ class PrimitivesHandler(BaseHandler):
             x = args.get('x', 0)
             y = args.get('y', 0)
             z = args.get('z', 0)
+            name = args.get('name', 'Torus')
 
             doc = self.get_document(create_if_missing=True)
 
-            torus = doc.addObject("Part::Torus", "Torus")
+            torus = doc.addObject("Part::Torus", name)
+            torus.Label = name
             torus.Radius1 = radius1
             torus.Radius2 = radius2
             torus.Placement.Base = FreeCAD.Vector(x, y, z)

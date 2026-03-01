@@ -120,10 +120,13 @@ class BaseHandler:
         return doc
 
     def get_object(self, object_name: str, doc: FreeCAD.Document = None):
-        """Get an object by name from the document.
+        """Get an object by internal name or label from the document.
+
+        Tries internal name first (fast, exact), then falls back to label
+        search so callers can pass user-visible labels like "LeftTab".
 
         Args:
-            object_name: Name of the object to find
+            object_name: Internal name or Label of the object to find
             doc: Document to search in (uses active document if not specified)
 
         Returns:
@@ -133,7 +136,12 @@ class BaseHandler:
             doc = FreeCAD.ActiveDocument
         if doc is None:
             return None
-        return doc.getObject(object_name)
+        obj = doc.getObject(object_name)
+        if obj is not None:
+            return obj
+        # Fall back to label search
+        results = doc.getObjectsByLabel(object_name)
+        return results[0] if results else None
 
     def recompute(self, doc: FreeCAD.Document = None):
         """Recompute the document.

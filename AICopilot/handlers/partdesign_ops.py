@@ -16,6 +16,7 @@ class PartDesignOpsHandler(BaseHandler):
             sketch_name = args.get('sketch_name', '')
             length = args.get('length', 10)
             name = args.get('name', 'Pad')
+            reversed_dir = args.get('reversed', False)
 
             doc = self.get_document()
             if not doc:
@@ -42,10 +43,13 @@ class PartDesignOpsHandler(BaseHandler):
             pad = body.newObject("PartDesign::Pad", name)
             pad.Profile = sketch
             pad.Length = length
+            if reversed_dir:
+                pad.Reversed = True
 
             self.recompute(doc)
 
-            return f"Created pad: {pad.Name} from {sketch_name} with length {length}mm in Body: {body.Name}"
+            rev_msg = " (reversed)" if reversed_dir else ""
+            return f"Created pad: {pad.Name} from {sketch_name} with length {length}mm{rev_msg} in Body: {body.Name}"
 
         except Exception as e:
             return f"Error creating pad: {e}"
