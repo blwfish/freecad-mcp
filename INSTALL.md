@@ -47,7 +47,7 @@ Then manually add to your Claude Desktop config:
   "mcpServers": {
     "freecad": {
       "command": "python3",
-      "args": ["/Users/YOUR_USERNAME/.freecad-mcp/working_bridge.py"]
+      "args": ["/Users/YOUR_USERNAME/.freecad-mcp/freecad_mcp_server.py"]
     }
   }
 }
@@ -80,14 +80,14 @@ Copy the bridge files somewhere permanent:
 
 ```bash
 mkdir -p ~/.freecad-mcp
-cp working_bridge.py mcp_bridge_framing.py ~/.freecad-mcp/
+cp freecad_mcp_server.py mcp_bridge_framing.py ~/.freecad-mcp/
 ```
 
 ### Step 3: Register with Claude
 
 **For Claude Code:**
 ```bash
-claude mcp add freecad python3 ~/.freecad-mcp/working_bridge.py
+claude mcp add freecad python3 ~/.freecad-mcp/freecad_mcp_server.py
 ```
 
 **For Claude Desktop:**
@@ -97,7 +97,7 @@ Edit your config file (see paths above) and add:
   "mcpServers": {
     "freecad": {
       "command": "python3",
-      "args": ["/full/path/to/.freecad-mcp/working_bridge.py"]
+      "args": ["/full/path/to/.freecad-mcp/freecad_mcp_server.py"]
     }
   }
 }
@@ -133,7 +133,7 @@ Or manually replace the `AICopilot` folder and the files in `~/.freecad-mcp/` wi
 
 ### "Tools not showing up in Claude"
 - Restart Claude Desktop/Code after config changes
-- Verify the path to `working_bridge.py` is correct in your config
+- Verify the path to `freecad_mcp_server.py` is correct in your config
 - Check that Python 3 is in your PATH
 
 ### "FreeCAD workbench not loading"
@@ -144,7 +144,7 @@ Or manually replace the `AICopilot` folder and the files in `~/.freecad-mcp/` wi
 ### Windows-specific issues
 - Use `python` instead of `python3` in your config
 - Use forward slashes or escaped backslashes in paths
-- Try TCP socket if Unix socket fails (edit `working_bridge.py`)
+- Try TCP socket if Unix socket fails (edit `freecad_mcp_server.py`)
 
 ---
 
@@ -173,9 +173,9 @@ Or manually replace the `AICopilot` folder and the files in `~/.freecad-mcp/` wi
 ```
 Claude Desktop/Code
     ↓ (MCP protocol over stdio)
-working_bridge.py
+freecad_mcp_server.py
     ↓ (Socket connection)
-AICopilot/socket_server.py (inside FreeCAD)
+AICopilot/freecad_mcp_handler.py (inside FreeCAD)
     ↓ (FreeCAD API)
 FreeCAD operations
 ```

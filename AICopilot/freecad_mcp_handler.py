@@ -100,15 +100,15 @@ try:
         validate_all,
         get_status,
     )
-    register_component("socket_server", __version__)
-    declare_requirements("socket_server", REQUIRED_VERSIONS)
+    register_component("freecad_mcp_handler", __version__)
+    declare_requirements("freecad_mcp_handler", REQUIRED_VERSIONS)
     valid, error = validate_all()
     if not valid:
         FreeCAD.Console.PrintError(f"Version validation failed: {error}\n")
         FreeCAD.Console.PrintError("Component status:\n")
         FreeCAD.Console.PrintError(json.dumps(get_status(), indent=2) + "\n")
         sys.exit(1)
-    FreeCAD.Console.PrintMessage(f"socket_server v{__version__} validated\n")
+    FreeCAD.Console.PrintMessage(f"freecad_mcp_handler v{__version__} validated\n")
 except ImportError as e:
     FreeCAD.Console.PrintWarning(f"Version system not available (optional): {e}\n")
 
@@ -143,7 +143,7 @@ except ImportError as e:
 # Message Framing Protocol (v2.1.1)
 # =============================================================================
 # Length-prefixed protocol: [4-byte big-endian length][JSON message]
-# Keep in sync with mcp_bridge_framing.py on the bridge side.
+# Keep in sync with mcp_bridge_framing.py (freecad_mcp_server.py) on the bridge side.
 
 MAX_MESSAGE_SIZE = 50 * 1024  # 50KB — matches bridge-side limit
 

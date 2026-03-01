@@ -43,7 +43,7 @@ def _socket_responds(path: str, timeout: float = 2.0) -> bool:
 
 
 def _find_freecadcmd() -> str | None:
-    """Locate FreeCADCmd binary (same logic as working_bridge.py)."""
+    """Locate FreeCADCmd binary (same logic as freecad_mcp_server.py)."""
     override = os.environ.get("FREECAD_MCP_FREECAD_BIN")
     if override and os.path.isfile(override):
         return override
@@ -67,7 +67,7 @@ def _find_freecadcmd() -> str | None:
 
 
 def _find_headless_script() -> str | None:
-    """Locate headless_server.py (same logic as working_bridge.py)."""
+    """Locate headless_server.py (same logic as freecad_mcp_server.py)."""
     override_dir = os.environ.get("FREECAD_MCP_MODULE_DIR")
     if override_dir:
         p = os.path.join(override_dir, "headless_server.py")

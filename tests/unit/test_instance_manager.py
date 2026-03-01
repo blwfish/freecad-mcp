@@ -1,5 +1,5 @@
 """
-Tests for the _BridgeCtx instance manager and related helpers in working_bridge.py.
+Tests for the _BridgeCtx instance manager and related helpers in freecad_mcp_server.py.
 """
 
 import os
@@ -13,15 +13,15 @@ import pytest
 from unittest.mock import MagicMock, patch, call
 
 # ---------------------------------------------------------------------------
-# Inject working_bridge module without running asyncio.run(main())
+# Inject freecad_mcp_server module without running asyncio.run(main())
 # We load it as a module and poke at the module-level symbols directly.
 # ---------------------------------------------------------------------------
-BRIDGE_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "working_bridge.py")
+BRIDGE_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "freecad_mcp_server.py")
 
 def _load_bridge():
-    """Import working_bridge as a module without executing __main__."""
+    """Import freecad_mcp_server as a module without executing __main__."""
     import importlib.util
-    spec = importlib.util.spec_from_file_location("working_bridge", BRIDGE_PATH)
+    spec = importlib.util.spec_from_file_location("freecad_mcp_server", BRIDGE_PATH)
     mod = importlib.util.module_from_spec(spec)
     # Stub out mcp so the top-level import doesn't fail outside the bridge env
     mcp_stub = _types.ModuleType("mcp")
@@ -163,7 +163,7 @@ class TestFindHeadlessScript:
 
 
 # ===========================================================================
-# _run_on_gui_thread headless path (socket_server side)
+# _run_on_gui_thread headless path (freecad_mcp_handler side)
 # ===========================================================================
 
 class TestRunOnGuiThreadHeadless:
@@ -205,8 +205,8 @@ class TestRunOnGuiThreadHeadless:
             setattr(hmod, n, cls)
         monkeypatch.setitem(sys.modules, "handlers", hmod)
 
-        # Use the same _ImportBlocker pattern as conftest.py / test_socket_server.py:
-        # any attribute access raises ImportError, so socket_server takes fallback paths.
+        # Use the same _ImportBlocker pattern as conftest.py / test_freecad_mcp_handler.py:
+        # any attribute access raises ImportError, so freecad_mcp_handler takes fallback paths.
         class _ImportBlocker:
             def __getattr__(self, name):
                 raise ImportError(f"mocked optional module: {name}")
@@ -215,8 +215,8 @@ class TestRunOnGuiThreadHeadless:
             monkeypatch.setitem(sys.modules, opt, _ImportBlocker())  # type: ignore
 
         spec = importlib.util.spec_from_file_location(
-            "socket_server_test",
-            os.path.join(aicopilot_dir, "socket_server.py"),
+            "freecad_mcp_handler_test",
+            os.path.join(aicopilot_dir, "freecad_mcp_handler.py"),
         )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)

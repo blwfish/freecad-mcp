@@ -3,12 +3,12 @@ MCP Bridge Message Framing Adapter
 ===================================
 
 This module provides the client-side message framing functions that match
-the socket_server v2.1.0 protocol.
+the freecad_mcp_handler v2.1.0 protocol.
 
-Use this in your MCP bridge (working_bridge.py or similar) to communicate
+Use this in your MCP bridge (freecad_mcp_server.py or similar) to communicate
 with the updated FreeCAD socket server.
 
-Version: 2.1.2 (matches socket_server v2.1.2)
+Version: 2.1.2 (matches freecad_mcp_handler v2.1.2)
 """
 
 import socket
@@ -18,7 +18,7 @@ from typing import Optional
 def send_message(sock: socket.socket, message_str: str) -> bool:
     """Send a length-prefixed message over socket (client-side).
     
-    Must match the protocol used by socket_server v2.1.0.
+    Must match the protocol used by freecad_mcp_handler v2.1.0.
     
     Protocol:
         [4 bytes: message length as uint32 big-endian][message bytes]
@@ -58,7 +58,7 @@ def send_message(sock: socket.socket, message_str: str) -> bool:
 def receive_message(sock: socket.socket, timeout: float = 30.0) -> Optional[str]:
     """Receive a length-prefixed message from socket (client-side).
     
-    Must match the protocol used by socket_server v2.1.0.
+    Must match the protocol used by freecad_mcp_handler v2.1.0.
     
     Args:
         sock: Connected socket to FreeCAD server
@@ -189,7 +189,7 @@ def example_bridge_integration():
     """Example: How to integrate into an existing MCP bridge."""
     
     print("""
-    To integrate into your existing bridge (e.g., working_bridge.py):
+    To integrate into your existing bridge (e.g., freecad_mcp_server.py):
     
     1. Add this import at the top:
        from mcp_bridge_framing import send_message, receive_message

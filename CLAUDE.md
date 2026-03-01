@@ -20,9 +20,9 @@ When `partdesign_operations` returns `{"status": "awaiting_selection"}`, the use
 
 Due to a GIL threading issue, always create the document first with `view_control(operation="create_document")`, then create objects in a separate call. Do NOT rely on auto-document-creation inside primitives — it can deadlock FreeCAD.
 
-### NEVER modify socket_server.py and handlers/ in parallel
+### NEVER modify freecad_mcp_handler.py and handlers/ in parallel
 
-The socket server must stay under 750 lines. Business logic goes in `handlers/` — never embed operation implementations in `socket_server.py`.
+The socket server must stay under 750 lines. Business logic goes in `handlers/` — never embed operation implementations in `freecad_mcp_handler.py`.
 
 ## Workflow
 
@@ -140,8 +140,8 @@ These operations cannot programmatically select edges — the user must click ed
 
 ## Technical Notes
 
-- **Bridge** (`working_bridge.py`): 25 MCP tools, async, communicates via MCP protocol over stdio
-- **Socket server** (`AICopilot/socket_server.py` v5.4.0): 25 dispatch routes, runs inside FreeCAD
+- **Bridge** (`freecad_mcp_server.py`): 25 MCP tools, async, communicates via MCP protocol over stdio
+- **Handler** (`AICopilot/freecad_mcp_handler.py` v5.4.0): 25 dispatch routes, runs inside FreeCAD
 - **Message protocol**: Length-prefixed JSON (4-byte uint32 BE + UTF-8), 50KB max message size
 - **Socket**: Unix domain at `/tmp/freecad_mcp.sock` (TCP `localhost:23456` on Windows)
 - **Handlers**: 14 classes in `AICopilot/handlers/`, each inherits `BaseHandler`, returns strings
@@ -165,7 +165,7 @@ To verify which path FreeCAD loads: `execute_python("import os, AICopilot.handle
 ```bash
 python3 -m pytest                 # Run 174 unit tests (no FreeCAD needed)
 rsync -av --delete AICopilot/ /Volumes/Files/claude/FreeCAD-prefs/v1-2/Mod/AICopilot/
-cp working_bridge.py mcp_bridge_framing.py ~/.freecad-mcp/
+cp freecad_mcp_server.py mcp_bridge_framing.py ~/.freecad-mcp/
 # After rsync, hot-reload without restarting FreeCAD:
 #   reload_modules()
 ```
@@ -178,8 +178,8 @@ cp working_bridge.py mcp_bridge_framing.py ~/.freecad-mcp/
 | `FREECAD_MCP_MODULE_DIR` | Override path to `AICopilot/` module dir | auto-detected |
 
 ### Versions
-- socket_server.py: v5.4.0 (target 700–750 lines)
+- freecad_mcp_handler.py: v5.4.0 (target 700–750 lines)
 - freecad_debug.py: v1.1.0
 - freecad_health.py: v1.0.1
 
-Never regress version numbers. If `socket_server.py` exceeds 800 lines, extract logic to a handler.
+Never regress version numbers. If `freecad_mcp_handler.py` exceeds 800 lines, extract logic to a handler.

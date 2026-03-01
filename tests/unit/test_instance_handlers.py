@@ -1,5 +1,5 @@
 """
-Tests for the four instance-management MCP tool handlers in working_bridge.py:
+Tests for the four instance-management MCP tool handlers in freecad_mcp_server.py:
   list_freecad_instances, select_freecad_instance,
   spawn_freecad_instance, stop_freecad_instance.
 
@@ -23,12 +23,12 @@ from unittest.mock import MagicMock, patch, AsyncMock
 # ---------------------------------------------------------------------------
 # Load the bridge module without executing __main__
 # ---------------------------------------------------------------------------
-BRIDGE_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "working_bridge.py")
+BRIDGE_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "freecad_mcp_server.py")
 
 
 def _load_bridge():
     import importlib.util
-    spec = importlib.util.spec_from_file_location("working_bridge_ih", BRIDGE_PATH)
+    spec = importlib.util.spec_from_file_location("freecad_mcp_server_ih", BRIDGE_PATH)
     mod = importlib.util.module_from_spec(spec)
     mcp_stub = _types.ModuleType("mcp")
     mcp_stub.types = _types.ModuleType("mcp.types")

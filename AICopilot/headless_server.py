@@ -10,7 +10,7 @@ The socket path can also be set via the FREECAD_MCP_SOCKET environment variable.
 If both are provided, --socket-path takes precedence.
 
 FreeCAD's Init.py runs before this script, so the AICopilot module directory is
-already on sys.path and `from socket_server import FreeCADSocketServer` works.
+already on sys.path and `from freecad_mcp_handler import FreeCADSocketServer` works.
 """
 
 import os
@@ -65,7 +65,7 @@ def main():
     )
 
     try:
-        from socket_server import FreeCADSocketServer
+        from freecad_mcp_handler import FreeCADSocketServer
     except ImportError as e:
         FreeCAD.Console.PrintError(
             f"[Headless MCP] Cannot import FreeCADSocketServer: {e}\n"

@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 @pytest.fixture(autouse=True)
 def mock_freecad(monkeypatch):
-    """Mock the FreeCAD and related modules so socket_server.py can import."""
+    """Mock the FreeCAD and related modules so freecad_mcp_handler.py can import."""
     # Create mock FreeCAD module
     fc = types.ModuleType("FreeCAD")
     fc.GuiUp = False  # Console mode — avoids PySide/FreeCADGui imports

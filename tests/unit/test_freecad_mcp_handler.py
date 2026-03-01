@@ -1,5 +1,5 @@
 """
-Tests for AICopilot/socket_server.py — the FreeCAD-side MCP server core.
+Tests for AICopilot/freecad_mcp_handler.py — the FreeCAD-side MCP server core.
 
 FreeCAD is mocked via conftest.py fixtures.
 """
@@ -26,7 +26,7 @@ sys.path.insert(0, AICOPILOT_DIR)
 
 @pytest.fixture
 def mock_handlers(monkeypatch):
-    """Mock out the handler imports so socket_server.py can load."""
+    """Mock out the handler imports so freecad_mcp_handler.py can load."""
     handler_classes = [
         "PrimitivesHandler", "BooleanOpsHandler", "TransformsHandler",
         "SketchOpsHandler", "PartDesignOpsHandler", "PartOpsHandler",
@@ -43,7 +43,7 @@ def mock_handlers(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "handlers", handlers_mod)
 
-    # Make optional modules raise ImportError so socket_server takes fallback paths.
+    # Make optional modules raise ImportError so freecad_mcp_handler takes fallback paths.
     # This is cleaner than trying to mock all their internals correctly.
     class _ImportBlocker:
         """Module that raises ImportError when you try to import from it."""
@@ -60,21 +60,21 @@ def mock_handlers(monkeypatch):
 def server(mock_freecad, mock_handlers):
     """Create a FreeCADSocketServer instance with mocked dependencies."""
     # Need to clear any cached module to pick up our mocks
-    if "socket_server" in sys.modules:
-        del sys.modules["socket_server"]
+    if "freecad_mcp_handler" in sys.modules:
+        del sys.modules["freecad_mcp_handler"]
 
-    import socket_server as ss_mod
+    import freecad_mcp_handler as ss_mod
     server = ss_mod.FreeCADSocketServer()
     return server
 
 
 @pytest.fixture
 def ss_module(mock_freecad, mock_handlers):
-    """Import the socket_server module with mocks in place."""
-    if "socket_server" in sys.modules:
-        del sys.modules["socket_server"]
+    """Import the freecad_mcp_handler module with mocks in place."""
+    if "freecad_mcp_handler" in sys.modules:
+        del sys.modules["freecad_mcp_handler"]
 
-    import socket_server as ss_mod
+    import freecad_mcp_handler as ss_mod
     return ss_mod
 
 

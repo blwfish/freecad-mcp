@@ -5,7 +5,7 @@ FreeCAD MCP Version Management
 
 Centralized version tracking and dependency validation for all MCP components.
 
-This module ensures version compatibility across socket_server, freecad_debug,
+This module ensures version compatibility across freecad_mcp_handler, freecad_debug,
 and freecad_health, with fail-fast behavior on version mismatches.
 
 Author: Brian (with Claude)
@@ -100,7 +100,7 @@ class VersionRegistry:
         Register a component version.
         
         Args:
-            component: Component name (e.g., "socket_server", "freecad_debug")
+            component: Component name (e.g., "freecad_mcp_handler", "freecad_debug")
             version: Semantic version string (e.g., "1.2.3")
             loaded_at: Optional timestamp of when component was loaded
         """
@@ -189,12 +189,12 @@ if __name__ == "__main__":
     registry = VersionRegistry()
     
     # Register components
-    registry.register("socket_server", "2.0.0")
+    registry.register("freecad_mcp_handler", "2.0.0")
     registry.register("freecad_debug", "1.1.0")
     registry.register("freecad_health", "1.0.1")
     
     # Declare requirements
-    registry.declare_requirements("socket_server", {
+    registry.declare_requirements("freecad_mcp_handler", {
         "freecad_debug": ">=1.1.0",
         "freecad_health": ">=1.0.1",
     })

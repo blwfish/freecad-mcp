@@ -43,7 +43,7 @@ else:
             FreeCAD.Console.PrintMessage("Starting FreeCAD AI Copilot Service...\n")
 
             try:
-                from socket_server import FreeCADSocketServer
+                from freecad_mcp_handler import FreeCADSocketServer
                 self.socket_server = FreeCADSocketServer()
                 if self.socket_server.start_server():
                     FreeCAD.__ai_socket_server = self.socket_server

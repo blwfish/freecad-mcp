@@ -1,6 +1,6 @@
 """Verify bridge tool count stays consistent with documentation.
 
-If this test fails, you added or removed a tool in working_bridge.py.
+If this test fails, you added or removed a tool in freecad_mcp_server.py.
 Update the count here AND in README.md and CLAUDE.md.
 """
 
@@ -9,7 +9,7 @@ import re
 
 
 BRIDGE_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "working_bridge.py"
+    os.path.dirname(__file__), "..", "..", "freecad_mcp_server.py"
 )
 
 EXPECTED_TOOL_COUNT = 26
@@ -21,7 +21,7 @@ def test_bridge_tool_count():
         content = f.read()
     actual = content.count("types.Tool(")
     assert actual == EXPECTED_TOOL_COUNT, (
-        f"Expected {EXPECTED_TOOL_COUNT} tools in working_bridge.py, "
+        f"Expected {EXPECTED_TOOL_COUNT} tools in freecad_mcp_server.py, "
         f"found {actual}. Update this test, README.md, and CLAUDE.md."
     )
 

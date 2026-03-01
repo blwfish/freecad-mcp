@@ -11,7 +11,7 @@ freecad-mcp is a Model Context Protocol (MCP) server providing 24 tools for Free
 ## Architecture
 
 ```
-AI Agent ──(MCP over stdio)── working_bridge.py ──(Unix socket)── FreeCAD + AICopilot addon
+AI Agent ──(MCP over stdio)── freecad_mcp_server.py ──(Unix socket)── FreeCAD + AICopilot addon
 ```
 
 There are two components to install:
@@ -76,7 +76,7 @@ If the Mod directory doesn't exist, create it. The `v1-2` path component on macO
 
 ```bash
 mkdir -p ~/.freecad-mcp
-cp working_bridge.py mcp_bridge_framing.py ~/.freecad-mcp/
+cp freecad_mcp_server.py mcp_bridge_framing.py ~/.freecad-mcp/
 pip3 install mcp>=0.1.0
 ```
 
@@ -84,7 +84,7 @@ pip3 install mcp>=0.1.0
 
 **Claude Code:**
 ```bash
-claude mcp add freecad python3 ~/.freecad-mcp/working_bridge.py
+claude mcp add freecad python3 ~/.freecad-mcp/freecad_mcp_server.py
 ```
 
 **Other agents** — the server speaks standard MCP over stdio:
@@ -93,7 +93,7 @@ claude mcp add freecad python3 ~/.freecad-mcp/working_bridge.py
   "mcpServers": {
     "freecad": {
       "command": "python3",
-      "args": ["/absolute/path/to/.freecad-mcp/working_bridge.py"]
+      "args": ["/absolute/path/to/.freecad-mcp/freecad_mcp_server.py"]
     }
   }
 }
