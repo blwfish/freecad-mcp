@@ -574,7 +574,11 @@ async def main():
                             # Object parameters
                             "object_name": {"type": "string", "description": "Object name for operations"},
                             # Workbench parameters
-                            "workbench_name": {"type": "string", "description": "Workbench name to activate"}
+                            "workbench_name": {"type": "string", "description": "Workbench name to activate"},
+                            # get_report_view parameters
+                            "tail": {"type": "integer", "description": "Number of lines to return from the end (0 = all)", "default": 50},
+                            "filter": {"type": "string", "description": "Substring to filter lines by (case-insensitive)"},
+                            "clear": {"type": "boolean", "description": "Clear the Report View after reading", "default": False}
                         },
                         "required": ["operation"]
                     }
