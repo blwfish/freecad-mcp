@@ -414,3 +414,40 @@ class ViewOpsHandler(BaseHandler):
             return f"Workbench '{wb_name}' activated"
         except Exception as e:
             return f"Error activating workbench: {e}"
+
+    def get_report_view(self, args: Dict[str, Any]) -> str:
+        """Read text from FreeCAD's Report View widget.
+
+        MUST run on the GUI thread (dispatch layer handles this).
+
+        Args (all optional):
+            tail: number of lines to return from the end (default 50, 0 = all)
+            filter: substring to filter lines by (case-insensitive)
+            clear: if True, clear the Report View after reading
+        """
+        try:
+            from PySide import QtWidgets
+            mw = FreeCADGui.getMainWindow()
+            text_edits = mw.findChildren(QtWidgets.QTextEdit)
+            rv = next((w for w in text_edits if w.objectName() == 'Report view'), None)
+            if rv is None:
+                return "Report View widget not found"
+
+            text = rv.toPlainText()
+            lines = text.splitlines()
+
+            filter_str = args.get('filter', '')
+            if filter_str:
+                lines = [l for l in lines if filter_str.lower() in l.lower()]
+
+            tail = args.get('tail', 50)
+            if tail and tail > 0:
+                lines = lines[-tail:]
+
+            if args.get('clear', False):
+                rv.clear()
+
+            return '\n'.join(lines) if lines else "(empty)"
+
+        except Exception as e:
+            return f"Error reading Report View: {e}"

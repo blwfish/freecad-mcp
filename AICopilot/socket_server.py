@@ -997,6 +997,7 @@ class FreeCADSocketServer:
             "undo":          (self.view_ops.undo, 10.0),
             "redo":          (self.view_ops.redo, 10.0),
             "activate_workbench": (self.view_ops.activate_workbench, 10.0),
+            "get_report_view":   (self.view_ops.get_report_view, 5.0),
         }
 
         # --- Operations safe to call from any thread ---

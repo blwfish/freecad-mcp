@@ -556,7 +556,9 @@ async def main():
                                     # History operations
                                     "undo", "redo",
                                     # Workbench control
-                                    "activate_workbench"
+                                    "activate_workbench",
+                                    # Diagnostics
+                                    "get_report_view"
                                 ]
                             },
                             # Screenshot parameters
