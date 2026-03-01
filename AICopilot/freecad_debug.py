@@ -98,6 +98,7 @@ class FreeCADDebugger:
         self.logger = logging.getLogger("FreeCAD_MCP")
         self.logger.setLevel(level)
         self.logger.handlers.clear()
+        self.logger.propagate = False  # Don't let messages bubble to root → stderr → Report View
         
         # Console handler
         if enable_console:
