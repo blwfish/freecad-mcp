@@ -91,6 +91,17 @@ except Exception as e:
     sys.exit(1)
 
 # =============================================================================
+# Crash Watcher (optional — writes last-op to /tmp before each operation)
+# =============================================================================
+_set_current_op = None
+_clear_current_op = None
+try:
+    from crash_watcher import set_current_op as _set_current_op, clear_current_op as _clear_current_op
+    FreeCAD.Console.PrintMessage("Crash watcher loaded — op tracking active\n")
+except ImportError:
+    pass  # graceful degradation: no op tracking
+
+# =============================================================================
 # Version Validation
 # =============================================================================
 try:
@@ -767,6 +778,19 @@ class FreeCADSocketServer:
 
     def _execute_tool(self, tool_name: str, args: Dict[str, Any]) -> str:
         """Route a tool call to the appropriate handler."""
+        # ── Crash watcher: record op on disk before executing ──────────────
+        # If FreeCAD crashes, this file persists so the bridge can report
+        # *what* was running.  clear_current_op() is called on success.
+        if _set_current_op is not None:
+            _set_current_op(tool_name, args)
+        try:
+            return self._execute_tool_inner(tool_name, args)
+        finally:
+            if _clear_current_op is not None:
+                _clear_current_op()
+
+    def _execute_tool_inner(self, tool_name: str, args: Dict[str, Any]) -> str:
+        """Internal dispatch (called by _execute_tool after op tracking setup)."""
 
         # Direct handler method map (GUI-safe — runs on Qt thread)
         direct_map = {

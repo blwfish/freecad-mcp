@@ -154,6 +154,45 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # Import message framing for v2.1.1 protocol
 from mcp_bridge_framing import send_message, receive_message
 
+# ── Crash diagnostics (always enabled — no optional flag) ──────────────────
+import importlib.util as _ilu
+import os as _os
+
+def _load_crash_report():
+    """Load freecad_crash_report from same dir as this script, or ~/.freecad-mcp/."""
+    for candidate in [
+        _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "freecad_crash_report.py"),
+        _os.path.expanduser("~/.freecad-mcp/freecad_crash_report.py"),
+    ]:
+        if _os.path.isfile(candidate):
+            spec = _ilu.spec_from_file_location("freecad_crash_report", candidate)
+            mod  = _ilu.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+    return None
+
+_crash_mod = _load_crash_report()
+_op_log    = _crash_mod.get_op_log() if _crash_mod else None
+
+def _record_op(tool: str, args: dict) -> None:
+    if _op_log is not None:
+        _op_log.record(tool, args)
+
+def _complete_op() -> None:
+    if _op_log is not None:
+        _op_log.complete()
+
+def _diagnose_crash(error: Exception = None) -> str:
+    if _crash_mod is None:
+        return f"FreeCAD connection lost: {error}"
+    proc = _ctx.instances.get(_ctx.socket_path, {}).get("proc")
+    return _crash_mod.diagnose(
+        socket_path=_ctx.socket_path,
+        proc=proc,
+        op_log=_op_log,
+        error=error,
+    )
+
 # Initialize debugging infrastructure (optional - works without it)
 try:
     from freecad_debug import init_debugger, debug_deccorator
@@ -201,6 +240,8 @@ async def main():
     @debug_decorator(track_state=False, track_performance=True)
     async def send_to_freecad(tool_name: str, args: dict) -> str:
         """Send command to FreeCAD via socket (cross-platform)"""
+        # Record operation before sending (bridge-side crash tracking)
+        _record_op(tool_name, args)
         try:
             # Create socket connection based on platform
             if platform.system() == "Windows":
@@ -212,23 +253,24 @@ async def main():
                     return json.dumps({"error": "FreeCAD socket not available. Please start FreeCAD with AICopilot installed, or call spawn_freecad_instance."})
                 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 sock.connect(current_path)
-            
+
             # Send command with length-prefixed protocol (v2.1.1)
             command = json.dumps({"tool": tool_name, "args": args})
             if not send_message(sock, command):
                 sock.close()
                 return json.dumps({"error": "Failed to send command to FreeCAD"})
-            
+
             # Receive response with length-prefixed protocol (v2.1.1)
             # Use caller's timeout if provided (e.g., execute_python long ops)
             recv_timeout = float(args.get("timeout", 30.0)) if isinstance(args, dict) else 30.0
             # Add 5s grace period so server-side timeout fires first
             response = receive_message(sock, timeout=recv_timeout + 5.0)
             sock.close()
-            
+
             if response is None:
-                return json.dumps({"error": "Failed to receive response from FreeCAD (timeout or connection error)"})
-            
+                report = _diagnose_crash()
+                return json.dumps({"error": report})
+
             # Check if this is a selection workflow response
             try:
                 result = json.loads(response)
@@ -237,18 +279,19 @@ async def main():
                     return await handle_selection_workflow(tool_name, args, result)
             except json.JSONDecodeError:
                 pass  # Not JSON, return as-is
-            
+
+            _complete_op()   # mark successful on the bridge side
             return response
-            
+
         except Exception as e:
-            # Log the exception if debugger is available
+            # ── Crash diagnosis ──────────────────────────────────────────────
+            # Log to optional debug infrastructure if present
             if DEBUG_ENABLED and debugger:
                 debugger.log_operation(
                     operation="send_to_freecad",
                     parameters={"tool_name": tool_name, "args": args},
                     error=e
                 )
-                # Check FreeCAD health after socket error
                 if monitor:
                     status = monitor.perform_health_check()
                     if not status['is_healthy']:
@@ -257,7 +300,9 @@ async def main():
                             "tool_name": tool_name,
                             "args": args
                         })
-            return json.dumps({"error": f"Socket communication error: {e}"})
+            # Always produce a rich crash report (replaces generic "Connection refused")
+            report = _diagnose_crash(error=e)
+            return json.dumps({"error": report})
     
     async def handle_selection_workflow(tool_name: str, original_args: dict, selection_request: dict) -> str:
         """Handle the interactive selection workflow - Claude Code style"""
@@ -1077,9 +1122,13 @@ async def main():
                 poll_resp = json.loads(await send_to_freecad("poll_job", {"job_id": job_id}))
                 status = poll_resp.get("status")
                 if status == "done":
+                    _complete_op()
                     return [types.TextContent(type="text", text=json.dumps({"result": poll_resp.get("result"), "elapsed": poll_resp.get("elapsed")}))]
                 elif status == "error":
                     return [types.TextContent(type="text", text=json.dumps({"error": poll_resp.get("error"), "elapsed": poll_resp.get("elapsed")}))]
+                elif "error" in poll_resp and "Crash" in poll_resp.get("error", ""):
+                    # Crash diagnosed during polling — surface it directly
+                    return [types.TextContent(type="text", text=json.dumps(poll_resp))]
                 # status == "running" → keep polling
 
         # Route smart dispatcher tools to socket with enhanced routing
