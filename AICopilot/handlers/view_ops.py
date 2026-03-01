@@ -273,12 +273,18 @@ class ViewOpsHandler(BaseHandler):
 
         MUST run on the GUI thread (dispatch layer handles this).
 
-        Automatically scales resolution down for complex scenes to prevent
-        FreeCAD from hanging or crashing during saveImage().
+        On macOS, uses the system `screencapture` command as the primary method.
+        This avoids the saveImage() deadlock where CoinGL needs the Qt event loop
+        to pump the OpenGL render, but saveImage() IS on the GUI thread, so the
+        event loop can't run — causing a permanent hang that crashes FreeCAD.
+
+        Falls back to saveImage() on non-macOS platforms or if screencapture fails.
         """
         import tempfile
         import os
         import base64
+        import platform
+        import subprocess
 
         req_width = args.get("width", 800)
         req_height = args.get("height", 600)
@@ -293,12 +299,43 @@ class ViewOpsHandler(BaseHandler):
             if view is None:
                 return json.dumps({"success": False, "error": "No active view"})
 
-            # Complexity-aware resolution scaling
-            face_count = _estimate_scene_faces()
-            width, height, was_clamped = _clamp_resolution(req_width, req_height, face_count)
-
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
                 tmp_path = f.name
+
+            # ── macOS: screencapture (subprocess, never blocks GUI thread) ───────
+            if platform.system() == "Darwin":
+                # -x  = suppress shutter sound
+                # no -w/-i = capture entire screen (FreeCAD visible on screen)
+                proc = subprocess.run(
+                    ["screencapture", "-x", tmp_path],
+                    timeout=10,
+                    capture_output=True,
+                )
+                if proc.returncode == 0 and os.path.getsize(tmp_path) > 0:
+                    with open(tmp_path, "rb") as f:
+                        image_data = base64.b64encode(f.read()).decode("utf-8")
+                    return json.dumps({
+                        "success": True,
+                        "image_data": image_data,
+                        "mime_type": "image/png",
+                        "width": req_width,
+                        "height": req_height,
+                        "method": "screencapture",
+                    })
+                # screencapture failed — fall through to saveImage
+
+            # ── Fallback: FreeCAD saveImage (may block on macOS) ─────────────────
+            # Pump the event loop first so the viewport is fully initialised.
+            try:
+                from PySide2 import QtWidgets
+                app = QtWidgets.QApplication.instance()
+                if app:
+                    app.processEvents()
+            except Exception:
+                pass
+
+            face_count = _estimate_scene_faces()
+            width, height, was_clamped = _clamp_resolution(req_width, req_height, face_count)
 
             view.saveImage(tmp_path, width, height)
 
@@ -311,6 +348,7 @@ class ViewOpsHandler(BaseHandler):
                 "mime_type": "image/png",
                 "width": width,
                 "height": height,
+                "method": "saveImage",
             }
             if was_clamped:
                 result["note"] = (
