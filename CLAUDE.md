@@ -155,8 +155,9 @@ These operations cannot programmatically select edges — the user must click ed
 
 ### Paths
 - **Dev repo**: `/Volumes/Files/claude/freecad-mcp/`
-- **FreeCAD module (actual load path)**: `/Volumes/Files/claude/FreeCAD-prefs/v1-2/Mod/AICopilot/` ← FreeCAD 1.2 actually loads from here (verified Feb 2026)
-- **FreeCAD module (legacy path)**: `/Volumes/Files/claude/FreeCAD-prefs/Mod/AICopilot/` — NOT used by FreeCAD 1.2
+- **FreeCAD module (actual load path)**: `/Volumes/Files/claude/FreeCAD-prefs/Mod/AICopilot/` ← loaded via `~/Library/Application Support/FreeCAD` → symlink to FreeCAD-prefs
+- **FreeCAD module (v1-2 path)**: `/Volumes/Files/claude/FreeCAD-prefs/v1-2/Mod/AICopilot/` — only used when launched via `pixi run freecad-release` (not the .app bundle)
+- **App bundle launcher**: `/Applications/FreeCAD.app` → wrapper script → `build/release/bin/FreeCAD` (needed for Screen Recording permission)
 - **Bridge install**: `~/.freecad-mcp/`
 
 To verify which path FreeCAD loads: `execute_python("import os, AICopilot.handlers.cam_ops as m; os.path.realpath(m.__file__)")`

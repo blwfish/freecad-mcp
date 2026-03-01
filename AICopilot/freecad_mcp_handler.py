@@ -1005,6 +1005,18 @@ class FreeCADSocketServer:
         """
         operation = args.get("operation", "")
 
+        # macOS screenshot: screencapture runs as a subprocess and must NOT run
+        # on the GUI thread — subprocess.run() blocks Qt event processing, which
+        # causes the bridge to time out even when screencapture works fine.
+        # take_screenshot() uses FreeCAD.ActiveDocument (thread-safe) on macOS.
+        import platform as _platform
+        if operation == "screenshot" and _platform.system() == "Darwin":
+            try:
+                result = self.view_ops.take_screenshot(args)
+                return json.dumps({"result": result})
+            except Exception as e:
+                return json.dumps({"error": f"Screenshot error: {e}"})
+
         # --- Operations that MUST run on the GUI thread ---
         gui_ops = {
             "screenshot":    (self.view_ops.take_screenshot, 60.0),

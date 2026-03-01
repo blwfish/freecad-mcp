@@ -291,18 +291,25 @@ class ViewOpsHandler(BaseHandler):
         tmp_path = None
 
         try:
-            doc = FreeCADGui.activeDocument()
-            if doc is None:
-                return json.dumps({"success": False, "error": "No active document"})
-
-            view = doc.activeView()
-            if view is None:
-                return json.dumps({"success": False, "error": "No active view"})
+            # On macOS this method runs on the socket thread (not GUI thread) —
+            # see _dispatch_view_control in freecad_mcp_handler.py.
+            # Use FreeCAD.ActiveDocument (thread-safe) instead of
+            # FreeCADGui.activeDocument() which requires the GUI thread.
+            if platform.system() == "Darwin":
+                if FreeCAD.ActiveDocument is None:
+                    return json.dumps({"success": False, "error": "No active document"})
+            else:
+                doc = FreeCADGui.activeDocument()
+                if doc is None:
+                    return json.dumps({"success": False, "error": "No active document"})
+                view = doc.activeView()
+                if view is None:
+                    return json.dumps({"success": False, "error": "No active view"})
 
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
                 tmp_path = f.name
 
-            # ── macOS: screencapture (subprocess, never blocks GUI thread) ───────
+            # ── macOS: screencapture (subprocess, runs on socket thread) ─────────
             if platform.system() == "Darwin":
                 # -x  = suppress shutter sound
                 # no -w/-i = capture entire screen (FreeCAD visible on screen)
@@ -311,6 +318,7 @@ class ViewOpsHandler(BaseHandler):
                     timeout=10,
                     capture_output=True,
                 )
+                stderr_text = proc.stderr.decode(errors="replace") if proc.stderr else ""
                 if proc.returncode == 0 and os.path.getsize(tmp_path) > 0:
                     with open(tmp_path, "rb") as f:
                         image_data = base64.b64encode(f.read()).decode("utf-8")
@@ -322,9 +330,22 @@ class ViewOpsHandler(BaseHandler):
                         "height": req_height,
                         "method": "screencapture",
                     })
-                # screencapture failed — fall through to saveImage
+                # screencapture failed — do NOT fall through to saveImage on macOS.
+                # saveImage() deadlocks the GUI thread (it needs the Qt event loop to
+                # pump the OpenGL render, but we ARE the GUI thread).
+                # Most likely cause: FreeCAD lacks Screen Recording permission.
+                # Grant it in: System Settings → Privacy & Security → Screen Recording
+                return json.dumps({
+                    "success": False,
+                    "error": (
+                        f"screencapture failed (rc={proc.returncode}). "
+                        "FreeCAD likely needs Screen Recording permission: "
+                        "System Settings → Privacy & Security → Screen Recording → enable FreeCAD. "
+                        f"stderr: {stderr_text[:300]}"
+                    ),
+                })
 
-            # ── Fallback: FreeCAD saveImage (may block on macOS) ─────────────────
+            # ── Fallback: FreeCAD saveImage (non-macOS only) ──────────────────────
             # Pump the event loop first so the viewport is fully initialised.
             try:
                 from PySide2 import QtWidgets

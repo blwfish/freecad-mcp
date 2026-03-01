@@ -1203,6 +1203,37 @@ async def main():
                     return [types.TextContent(type="text", text=json.dumps(poll_resp))]
                 # status == "running" → keep polling
 
+        # macOS screenshot: run screencapture in the bridge process (which inherits
+        # Screen Recording permission from the terminal), never touching FreeCAD's
+        # GUI thread or requiring FreeCAD to have its own TCC permission.
+        elif (name == "view_control"
+              and (arguments or {}).get("operation") == "screenshot"
+              and platform.system() == "Darwin"):
+            import tempfile, base64 as _b64
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+                    tmp_path = f.name
+                proc = subprocess.run(
+                    ["screencapture", "-x", tmp_path],
+                    timeout=10, capture_output=True,
+                )
+                if proc.returncode == 0 and os.path.getsize(tmp_path) > 0:
+                    with open(tmp_path, "rb") as f:
+                        image_data = _b64.b64encode(f.read()).decode("utf-8")
+                    return [types.ImageContent(
+                        type="image", data=image_data, mimeType="image/png"
+                    )]
+                err = proc.stderr.decode(errors="replace")[:200]
+                return [types.TextContent(type="text", text=json.dumps({
+                    "error": f"screencapture failed (rc={proc.returncode}): {err}"
+                }))]
+            except Exception as e:
+                return [types.TextContent(type="text", text=json.dumps({"error": str(e)}))]
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+
         # Route smart dispatcher tools to socket with enhanced routing
         elif name in ["partdesign_operations", "sketch_operations", "part_operations",
                       "view_control", "cam_operations", "cam_tools", "cam_tool_controllers",
