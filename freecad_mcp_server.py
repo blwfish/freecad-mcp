@@ -383,6 +383,32 @@ async def main():
                     "properties": {},
                 }
             ),
+            types.Tool(
+                name="manage_connection",
+                description=(
+                    "Diagnostic and lifecycle management for the FreeCAD/bridge connection. "
+                    "Actions:\n"
+                    "  status  — connection state, recovery file health, crash-loop detection\n"
+                    "  clear_recovery — remove corrupt FreeCAD session/autosave files that "
+                    "cause crash loops (FreeCAD crashes immediately on every restart). "
+                    "Safe: only deletes files that fail ZIP validation.\n"
+                    "  validate_fcstd — check whether a saved .FCStd file is an intact ZIP archive"
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "description": "One of: status, clear_recovery, validate_fcstd",
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "FCStd file path (required for validate_fcstd action)",
+                        },
+                    },
+                    "required": ["action"],
+                }
+            ),
         ]
 
         # Always expose all smart dispatchers; check_freecad_connection / spawn
@@ -1088,6 +1114,52 @@ async def main():
                 type="text",
                 text=result if isinstance(result, str) else json.dumps(result)
             )]
+
+        elif name == "manage_connection":
+            action = (arguments or {}).get("action", "status")
+
+            if action == "clear_recovery":
+                if _crash_mod is None:
+                    return [types.TextContent(type="text",
+                        text=json.dumps({"error": "crash report module not loaded"}))]
+                removed = _crash_mod.clear_recovery_files(dry_run=False)
+                return [types.TextContent(type="text", text=json.dumps({
+                    "action": "clear_recovery",
+                    "removed": removed,
+                    "count": len(removed),
+                    "note": "Removed corrupt FreeCAD recovery files. Restart FreeCAD for a clean session.",
+                }, indent=2))]
+
+            elif action == "validate_fcstd":
+                path = (arguments or {}).get("path", "")
+                if not path:
+                    return [types.TextContent(type="text",
+                        text=json.dumps({"error": "path parameter required"}))]
+                if _crash_mod is None:
+                    import zipfile, os as _os
+                    try:
+                        sz = _os.path.getsize(path)
+                        with zipfile.ZipFile(path, "r") as zf:
+                            bad = zf.testzip()
+                        result = {"valid": bad is None, "size_bytes": sz,
+                                  "error": f"Corrupt member: {bad}" if bad else None}
+                    except Exception as exc:
+                        result = {"valid": False, "size_bytes": 0, "error": str(exc)}
+                else:
+                    result = _crash_mod.validate_fcstd(path)
+                return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
+            else:  # action == "status"
+                out: dict = {
+                    "connected": _ctx.freecad_available,
+                    "socket_path": _ctx.socket_path,
+                    "instances": _ctx.list_all(),
+                }
+                if _crash_mod is not None:
+                    rec = _crash_mod.find_recovery_files()
+                    out["recovery_files"] = rec
+                    out["crash_loop_risk"] = any(not f["valid"] for f in rec)
+                return [types.TextContent(type="text", text=json.dumps(out, indent=2))]
 
         # Handle continue_selection tool
         elif name == "continue_selection":

@@ -13,12 +13,37 @@ with actionable crash reports that answer:
   • That it crashed          (process / socket state)
   • Why it crashed           (macOS crash report, exit signal, stderr)
   • What it was doing        (last_op file + bridge op log)
+  • Whether saved files are intact  (FCStd ZIP integrity check)
+  • Whether a crash loop is in progress  (corrupt recovery file detection)
 
 Works for both interactive FreeCAD (user-launched GUI) and headless instances
 (spawned via spawn_freecad_instance).
+
+WHY MCP CRASHES CORRUPT STATE (but manual crashes often recover cleanly)
+------------------------------------------------------------------------
+FreeCAD maintains two saving mechanisms:
+  1. Explicit saves  (doc.saveAs) — atomic, completed before crash, file is fine
+  2. FreeCAD's own autosave/recovery files  (~Library/Application Support/FreeCAD/)
+
+With manual work, FreeCAD's autosave timer has been running for minutes; the
+recovery files are self-consistent. On crash, FreeCAD restores cleanly.
+
+With MCP, operations are fast and programmatic. The crash (often during
+saveImage() blocking the GUI thread) happens seconds after the document was
+built — before FreeCAD's autosave has run. Recovery files are either stale
+(from a previous session) or partially written mid-crash.
+
+On restart FreeCAD tries to auto-restore from those partial files → second
+immediate crash → crash loop. The socket file exists (left from the prior run
+or created briefly before the second crash), but connections are immediately
+refused. This is the "stickup" pattern.
+
+The fix: detect corrupt recovery files and remove them before restarting FC.
+The explicitly-saved FCStd file is usually intact and can be opened normally
+once the recovery loop is broken.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 import glob
 import json
@@ -26,6 +51,7 @@ import os
 import platform
 import subprocess
 import time
+import zipfile
 from collections import deque
 from pathlib import Path
 from typing import Optional
@@ -190,6 +216,114 @@ _SIGNALS = {-11: "SIGSEGV", -6: "SIGABRT", -4: "SIGILL", -8: "SIGFPE", -10: "SIG
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# FCStd file integrity
+# ─────────────────────────────────────────────────────────────────────────────
+
+def validate_fcstd(path: str) -> dict:
+    """Check whether an FCStd file is an intact ZIP archive.
+
+    FCStd is a ZIP containing Document.xml plus geometry blobs.  A truncated
+    or partially-written file will fail ZipFile construction or testzip().
+
+    Returns {"valid": bool, "error": str|None, "size_bytes": int}
+    """
+    result: dict = {"valid": False, "error": None, "size_bytes": 0}
+    try:
+        result["size_bytes"] = os.path.getsize(path)
+        with zipfile.ZipFile(path, "r") as zf:
+            bad = zf.testzip()
+            if bad:
+                result["error"] = f"Corrupt member: {bad}"
+            else:
+                result["valid"] = True
+    except zipfile.BadZipFile as exc:
+        result["error"] = f"Bad ZIP: {exc}"
+    except FileNotFoundError:
+        result["error"] = "File not found"
+    except Exception as exc:
+        result["error"] = str(exc)
+    return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FreeCAD recovery / autosave file management
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _fc_user_data_dir() -> str:
+    """Platform-specific FreeCAD user-data directory (no FreeCAD process needed)."""
+    system = platform.system()
+    if system == "Darwin":
+        return os.path.expanduser("~/Library/Application Support/FreeCAD")
+    if system == "Windows":
+        return os.path.join(os.environ.get("APPDATA", ""), "FreeCAD")
+    # Linux / BSD
+    xdg = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
+    return os.path.join(xdg, "FreeCAD")
+
+
+def find_recovery_files(max_age_s: int = 7200) -> list:
+    """Locate FreeCAD autosave / recovery files written recently.
+
+    Returns a list of dicts sorted by age (newest first):
+      {"path", "age_s", "size_bytes", "valid", "error"}
+
+    These are the files FreeCAD tries to restore on startup.  If any are
+    corrupt (failed ZIP validation), they will trigger an immediate second
+    crash on startup — the "stickup" / crash-loop pattern.
+    """
+    data_dir = _fc_user_data_dir()
+    patterns = [
+        os.path.join(data_dir, "*.FCBak"),
+        os.path.join(data_dir, "*.FCStd"),
+        os.path.join(data_dir, "saved",  "*.FCStd"),
+        os.path.join(data_dir, "saved",  "*.FCBak"),
+        os.path.join(data_dir, "Backup", "*.FCStd"),
+        os.path.join(data_dir, "Backup", "*.FCBak"),
+    ]
+    now, seen, found = time.time(), set(), []
+    for pat in patterns:
+        for path in glob.glob(pat):
+            if path in seen:
+                continue
+            seen.add(path)
+            age = now - os.path.getmtime(path)
+            if age > max_age_s:
+                continue
+            v = validate_fcstd(path)
+            found.append({
+                "path":       path,
+                "age_s":      age,
+                "size_bytes": v["size_bytes"],
+                "valid":      v["valid"],
+                "error":      v.get("error"),
+            })
+    return sorted(found, key=lambda x: x["age_s"])
+
+
+def clear_recovery_files(dry_run: bool = False) -> list:
+    """Remove FreeCAD recovery files that fail ZIP validation.
+
+    Only deletes files that are provably corrupt — valid FCBak/FCStd files
+    are left untouched.  Call this to break the crash loop caused by FreeCAD
+    trying to restore a corrupt session on every startup.
+
+    Returns list of paths removed (or would-remove if dry_run=True).
+    """
+    removed = []
+    for info in find_recovery_files():
+        if not info["valid"]:
+            if not dry_run:
+                try:
+                    os.unlink(info["path"])
+                    removed.append(info["path"])
+                except Exception:
+                    pass
+            else:
+                removed.append(info["path"])
+    return removed
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -271,12 +405,42 @@ def diagnose(
     if error:
         parts.append(f"\n**Socket error:** `{type(error).__name__}: {error}`")
 
-    # ── 6. Next steps ─────────────────────────────────────────────────────────
+    # ── 6. Recovery file state (crash-loop diagnosis) ─────────────────────────
+    recovery_files = find_recovery_files()
+    corrupt = [f for f in recovery_files if not f["valid"]]
+    valid   = [f for f in recovery_files if f["valid"]]
+
+    if recovery_files:
+        parts.append("\n**FreeCAD recovery files** (files FC tries to restore on startup):")
+        for f in recovery_files:
+            age_str  = f"{f['age_s']:.0f}s ago"
+            size_str = f"{f['size_bytes']:,} bytes"
+            status   = "✓ valid" if f["valid"] else f"✗ CORRUPT — {f['error']}"
+            parts.append(f"  - `{f['path']}` ({size_str}, {age_str}) — {status}")
+
+    if corrupt:
+        parts.append(
+            "\n⚠️  **Crash loop likely**: FreeCAD has corrupt recovery file(s) and will "
+            "crash immediately on every startup until they are removed.\n"
+            "Run `freecad_crash_report.clear_recovery_files()` to remove them, "
+            "then restart FreeCAD."
+        )
+
+    # ── 7. Next steps ─────────────────────────────────────────────────────────
     parts.append("\n**What to do:**")
     if proc is not None and proc.poll() is not None:
         parts.append(
             "- Headless FreeCAD has exited — call `spawn_freecad_instance` to get a fresh one\n"
             "- For heavy geometry (many booleans), consider doing operations in batches"
+        )
+    elif corrupt:
+        parts.append(
+            "- **Crash loop detected** — corrupt recovery files will crash FC on every restart\n"
+            "  1. Call `clear_recovery_files()` to remove corrupt FC session files\n"
+            "  2. Then relaunch FreeCAD — it will start fresh without session restore\n"
+            "  3. Open your explicitly-saved FCStd file (that file is likely intact)\n"
+            f"  Valid saved files you can reopen: "
+            + (", ".join(f'`{v["path"]}`' for v in valid) or "(none found in recovery dir)")
         )
     else:
         parts.append(
