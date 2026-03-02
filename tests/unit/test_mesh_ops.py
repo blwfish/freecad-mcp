@@ -56,7 +56,11 @@ def make_mock_doc(objects=None):
                 return o
         return None
 
+    def get_objects_by_label(label):
+        return [o for o in doc.Objects if o.Label == label]
+
     doc.getObject = get_object
+    doc.getObjectsByLabel = get_objects_by_label
     return doc
 
 

@@ -480,10 +480,14 @@ class TestDispatchViewControl:
                    "undo", "redo", "activate_workbench"]
         safe_ops = ["create_document", "save_document", "list_objects"]
 
-        # GUI ops: mock _run_on_gui_thread to avoid blocking
+        # GUI ops: mock _run_on_gui_thread to avoid blocking.
+        # Also force non-macOS path so screenshot doesn't bypass _run_on_gui_thread
+        # via the Darwin early-exit (which calls take_screenshot directly and would
+        # receive a MagicMock return value that json.dumps can't serialize).
         for op in gui_ops:
             with patch.object(server, '_run_on_gui_thread',
-                              return_value=json.dumps({"result": "ok"})):
+                              return_value=json.dumps({"result": "ok"})), \
+                 patch("freecad_mcp_handler.platform.system", return_value="Linux"):
                 result = server._dispatch_view_control({"operation": op})
                 parsed = json.loads(result)
                 assert "error" not in parsed, f"view_control {op} returned error: {parsed}"

@@ -1,5 +1,8 @@
 """
 Tests for ViewOpsHandler.take_screenshot()
+
+These tests exercise the saveImage() code path (non-macOS).
+The macOS screencapture path is handled in the bridge process.
 """
 
 import base64
@@ -22,6 +25,8 @@ from handlers.view_ops import ViewOpsHandler  # noqa: E402
 
 # Target for patching the FreeCADGui name inside the handler module
 _GUI_PATH = "handlers.view_ops.FreeCADGui"
+# Force non-macOS code path (saveImage) for all tests
+_PLATFORM_PATH = "handlers.view_ops.platform"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -61,19 +66,22 @@ def make_mock_doc(view):
 
 class TestTakeScreenshotSuccess:
     def test_returns_success_true(self):
-        with patch(_GUI_PATH) as gui:
+        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            plat.system.return_value = "Linux"
             gui.activeDocument.return_value = make_mock_doc(make_mock_view())
             result = json.loads(make_handler().take_screenshot({}))
         assert result["success"] is True
 
     def test_returns_valid_base64_png(self):
-        with patch(_GUI_PATH) as gui:
+        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            plat.system.return_value = "Linux"
             gui.activeDocument.return_value = make_mock_doc(make_mock_view())
             result = json.loads(make_handler().take_screenshot({}))
         assert base64.b64decode(result["image_data"]) == PNG_1x1
 
     def test_mime_type_is_png(self):
-        with patch(_GUI_PATH) as gui:
+        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            plat.system.return_value = "Linux"
             gui.activeDocument.return_value = make_mock_doc(make_mock_view())
             result = json.loads(make_handler().take_screenshot({}))
         assert result["mime_type"] == "image/png"
@@ -89,7 +97,8 @@ class TestTakeScreenshotSuccess:
                 f.write(PNG_1x1)
 
         mock_view.saveImage.side_effect = _save
-        with patch(_GUI_PATH) as gui:
+        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            plat.system.return_value = "Linux"
             gui.activeDocument.return_value = make_mock_doc(mock_view)
             make_handler().take_screenshot({})
 
@@ -106,7 +115,8 @@ class TestTakeScreenshotSuccess:
                 f.write(PNG_1x1)
 
         mock_view.saveImage.side_effect = _save
-        with patch(_GUI_PATH) as gui:
+        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            plat.system.return_value = "Linux"
             gui.activeDocument.return_value = make_mock_doc(mock_view)
             make_handler().take_screenshot({"width": 1920, "height": 1080})
 
@@ -122,7 +132,8 @@ class TestTakeScreenshotSuccess:
                 f.write(PNG_1x1)
 
         mock_view.saveImage.side_effect = _save
-        with patch(_GUI_PATH) as gui:
+        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            plat.system.return_value = "Linux"
             gui.activeDocument.return_value = make_mock_doc(mock_view)
             make_handler().take_screenshot({})
 
@@ -136,14 +147,16 @@ class TestTakeScreenshotSuccess:
 
 class TestTakeScreenshotErrors:
     def test_no_active_document(self):
-        with patch(_GUI_PATH) as gui:
+        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            plat.system.return_value = "Linux"
             gui.activeDocument.return_value = None
             result = json.loads(make_handler().take_screenshot({}))
         assert result["success"] is False
         assert "No active document" in result["error"]
 
     def test_no_active_view(self):
-        with patch(_GUI_PATH) as gui:
+        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            plat.system.return_value = "Linux"
             gui.activeDocument.return_value = make_mock_doc(view=None)
             result = json.loads(make_handler().take_screenshot({}))
         assert result["success"] is False
@@ -152,7 +165,8 @@ class TestTakeScreenshotErrors:
     def test_save_image_raises(self):
         mock_view = MagicMock()
         mock_view.saveImage.side_effect = RuntimeError("GPU error")
-        with patch(_GUI_PATH) as gui:
+        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            plat.system.return_value = "Linux"
             gui.activeDocument.return_value = make_mock_doc(mock_view)
             result = json.loads(make_handler().take_screenshot({}))
         assert result["success"] is False
@@ -160,7 +174,8 @@ class TestTakeScreenshotErrors:
 
     def test_get_screenshot_is_alias_for_take_screenshot(self):
         """get_screenshot() should return the same result as take_screenshot()."""
-        with patch(_GUI_PATH) as gui:
+        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            plat.system.return_value = "Linux"
             gui.activeDocument.return_value = None
             h = make_handler()
             assert h.get_screenshot({}) == h.take_screenshot({})

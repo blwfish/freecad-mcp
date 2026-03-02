@@ -2,6 +2,7 @@
 
 import json
 import queue
+import platform
 import time
 import FreeCAD
 import FreeCADGui
@@ -283,7 +284,6 @@ class ViewOpsHandler(BaseHandler):
         import tempfile
         import os
         import base64
-        import platform
         import subprocess
 
         req_width = args.get("width", 800)
