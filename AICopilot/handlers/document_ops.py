@@ -351,6 +351,103 @@ class DocumentOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating link: {e}"
 
+    def checkpoint(self, args: Dict[str, Any]) -> str:
+        """Save a snapshot of current object names for later rollback.
+
+        Args:
+            name: Checkpoint label (default 'default')
+        """
+        try:
+            label = args.get('name', 'default')
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+            names = [obj.Name for obj in doc.Objects]
+            if not hasattr(self, '_checkpoints'):
+                self._checkpoints = {}
+            self._checkpoints[label] = names
+            return f"Checkpoint '{label}' saved: {len(names)} objects"
+        except Exception as e:
+            return f"Error creating checkpoint: {e}"
+
+    def rollback_to_checkpoint(self, args: Dict[str, Any]) -> str:
+        """Remove all objects added since the named checkpoint was taken.
+
+        Args:
+            name: Checkpoint label (default 'default')
+        """
+        try:
+            label = args.get('name', 'default')
+            if not hasattr(self, '_checkpoints') or label not in self._checkpoints:
+                return f"No checkpoint named '{label}'"
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+            saved = set(self._checkpoints[label])
+            to_remove = [obj.Name for obj in doc.Objects if obj.Name not in saved]
+            for obj_name in to_remove:
+                try:
+                    doc.removeObject(obj_name)
+                except Exception:
+                    pass
+            doc.recompute()
+            removed_str = ', '.join(to_remove) if to_remove else 'none'
+            return f"Rollback to '{label}': removed {len(to_remove)} objects ({removed_str})"
+        except Exception as e:
+            return f"Error rolling back: {e}"
+
+    def insert_shape(self, args: Dict[str, Any]) -> str:
+        """Copy a shape from another open document into the active document.
+
+        Args:
+            source_doc: Name of the source document
+            source_object: Name of the object in the source document
+            name: Name for the new object (default: source_object + '_ref')
+            x, y, z: Optional placement offset in mm
+        """
+        try:
+            source_doc = args.get('source_doc', '')
+            source_object = args.get('source_object', '')
+            name = args.get('name', '')
+            x = args.get('x', 0)
+            y = args.get('y', 0)
+            z = args.get('z', 0)
+
+            if not source_doc:
+                return "source_doc parameter required"
+            if not source_object:
+                return "source_object parameter required"
+
+            docs = FreeCAD.listDocuments()
+            if source_doc not in docs:
+                return f"Document not open: {source_doc}. Open docs: {list(docs.keys())}"
+            src_doc = FreeCAD.getDocument(source_doc)
+
+            src_obj = src_doc.getObject(source_object)
+            if not src_obj:
+                return f"Object not found in '{source_doc}': {source_object}"
+            if not hasattr(src_obj, 'Shape'):
+                return f"Object has no Shape property: {source_object}"
+
+            dst_doc = FreeCAD.ActiveDocument
+            if not dst_doc:
+                return "No active document"
+
+            obj_name = name or f"{source_object}_ref"
+            import Part
+            feature = dst_doc.addObject("Part::Feature", obj_name)
+            feature.Shape = src_obj.Shape.copy()
+
+            if x != 0 or y != 0 or z != 0:
+                feature.Placement.Base = FreeCAD.Vector(x, y, z)
+
+            dst_doc.recompute()
+            bb = feature.Shape.BoundBox
+            return (f"Inserted '{source_object}' from '{source_doc}' as '{feature.Name}' "
+                    f"({bb.XLength:.1f}×{bb.YLength:.1f}×{bb.ZLength:.1f} mm)")
+        except Exception as e:
+            return f"Error inserting shape: {e}"
+
     def make_link_array(self, args: Dict[str, Any]) -> str:
         """Create a link array (array using App::Link for efficiency)."""
         try:

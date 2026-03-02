@@ -1329,3 +1329,67 @@ class PartDesignOpsHandler(BaseHandler):
 
         except Exception as e:
             return f"Error creating datum point: {e}"
+
+    def datum_from_face(self, args: Dict[str, Any]) -> str:
+        """Create a datum plane aligned to a specific face of an object.
+
+        Shortcut that combines list_faces + create_datum_plane: given an object
+        and a face index (1-based, as returned by measurement_operations/list_faces),
+        creates a datum plane positioned at the face centroid oriented to the face normal.
+
+        Args:
+            object_name: Name of the object containing the face
+            face_index: 1-based face index (from list_faces output, e.g. 3 for Face3)
+            name: Name for the new datum plane (default: 'Datum_<FaceN>')
+            offset: Additional offset along the face normal in mm (default 0)
+        """
+        try:
+            object_name = args.get('object_name', '')
+            face_index = int(args.get('face_index', 1))
+            name = args.get('name', '')
+            offset = float(args.get('offset', 0))
+
+            doc = self.get_document()
+            if not doc:
+                return "No active document"
+
+            obj = self.get_object(object_name, doc)
+            if not obj:
+                return f"Object not found: {object_name}"
+            if not hasattr(obj, 'Shape'):
+                return f"Object has no Shape: {object_name}"
+
+            faces = obj.Shape.Faces
+            if face_index < 1 or face_index > len(faces):
+                return f"Face index {face_index} out of range (object has {len(faces)} faces)"
+
+            face = faces[face_index - 1]
+            face_ref = f"Face{face_index}"
+
+            # Delegate to create_datum_plane with FlatFace attachment
+            if not name:
+                name = f"Datum_{face_ref}"
+
+            new_args = {
+                'name': name,
+                'map_mode': 'FlatFace',
+                'reference': face_ref,
+                'reference_object': object_name,
+                'offset_z': offset,
+            }
+            result = self.create_datum_plane(new_args)
+
+            # Append face geometry info
+            try:
+                c = face.CenterOfMass
+                n = face.normalAt(0, 0)
+                result += (f"\n  Face centroid: ({c.x:.2f}, {c.y:.2f}, {c.z:.2f})"
+                           f"\n  Face normal: ({n.x:+.2f}, {n.y:+.2f}, {n.z:+.2f})"
+                           f"\n  Face area: {face.Area:.2f} mm²")
+            except Exception:
+                pass
+
+            return result
+
+        except Exception as e:
+            return f"Error creating datum from face: {e}"

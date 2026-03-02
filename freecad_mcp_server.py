@@ -438,9 +438,11 @@ async def main():
                                     # Additional features
                                     "helix", "rib",
                                     # Datum features
-                                    "datum_plane", "datum_line", "datum_point"
+                                    "datum_plane", "datum_line", "datum_point",
+                                    "datum_from_face"
                                 ]
                             },
+                            "face_index": {"type": "integer", "description": "1-based face index (from list_faces output)"},
                             "sketch_name": {"type": "string", "description": "Sketch name for operations"},
                             "object_name": {"type": "string", "description": "Object name for dress-up operations"},
                             "feature_name": {"type": "string", "description": "Feature name for pattern operations"},
@@ -469,6 +471,9 @@ async def main():
                             "offset_z": {"type": "number", "description": "Z offset / normal offset", "default": 0},
                             # Direction control
                             "reversed": {"type": "boolean", "description": "Reverse pocket/pad direction (cut/extrude opposite to sketch normal)"},
+                            # datum_from_face parameters
+                            "face_index": {"type": "integer", "description": "1-based face index (from list_faces output)"},
+                            "offset": {"type": "number", "description": "Offset along face normal in mm", "default": 0},
                             # Advanced parameters
                             "name": {"type": "string", "description": "Name for result feature"}
                         },
@@ -629,15 +634,21 @@ async def main():
                                     # Workbench control
                                     "activate_workbench",
                                     # Diagnostics
-                                    "get_report_view"
+                                    "get_report_view",
+                                    # Section view (clip plane)
+                                    "add_clip_plane", "remove_clip_plane",
+                                    # Checkpoint / rollback
+                                    "checkpoint", "rollback_to_checkpoint",
+                                    # Multi-doc shape import
+                                    "insert_shape"
                                 ]
                             },
                             # Screenshot parameters
                             "width": {"type": "integer", "description": "Screenshot width", "default": 800},
                             "height": {"type": "integer", "description": "Screenshot height", "default": 600},
                             # View parameters
-                            "view_type": {"type": "string", "description": "View orientation", 
-                                         "enum": ["top", "front", "left", "right", "isometric", "axonometric"], 
+                            "view_type": {"type": "string", "description": "View orientation",
+                                         "enum": ["top", "front", "left", "right", "isometric", "axonometric"],
                                          "default": "isometric"},
                             # Document parameters
                             "document_name": {"type": "string", "description": "Document name", "default": "Unnamed"},
@@ -649,7 +660,18 @@ async def main():
                             # get_report_view parameters
                             "tail": {"type": "integer", "description": "Number of lines to return from the end (0 = all)", "default": 50},
                             "filter": {"type": "string", "description": "Substring to filter lines by (case-insensitive)"},
-                            "clear": {"type": "boolean", "description": "Clear the Report View after reading", "default": False}
+                            "clear": {"type": "boolean", "description": "Clear the Report View after reading", "default": False},
+                            # Clip plane (add_clip_plane) parameters
+                            "axis": {"type": "string", "description": "Clip plane normal axis", "enum": ["x", "y", "z"], "default": "z"},
+                            "depth": {"type": "number", "description": "Distance along axis where clip plane cuts (mm)", "default": 0},
+                            # Checkpoint parameters
+                            "name": {"type": "string", "description": "Checkpoint label (default 'default')"},
+                            # insert_shape parameters
+                            "source_doc": {"type": "string", "description": "Source document name"},
+                            "source_object": {"type": "string", "description": "Object name in source document"},
+                            "x": {"type": "number", "description": "X placement offset (mm)", "default": 0},
+                            "y": {"type": "number", "description": "Y placement offset (mm)", "default": 0},
+                            "z": {"type": "number", "description": "Z placement offset (mm)", "default": 0}
                         },
                         "required": ["operation"]
                     }

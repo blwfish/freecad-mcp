@@ -928,6 +928,7 @@ class FreeCADSocketServer:
             "datum_plane": self.partdesign_ops.create_datum_plane,
             "datum_line": self.partdesign_ops.create_datum_line,
             "datum_point": self.partdesign_ops.create_datum_point,
+            "datum_from_face": self.partdesign_ops.datum_from_face,
         }
 
         if operation not in operation_map:
@@ -1035,13 +1036,21 @@ class FreeCADSocketServer:
             "redo":          (self.view_ops.redo, 10.0),
             "activate_workbench": (self.view_ops.activate_workbench, 10.0),
             "get_report_view":   (self.view_ops.get_report_view, 5.0),
+            # Clip plane (section view)
+            "add_clip_plane":    (self.view_ops.add_clip_plane, 10.0),
+            "remove_clip_plane": (self.view_ops.remove_clip_plane, 5.0),
         }
 
         # --- Operations safe to call from any thread ---
         safe_ops = {
-            "create_document": self.document_ops.create_document,
-            "save_document":   self.document_ops.save_document,
-            "list_objects":    self.document_ops.list_objects,
+            "create_document":          self.document_ops.create_document,
+            "save_document":            self.document_ops.save_document,
+            "list_objects":             self.document_ops.list_objects,
+            # Checkpoint / rollback
+            "checkpoint":               self.document_ops.checkpoint,
+            "rollback_to_checkpoint":   self.document_ops.rollback_to_checkpoint,
+            # Multi-doc shape copy
+            "insert_shape":             self.document_ops.insert_shape,
         }
 
         if operation in gui_ops:

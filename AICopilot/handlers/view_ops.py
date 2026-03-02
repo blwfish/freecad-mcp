@@ -474,6 +474,81 @@ class ViewOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error activating workbench: {e}"
 
+    def add_clip_plane(self, args: Dict[str, Any]) -> str:
+        """Add a clip plane to the 3D viewport to show a cross-section.
+
+        Uses Coin3D SoClipPlane. Call remove_clip_plane when done.
+        Then take a screenshot to capture the section view.
+
+        Args:
+            axis: 'x', 'y', or 'z' — the clipping plane normal (default 'z')
+            depth: Distance along the axis where the plane cuts (default 0)
+        """
+        try:
+            from pivy import coin
+            axis = args.get('axis', 'z').lower()
+            depth = float(args.get('depth', 0))
+
+            view = FreeCADGui.activeDocument().activeView()
+            sg = view.getSceneGraph()
+
+            axis_map = {
+                'x': coin.SbVec3f(1, 0, 0),
+                'y': coin.SbVec3f(0, 1, 0),
+                'z': coin.SbVec3f(0, 0, 1),
+            }
+            normal = axis_map.get(axis, coin.SbVec3f(0, 0, 1))
+
+            clip = coin.SoClipPlane()
+            clip.plane.setValue(coin.SbPlane(normal, -depth))
+
+            # Store reference so we can remove it later
+            if not hasattr(self, '_clip_planes'):
+                self._clip_planes = []
+            self._clip_planes.append((sg, clip))
+
+            sg.insertChild(clip, 0)
+
+            # Force a repaint so the clip shows before screenshot
+            try:
+                from PySide2 import QtWidgets
+                app = QtWidgets.QApplication.instance()
+                if app:
+                    app.processEvents()
+            except Exception:
+                pass
+
+            return f"Clip plane added: {axis.upper()} axis at depth={depth:.1f}mm"
+        except ImportError:
+            return "pivy not available — cannot add clip plane"
+        except Exception as e:
+            return f"Error adding clip plane: {e}"
+
+    def remove_clip_plane(self, args: Dict[str, Any]) -> str:
+        """Remove the most recently added clip plane from the 3D viewport."""
+        try:
+            if not hasattr(self, '_clip_planes') or not self._clip_planes:
+                return "No clip planes to remove"
+
+            sg, clip = self._clip_planes.pop()
+            try:
+                sg.removeChild(clip)
+            except Exception:
+                pass
+
+            # Force repaint
+            try:
+                from PySide2 import QtWidgets
+                app = QtWidgets.QApplication.instance()
+                if app:
+                    app.processEvents()
+            except Exception:
+                pass
+
+            return "Clip plane removed"
+        except Exception as e:
+            return f"Error removing clip plane: {e}"
+
     def get_report_view(self, args: Dict[str, Any]) -> str:
         """Read text from FreeCAD's Report View widget.
 
