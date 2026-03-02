@@ -144,6 +144,7 @@ try:
         SpreadsheetOpsHandler,
         MeshOpsHandler,
         SpatialOpsHandler,
+        InspectorOpsHandler,
     )
     FreeCAD.Console.PrintMessage("Modular handlers loaded successfully\n")
 except ImportError as e:
@@ -260,6 +261,7 @@ class FreeCADSocketServer:
         self.spreadsheet_ops = SpreadsheetOpsHandler(self, _log_operation, _capture_state)
         self.mesh_ops = MeshOpsHandler(self, _log_operation, _capture_state)
         self.spatial_ops = SpatialOpsHandler(self, _log_operation, _capture_state)
+        self.inspector_ops = InspectorOpsHandler(self, _log_operation, _capture_state)
         # GUI-sensitive handlers get the task queues for thread safety
         self.view_ops = ViewOpsHandler(
             self, self._gui_task_queue, self._gui_response_queue, _log_operation, _capture_state
@@ -843,6 +845,10 @@ class FreeCADSocketServer:
             "spatial_query": self.spatial_ops,
         }
 
+        # run_inspector is a direct-dispatch tool (no 'operation' sub-field)
+        if tool_name == "run_inspector":
+            return self._call_on_gui_thread(self.inspector_ops.run, args, "run_inspector")
+
         if tool_name in generic_dispatch_map:
             return self._dispatch_to_handler(generic_dispatch_map[tool_name], args, tool_name)
 
@@ -1227,6 +1233,7 @@ class FreeCADSocketServer:
                 'handlers.spreadsheet_ops',
                 'handlers.mesh_ops',
                 'handlers.spatial_ops',
+                'handlers.inspector_ops',
             ]
             for mod_name in handler_modules:
                 mod = sys.modules.get(mod_name)
@@ -1256,6 +1263,7 @@ class FreeCADSocketServer:
                 SpreadsheetOpsHandler,
                 MeshOpsHandler,
                 SpatialOpsHandler,
+                InspectorOpsHandler,
             )
 
             # Re-create handler instances
@@ -1273,6 +1281,7 @@ class FreeCADSocketServer:
             self.spreadsheet_ops = SpreadsheetOpsHandler(self, _log_operation, _capture_state)
             self.mesh_ops = MeshOpsHandler(self, _log_operation, _capture_state)
             self.spatial_ops = SpatialOpsHandler(self, _log_operation, _capture_state)
+            self.inspector_ops = InspectorOpsHandler(self, _log_operation, _capture_state)
             self.view_ops = ViewOpsHandler(
                 self, self._gui_task_queue, self._gui_response_queue,
                 _log_operation, _capture_state

@@ -928,6 +928,44 @@ async def main():
                     }
                 ),
                 types.Tool(
+                    name="run_inspector",
+                    description="Run FreeCAD Inspector DRC checks on the active document. "
+                                "Checks model validity (open shells, zero-volume solids, invalid geometry, "
+                                "degenerate faces, disconnected shells, coincident/interfering objects) and "
+                                "TNP robustness (direct face attachment, expression sub-shape references, "
+                                "no datum strategy). With profile_process='resin', also checks minimum "
+                                "feature size, wall thickness, overhang angles, build volume, and trapped volumes.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "profile_process": {
+                                "type": "string",
+                                "description": "Manufacturing process for process-specific rules. "
+                                               "Omit for model-only checks.",
+                                "enum": ["resin", "laser", "cnc_3axis"]
+                            },
+                            "machine": {
+                                "type": "string",
+                                "description": "Machine name for profile (e.g. 'AnyCubic M7 Pro'). Informational."
+                            },
+                            "profile_params": {
+                                "type": "object",
+                                "description": "Override default process rule parameters. "
+                                               "E.g. {\"min_wall_mm\": 0.6, \"max_overhang_deg\": 30}"
+                            },
+                            "objects": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Object names to check. Default: all objects in active document."
+                            },
+                            "doc_name": {
+                                "type": "string",
+                                "description": "Document name. Default: active document."
+                            }
+                        }
+                    }
+                ),
+                types.Tool(
                     name="get_debug_logs",
                     description="Retrieve recent debug logs for troubleshooting and analysis",
                     inputSchema={

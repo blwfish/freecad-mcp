@@ -1,6 +1,6 @@
 # FreeCAD MCP — Instructions for Claude
 
-You have access to 29 MCP tools for controlling FreeCAD. Follow these instructions when using them.
+You have access to 30 MCP tools for controlling FreeCAD. Follow these instructions when using them.
 
 ## Mandatory Rules
 
@@ -155,7 +155,7 @@ These operations cannot programmatically select edges — the user must click ed
 
 ## Technical Notes
 
-- **Bridge** (`freecad_mcp_server.py`): 29 MCP tools, async, communicates via MCP protocol over stdio
+- **Bridge** (`freecad_mcp_server.py`): 30 MCP tools, async, communicates via MCP protocol over stdio
 - **Handler** (`AICopilot/freecad_mcp_handler.py` v5.4.0): 29 dispatch routes, runs inside FreeCAD
 - **Message protocol**: Length-prefixed JSON (4-byte uint32 BE + UTF-8), 50KB max message size
 - **Socket**: Unix domain at `/tmp/freecad_mcp.sock` (TCP `localhost:23456` on Windows)
