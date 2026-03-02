@@ -59,3 +59,4 @@ claude_desktop_config.json.local
 tmp/
 temp/
 .tmp/neka_freecad_mcp/
+.claude/
