@@ -114,10 +114,15 @@ view_control(operation="screenshot")
 | Drill holes | `partdesign_operations(operation="hole")` — triggers selection |
 | Mirror / pattern features | `partdesign_operations(operation="mirror\|linear_pattern\|polar_pattern")` |
 | Create a datum plane | `partdesign_operations(operation="datum_plane", map_mode="FlatFace", reference="Face1", offset_z=10)` |
+| Create datum plane from face index | `partdesign_operations(operation="datum_from_face", object_name="Body", face_index=3)` |
 | Take a screenshot | `view_control(operation="screenshot")` |
+| Section view (clip plane) | `view_control(operation="add_clip_plane", axis="z", depth=0)` / `remove_clip_plane` |
 | List objects in document | `view_control(operation="list_objects")` |
 | Create / save document | `view_control(operation="create_document\|save_document")` |
 | Undo / redo | `view_control(operation="undo\|redo")` |
+| Snapshot object list | `view_control(operation="checkpoint", name="before_feature")` |
+| Roll back to snapshot | `view_control(operation="rollback_to_checkpoint", name="before_feature")` |
+| Copy shape from another open doc | `view_control(operation="insert_shape", source_doc="MyPart", source_object="Body")` |
 | Generate CNC toolpaths | `cam_operations` + `cam_tools` + `cam_tool_controllers` |
 | Store parametric values | `spreadsheet_operations` |
 | Run arbitrary FreeCAD code | `execute_python` |
@@ -138,10 +143,13 @@ view_control(operation="screenshot")
 ### Fillet/chamfer requires GUI selection
 These operations cannot programmatically select edges — the user must click edges in FreeCAD's 3D view. The server returns `awaiting_selection` status, then you call `continue_selection` after the user picks.
 
+### GUI thread safety for document ops
+`rollback_to_checkpoint` and `insert_shape` mutate the FreeCAD document — they run via `gui_ops` (Qt main thread). `checkpoint` is read-only and runs in `safe_ops`. Never call `doc.recompute()` from the socket thread.
+
 ## Technical Notes
 
-- **Bridge** (`freecad_mcp_server.py`): 25 MCP tools, async, communicates via MCP protocol over stdio
-- **Handler** (`AICopilot/freecad_mcp_handler.py` v5.4.0): 25 dispatch routes, runs inside FreeCAD
+- **Bridge** (`freecad_mcp_server.py`): 28 MCP tools, async, communicates via MCP protocol over stdio
+- **Handler** (`AICopilot/freecad_mcp_handler.py` v5.4.0): 28 dispatch routes, runs inside FreeCAD
 - **Message protocol**: Length-prefixed JSON (4-byte uint32 BE + UTF-8), 50KB max message size
 - **Socket**: Unix domain at `/tmp/freecad_mcp.sock` (TCP `localhost:23456` on Windows)
 - **Handlers**: 14 classes in `AICopilot/handlers/`, each inherits `BaseHandler`, returns strings
