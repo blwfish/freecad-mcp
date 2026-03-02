@@ -198,6 +198,7 @@ class TestRunOnGuiThreadHeadless:
             "CAMOpsHandler", "CAMToolsHandler", "CAMToolControllersHandler",
             "DraftOpsHandler", "ViewOpsHandler", "DocumentOpsHandler",
             "MeasurementOpsHandler", "SpreadsheetOpsHandler", "MeshOpsHandler",
+            "SpatialOpsHandler",
         ]
         hmod = _t.ModuleType("handlers")
         for n in handler_names:

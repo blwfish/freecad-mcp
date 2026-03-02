@@ -1,6 +1,6 @@
 # FreeCAD MCP — Instructions for Claude
 
-You have access to 28 MCP tools for controlling FreeCAD. Follow these instructions when using them.
+You have access to 29 MCP tools for controlling FreeCAD. Follow these instructions when using them.
 
 ## Mandatory Rules
 
@@ -126,6 +126,12 @@ view_control(operation="screenshot")
 | Copy shape from another open doc | `view_control(operation="insert_shape", source_doc="MyPart", source_object="Body")` |
 | Generate CNC toolpaths | `cam_operations` + `cam_tools` + `cam_tool_controllers` |
 | Store parametric values | `spreadsheet_operations` |
+| Check if parts collide | `spatial_query(operation="interference_check")` |
+| Measure gap between parts | `spatial_query(operation="clearance")` |
+| Check if part fits inside another | `spatial_query(operation="containment")` |
+| Compare two faces (parallel, coplanar) | `spatial_query(operation="face_relationship")` |
+| Batch collision check | `spatial_query(operation="batch_interference")` |
+| Check part alignment | `spatial_query(operation="alignment_check")` |
 | Run arbitrary FreeCAD code | `execute_python` |
 | Debug a failed operation | `get_debug_logs` |
 | Spawn a headless FC instance | `spawn_freecad_instance` |
@@ -149,8 +155,8 @@ These operations cannot programmatically select edges — the user must click ed
 
 ## Technical Notes
 
-- **Bridge** (`freecad_mcp_server.py`): 28 MCP tools, async, communicates via MCP protocol over stdio
-- **Handler** (`AICopilot/freecad_mcp_handler.py` v5.4.0): 28 dispatch routes, runs inside FreeCAD
+- **Bridge** (`freecad_mcp_server.py`): 29 MCP tools, async, communicates via MCP protocol over stdio
+- **Handler** (`AICopilot/freecad_mcp_handler.py` v5.4.0): 29 dispatch routes, runs inside FreeCAD
 - **Message protocol**: Length-prefixed JSON (4-byte uint32 BE + UTF-8), 50KB max message size
 - **Socket**: Unix domain at `/tmp/freecad_mcp.sock` (TCP `localhost:23456` on Windows)
 - **Handlers**: 14 classes in `AICopilot/handlers/`, each inherits `BaseHandler`, returns strings

@@ -899,6 +899,35 @@ async def main():
                     }
                 ),
                 types.Tool(
+                    name="spatial_query",
+                    description="Analyze spatial relationships between objects: interference/collision detection, clearance measurement, containment checks, face-to-face analysis, batch interference, alignment verification",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "description": "Spatial query to perform",
+                                "enum": [
+                                    "interference_check", "clearance", "containment",
+                                    "face_relationship", "batch_interference",
+                                    "alignment_check"
+                                ]
+                            },
+                            "object1": {"type": "string", "description": "First object name"},
+                            "object2": {"type": "string", "description": "Second object name"},
+                            "objects": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "List of object names (batch_interference)"
+                            },
+                            "face1": {"type": "string", "description": "Face on object1 (e.g. 'Face6') for face_relationship"},
+                            "face2": {"type": "string", "description": "Face on object2 (e.g. 'Face3') for face_relationship"},
+                            "axis": {"type": "string", "description": "Axis for alignment_check: X, Y, or Z (default Z)", "enum": ["X", "Y", "Z"]},
+                        },
+                        "required": ["operation"]
+                    }
+                ),
+                types.Tool(
                     name="get_debug_logs",
                     description="Retrieve recent debug logs for troubleshooting and analysis",
                     inputSchema={
@@ -1283,6 +1312,7 @@ async def main():
         elif name in ["partdesign_operations", "sketch_operations", "part_operations",
                       "view_control", "cam_operations", "cam_tools", "cam_tool_controllers",
                       "cam_machines", "mesh_operations", "measurement_operations",
+                      "spatial_query",
                       "spreadsheet_operations", "draft_operations", "get_debug_logs",
                       "execute_python_async", "poll_job", "list_jobs",
                       "cancel_operation", "cancel_job"]:

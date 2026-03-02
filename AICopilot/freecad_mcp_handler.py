@@ -143,6 +143,7 @@ try:
         MeasurementOpsHandler,
         SpreadsheetOpsHandler,
         MeshOpsHandler,
+        SpatialOpsHandler,
     )
     FreeCAD.Console.PrintMessage("Modular handlers loaded successfully\n")
 except ImportError as e:
@@ -258,6 +259,7 @@ class FreeCADSocketServer:
         self.measurement_ops = MeasurementOpsHandler(self, _log_operation, _capture_state)
         self.spreadsheet_ops = SpreadsheetOpsHandler(self, _log_operation, _capture_state)
         self.mesh_ops = MeshOpsHandler(self, _log_operation, _capture_state)
+        self.spatial_ops = SpatialOpsHandler(self, _log_operation, _capture_state)
         # GUI-sensitive handlers get the task queues for thread safety
         self.view_ops = ViewOpsHandler(
             self, self._gui_task_queue, self._gui_response_queue, _log_operation, _capture_state
@@ -838,6 +840,7 @@ class FreeCADSocketServer:
             "mesh_operations": self.mesh_ops,
             "spreadsheet_operations": self.spreadsheet_ops,
             "measurement_operations": self.measurement_ops,
+            "spatial_query": self.spatial_ops,
         }
 
         if tool_name in generic_dispatch_map:
@@ -1223,6 +1226,7 @@ class FreeCADSocketServer:
                 'handlers.measurement_ops',
                 'handlers.spreadsheet_ops',
                 'handlers.mesh_ops',
+                'handlers.spatial_ops',
             ]
             for mod_name in handler_modules:
                 mod = sys.modules.get(mod_name)
@@ -1251,6 +1255,7 @@ class FreeCADSocketServer:
                 MeasurementOpsHandler,
                 SpreadsheetOpsHandler,
                 MeshOpsHandler,
+                SpatialOpsHandler,
             )
 
             # Re-create handler instances
@@ -1267,6 +1272,7 @@ class FreeCADSocketServer:
             self.measurement_ops = MeasurementOpsHandler(self, _log_operation, _capture_state)
             self.spreadsheet_ops = SpreadsheetOpsHandler(self, _log_operation, _capture_state)
             self.mesh_ops = MeshOpsHandler(self, _log_operation, _capture_state)
+            self.spatial_ops = SpatialOpsHandler(self, _log_operation, _capture_state)
             self.view_ops = ViewOpsHandler(
                 self, self._gui_task_queue, self._gui_response_queue,
                 _log_operation, _capture_state
