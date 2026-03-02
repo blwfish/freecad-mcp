@@ -837,6 +837,7 @@ class FreeCADSocketServer:
             "draft_operations": self.draft_ops,
             "mesh_operations": self.mesh_ops,
             "spreadsheet_operations": self.spreadsheet_ops,
+            "measurement_operations": self.measurement_ops,
         }
 
         if tool_name in generic_dispatch_map:

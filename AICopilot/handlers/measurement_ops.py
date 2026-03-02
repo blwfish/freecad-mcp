@@ -199,7 +199,37 @@ class MeasurementOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error counting elements: {e}"
 
-    def check_solid(self, args: Dict[str, Any]) -> str:
+    def list_faces(self, args: Dict[str, Any]) -> str:
+        """List all faces of an object with index, normal, centroid, and area."""
+        try:
+            object_name = args.get('object_name', '')
+            doc = self.get_document()
+            if not doc:
+                return "No active document"
+            obj = self.get_object(object_name, doc)
+            if not obj:
+                return f"Object not found: {object_name}"
+            if not hasattr(obj, 'Shape'):
+                return "Object must have Shape property"
+
+            lines = [f"Faces of {object_name} ({len(obj.Shape.Faces)} total):"]
+            for i, face in enumerate(obj.Shape.Faces):
+                try:
+                    n = face.normalAt(0, 0)
+                    c = face.CenterOfMass
+                    normal_str = f"({n.x:+.2f}, {n.y:+.2f}, {n.z:+.2f})"
+                    centroid_str = f"({c.x:.2f}, {c.y:.2f}, {c.z:.2f})"
+                    lines.append(
+                        f"  Face{i+1}: normal={normal_str}  centroid={centroid_str}  area={face.Area:.2f}mm²"
+                    )
+                except Exception as fe:
+                    lines.append(f"  Face{i+1}: error reading face — {fe}")
+            return "\n".join(lines)
+
+        except Exception as e:
+            return f"Error listing faces: {e}"
+
+    def get_bounding_box(self, args: Dict[str, Any]) -> str:
         """Check if object is a valid solid."""
         try:
             object_name = args.get('object_name', '')

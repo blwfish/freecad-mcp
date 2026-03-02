@@ -854,6 +854,29 @@ async def main():
                     }
                 ),
                 types.Tool(
+                    name="measurement_operations",
+                    description="Inspect object geometry: face normals/centroids, bounding boxes, volume, surface area, center of mass, element counts",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "description": "Measurement operation to perform",
+                                "enum": [
+                                    "list_faces", "get_bounding_box", "get_volume",
+                                    "get_surface_area", "get_center_of_mass",
+                                    "get_mass_properties", "count_elements",
+                                    "check_solid", "measure_distance"
+                                ]
+                            },
+                            "object_name": {"type": "string", "description": "Object to inspect"},
+                            "object1": {"type": "string", "description": "First object (measure_distance)"},
+                            "object2": {"type": "string", "description": "Second object (measure_distance)"},
+                        },
+                        "required": ["operation"]
+                    }
+                ),
+                types.Tool(
                     name="get_debug_logs",
                     description="Retrieve recent debug logs for troubleshooting and analysis",
                     inputSchema={
