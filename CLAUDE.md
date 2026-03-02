@@ -115,6 +115,7 @@ view_control(operation="screenshot")
 | Mirror / pattern features | `partdesign_operations(operation="mirror\|linear_pattern\|polar_pattern")` |
 | Create a datum plane | `partdesign_operations(operation="datum_plane", map_mode="FlatFace", reference="Face1", offset_z=10)` |
 | Create datum plane from face index | `partdesign_operations(operation="datum_from_face", object_name="Body", face_index=3)` |
+| List faces (index, normal, centroid, area) | `measurement_operations(operation="list_faces", object_name="Body")` |
 | Take a screenshot | `view_control(operation="screenshot")` |
 | Section view (clip plane) | `view_control(operation="add_clip_plane", axis="z", depth=0)` / `remove_clip_plane` |
 | List objects in document | `view_control(operation="list_objects")` |
