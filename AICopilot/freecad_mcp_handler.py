@@ -1172,13 +1172,30 @@ class FreeCADSocketServer:
         FreeCAD.  Reloads every handler module in dependency order (base
         first), then re-imports the classes and re-creates instances on
         this server.
+
+        Uses spec_from_file_location (not importlib.reload) to bypass stale
+        pyc caches — rsync preserves mtimes, so pyc often appears newer than
+        the freshly deployed .py source.
+
+        Also reloads freecad_mcp_handler.py itself and rebinds
+        _execute_tool_inner so dispatch-map changes (new tools, new routing)
+        take effect without a FreeCAD restart.
         """
-        import importlib
+        import importlib.util, os, types
+
+        def _reload(module_name: str, module) -> object:
+            """Force-load from .py source, update sys.modules, return new module."""
+            src = os.path.realpath(module.__file__)
+            spec = importlib.util.spec_from_file_location(module_name, src)
+            new_mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(new_mod)
+            sys.modules[module_name] = new_mod
+            return new_mod
 
         try:
             # Reload base first (other handlers inherit from it)
             import handlers.base as _base
-            importlib.reload(_base)
+            _reload('handlers.base', _base)
 
             # Reload each handler module
             handler_modules = [
@@ -1201,12 +1218,12 @@ class FreeCADSocketServer:
             for mod_name in handler_modules:
                 mod = sys.modules.get(mod_name)
                 if mod:
-                    importlib.reload(mod)
+                    _reload(mod_name, mod)
 
             # Reload the package __init__ so `from handlers import X` picks
             # up the reloaded classes
             import handlers as _handlers_pkg
-            importlib.reload(_handlers_pkg)
+            _reload('handlers', _handlers_pkg)
 
             # Re-import fresh classes
             from handlers import (
@@ -1248,6 +1265,15 @@ class FreeCADSocketServer:
             self.document_ops = DocumentOpsHandler(
                 self, self._gui_task_queue, self._gui_response_queue,
                 _log_operation, _capture_state
+            )
+
+            # Reload freecad_mcp_handler.py itself and rebind _execute_tool_inner
+            # so dispatch-map changes (new tools added to generic_dispatch_map)
+            # take effect without a FreeCAD restart.
+            import AICopilot.freecad_mcp_handler as _self_mod
+            new_self = _reload('AICopilot.freecad_mcp_handler', _self_mod)
+            self._execute_tool_inner = types.MethodType(
+                new_self.FreeCADSocketServer._execute_tool_inner, self
             )
 
             n = len(handler_modules) + 1  # +1 for base
