@@ -20,7 +20,7 @@ jobs:
           CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
 
           # Check if any tool-related files changed
-          TOOL_CHANGES=$(echo "$CHANGED" | grep -E '^(working_bridge\.py|AICopilot/socket_server\.py|AICopilot/handlers/)' || true)
+          TOOL_CHANGES=$(echo "$CHANGED" | grep -E '^(freecad_mcp_server\.py|AICopilot/freecad_mcp_handler\.py|AICopilot/handlers/)' || true)
 
           if [ -n "$TOOL_CHANGES" ]; then
             echo "Tool files changed:"
@@ -41,7 +41,7 @@ jobs:
       - name: Verify tool count consistency
         run: |
           # Count tools in bridge (types.Tool( occurrences)
-          ACTUAL=$(grep -c 'types\.Tool(' working_bridge.py)
+          ACTUAL=$(grep -c 'types\.Tool(' freecad_mcp_server.py)
           echo "Bridge defines $ACTUAL tools"
 
           # Check README.md
