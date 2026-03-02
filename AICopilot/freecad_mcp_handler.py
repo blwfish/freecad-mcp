@@ -1039,18 +1039,18 @@ class FreeCADSocketServer:
             # Clip plane (section view)
             "add_clip_plane":    (self.view_ops.add_clip_plane, 10.0),
             "remove_clip_plane": (self.view_ops.remove_clip_plane, 5.0),
+            # Document mutations — must run on GUI thread (recompute touches Qt)
+            "rollback_to_checkpoint": (self.document_ops.rollback_to_checkpoint, 30.0),
+            "insert_shape":           (self.document_ops.insert_shape, 15.0),
         }
 
         # --- Operations safe to call from any thread ---
         safe_ops = {
-            "create_document":          self.document_ops.create_document,
-            "save_document":            self.document_ops.save_document,
-            "list_objects":             self.document_ops.list_objects,
-            # Checkpoint / rollback
-            "checkpoint":               self.document_ops.checkpoint,
-            "rollback_to_checkpoint":   self.document_ops.rollback_to_checkpoint,
-            # Multi-doc shape copy
-            "insert_shape":             self.document_ops.insert_shape,
+            "create_document":  self.document_ops.create_document,
+            "save_document":    self.document_ops.save_document,
+            "list_objects":     self.document_ops.list_objects,
+            # checkpoint only reads names — thread-safe
+            "checkpoint":       self.document_ops.checkpoint,
         }
 
         if operation in gui_ops:
@@ -1281,9 +1281,23 @@ class FreeCADSocketServer:
             # take effect without a FreeCAD restart.
             import AICopilot.freecad_mcp_handler as _self_mod
             new_self = _reload('AICopilot.freecad_mcp_handler', _self_mod)
-            self._execute_tool_inner = types.MethodType(
-                new_self.FreeCADSocketServer._execute_tool_inner, self
-            )
+            # Rebind all dispatch methods so routing changes take effect immediately.
+            # _execute_tool_inner calls self._dispatch_view_control etc., so those
+            # must be rebound too or the old routing (without new operations) runs.
+            _dispatch_methods = [
+                '_execute_tool_inner',
+                '_dispatch_view_control',
+                '_dispatch_partdesign',
+                '_dispatch_sketch',
+                '_dispatch_part_operations',
+                '_dispatch_to_handler',
+                '_call_on_gui_thread',
+                '_reload_handlers',   # rebind self so future reloads use latest code
+            ]
+            for method_name in _dispatch_methods:
+                new_fn = getattr(new_self.FreeCADSocketServer, method_name, None)
+                if new_fn:
+                    setattr(self, method_name, types.MethodType(new_fn, self))
 
             n = len(handler_modules) + 1  # +1 for base
             FreeCAD.Console.PrintMessage(f"[MCP] Reloaded {n} handler modules\n")

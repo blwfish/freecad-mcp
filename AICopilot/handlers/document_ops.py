@@ -390,7 +390,6 @@ class DocumentOpsHandler(BaseHandler):
                     doc.removeObject(obj_name)
                 except Exception:
                     pass
-            doc.recompute()
             removed_str = ', '.join(to_remove) if to_remove else 'none'
             return f"Rollback to '{label}': removed {len(to_remove)} objects ({removed_str})"
         except Exception as e:
