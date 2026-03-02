@@ -13,6 +13,19 @@ import FreeCAD
 from typing import Dict, Any, List, Tuple
 from .base import BaseHandler
 
+# OCCT Precision::Confusion() — the linear tolerance below which OCCT's boolean
+# operations consider two points identical.  Overlaps thinner than this in any
+# dimension may be silently dropped by common() and returned as zero volume.
+# We use this as the distance threshold for sliver detection.
+_OCCT_LIN_TOL = 1e-7   # mm
+
+# Volume reporting threshold: anything below this is treated as zero.
+# This filters floating-point noise from OCCT boolean results.
+# 1e-9 mm³ ≈ (0.001 mm)³ — well below any manufacturable feature but safely
+# above numerical noise.  OCCT may drop real overlaps before we see them if
+# they are smaller than _OCCT_LIN_TOL in any dimension.
+_VOL_TOL = 1e-9   # mm³
+
 
 class SpatialOpsHandler(BaseHandler):
     """Handler for spatial relationship queries between objects."""
@@ -85,7 +98,7 @@ class SpatialOpsHandler(BaseHandler):
 
             common = s1.common(s2)
             vol = common.Volume
-            intersects = vol > 1e-9
+            intersects = vol > _VOL_TOL
 
             lines = [f"Interference check: {n1} vs {n2}"]
             for w in [self._solid_warning(s1, n1), self._solid_warning(s2, n2)]:
@@ -102,7 +115,15 @@ class SpatialOpsHandler(BaseHandler):
             else:
                 # Report minimum distance when no intersection
                 dist_result = s1.distToShape(s2)
-                lines.append(f"  Minimum clearance: {dist_result[0]:.4f} mm")
+                min_dist = dist_result[0]
+                lines.append(f"  Minimum clearance: {min_dist:.4f} mm")
+                # Sliver detection: BB overlaps but common() returned zero volume.
+                # If distance is also sub-tolerance, OCCT may have silently dropped
+                # a real contact thinner than Precision::Confusion() (~1e-7 mm).
+                if s1.BoundBox.intersect(s2.BoundBox) and min_dist < _OCCT_LIN_TOL:
+                    lines.append(f"  WARNING: bounding boxes overlap and distance is "
+                                 f"~{min_dist:.2e} mm — possible sub-tolerance sliver "
+                                 f"below OCCT detection threshold ({_OCCT_LIN_TOL:.0e} mm)")
 
             return "\n".join(lines)
 
@@ -126,7 +147,7 @@ class SpatialOpsHandler(BaseHandler):
             lines = [f"Clearance: {n1} vs {n2}"]
             lines.append(f"  Minimum distance: {min_dist:.4f} mm")
 
-            if min_dist < 1e-9:
+            if min_dist < _VOL_TOL:
                 lines.append(f"  Status: TOUCHING (zero clearance)")
             else:
                 lines.append(f"  Status: {min_dist:.4f} mm gap")
@@ -143,7 +164,7 @@ class SpatialOpsHandler(BaseHandler):
                     lines.append(f"    ... and {len(point_pairs) - 4} more")
 
             # Determine dominant gap direction from first pair
-            if point_pairs and min_dist > 1e-9:
+            if point_pairs and min_dist > _VOL_TOL:
                 p1, p2 = point_pairs[0]
                 dx = abs(p2.x - p1.x)
                 dy = abs(p2.y - p1.y)
@@ -190,11 +211,11 @@ class SpatialOpsHandler(BaseHandler):
                 'Z+': max(0, inner_bb.ZMax - outer_bb.ZMax),
             }
 
-            any_overhang = any(v > 1e-9 for v in overhangs.values())
+            any_overhang = any(v > _VOL_TOL for v in overhangs.values())
             if any_overhang:
                 lines.append(f"  Overhangs:")
                 for axis, val in overhangs.items():
-                    if val > 1e-9:
+                    if val > _VOL_TOL:
                         lines.append(f"    {axis}: {val:.4f} mm")
             else:
                 lines.append(f"  No bounding-box overhang")
@@ -345,10 +366,19 @@ class SpatialOpsHandler(BaseHandler):
                         continue
                     common = shapes[n1].common(shapes[n2])
                     vol = common.Volume
-                    if vol > 1e-9:
+                    if vol > _VOL_TOL:
                         collisions.append((n1, n2, vol))
                     else:
-                        clear_pairs += 1
+                        # Sliver detection: BB overlaps but common() returned zero.
+                        # Check if shapes are actually touching (sub-tolerance contact).
+                        try:
+                            dist = shapes[n1].distToShape(shapes[n2])[0]
+                            if dist < _OCCT_LIN_TOL:
+                                collisions.append((n1, n2, 0.0, "SUB-TOL"))
+                            else:
+                                clear_pairs += 1
+                        except Exception:
+                            clear_pairs += 1
 
             total_pairs = len(names) * (len(names) - 1) // 2
             lines = [f"Batch interference: {len(names)} objects, {total_pairs} pairs checked"]
@@ -358,8 +388,14 @@ class SpatialOpsHandler(BaseHandler):
 
             if collisions:
                 lines.append(f"  Colliding pairs:")
-                for n1, n2, vol in collisions:
-                    lines.append(f"    {n1} ↔ {n2}: {vol:.4f} mm³")
+                for entry in collisions:
+                    if len(entry) == 4 and entry[3] == "SUB-TOL":
+                        n1, n2 = entry[0], entry[1]
+                        lines.append(f"    {n1} ↔ {n2}: POSSIBLE SUB-TOLERANCE CONTACT "
+                                     f"(BB overlap, zero volume — sliver below OCCT threshold)")
+                    else:
+                        n1, n2, vol = entry
+                        lines.append(f"    {n1} ↔ {n2}: {vol:.4f} mm³")
             else:
                 lines.append(f"  No collisions detected")
 

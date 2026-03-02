@@ -86,6 +86,7 @@ def make_box(name="Box", xmin=0, ymin=0, zmin=0, xlen=10, ylen=10, zlen=10):
     bb.YMin = float(ymin); bb.YMax = float(ymin + ylen)
     bb.ZMin = float(zmin); bb.ZMax = float(zmin + zlen)
     bb.XLength = float(xlen); bb.YLength = float(ylen); bb.ZLength = float(zlen)
+    bb.intersect = MagicMock(return_value=False)  # default: no BB overlap
     shape.BoundBox = bb
     shape.Volume = float(xlen * ylen * zlen)
     shape.CenterOfMass = FakeVector(xmin + xlen/2, ymin + ylen/2, zmin + zlen/2)
@@ -225,6 +226,26 @@ class TestInterferenceCheck(unittest.TestCase):
         self.fc.ActiveDocument = make_mock_doc([box1, box2])
         result = self.handler.interference_check({'object1': 'A', 'object2': 'B'})
         self.assertNotIn("WARNING", result)
+
+    def test_sliver_detection(self):
+        # BB overlaps, common() returns zero, but distance is sub-tolerance
+        box1 = make_box("A", 0, 0, 0)
+        box2 = make_box("B", 0, 0, 0)
+        box1.Shape.BoundBox.intersect = MagicMock(return_value=True)
+        box1.Shape.distToShape = MagicMock(return_value=(0.0, []))
+        self.fc.ActiveDocument = make_mock_doc([box1, box2])
+        result = self.handler.interference_check({'object1': 'A', 'object2': 'B'})
+        self.assertIn("sub-tolerance sliver", result.lower())
+
+    def test_no_sliver_when_bb_clear(self):
+        # BB does NOT overlap — no sliver warning even if distance is zero
+        box1 = make_box("A", 0, 0, 0)
+        box2 = make_box("B", 20, 0, 0)
+        box1.Shape.BoundBox.intersect = MagicMock(return_value=False)
+        box1.Shape.distToShape = MagicMock(return_value=(0.0, []))
+        self.fc.ActiveDocument = make_mock_doc([box1, box2])
+        result = self.handler.interference_check({'object1': 'A', 'object2': 'B'})
+        self.assertNotIn("sliver", result.lower())
 
 
 class TestClearance(unittest.TestCase):
@@ -447,6 +468,17 @@ class TestBatchInterference(unittest.TestCase):
         self.fc.ActiveDocument = make_mock_doc([box1, box2])
         result = self.handler.batch_interference({'objects': ['A', 'B']})
         self.assertNotIn("WARNING", result)
+
+    def test_sliver_detected_in_batch(self):
+        # BB overlaps, common() returns zero, distToShape returns sub-tolerance distance
+        box1 = make_box("A", 0, 0, 0)
+        box2 = make_box("B", 0, 0, 0)
+        box1.Shape.BoundBox.intersect = MagicMock(return_value=True)
+        box1.Shape.distToShape = MagicMock(return_value=(0.0, []))
+        self.fc.ActiveDocument = make_mock_doc([box1, box2])
+        result = self.handler.batch_interference({'objects': ['A', 'B']})
+        self.assertIn("SUB-TOL", result)
+        self.assertIn("Collisions: 1", result)
 
 
 class TestAlignmentCheck(unittest.TestCase):
