@@ -142,6 +142,10 @@ class SketchOpsHandler(BaseHandler):
                     results.append(f"Closed wires (valid for extrusion): {closed_wires}")
                 if open_wires > 0:
                     results.append(f"Open wires (cannot extrude): {open_wires}")
+                    # Pinpoint exactly where the gaps are and suggest fixes
+                    diagnosis = self._diagnose_open_wires(sketch)
+                    if diagnosis:
+                        results.append(f"\nOpen wire diagnosis:\n{diagnosis}")
 
                 # Check if can make face
                 if wire_count > 0 and closed_wires > 0:
@@ -154,6 +158,10 @@ class SketchOpsHandler(BaseHandler):
                         results.append(f"Can create face: No - {e}")
             else:
                 results.append("No valid shape generated from sketch")
+                # Diagnose even without a shape (completely disconnected geometry)
+                diagnosis = self._diagnose_open_wires(sketch)
+                if diagnosis:
+                    results.append(f"\nOpen wire diagnosis:\n{diagnosis}")
 
             # Check for construction geometry
             construction_count = 0

@@ -49,10 +49,35 @@ class PartDesignOpsHandler(BaseHandler):
             self.recompute(doc)
 
             rev_msg = " (reversed)" if reversed_dir else ""
-            return f"Created pad: {pad.Name} from {sketch_name} with length {length}mm{rev_msg} in Body: {body.Name}"
+            base_msg = f"Created pad: {pad.Name} from {sketch_name} with length {length}mm{rev_msg} in Body: {body.Name}"
+
+            # recompute() doesn't raise on geometry failures — it just marks
+            # the feature Invalid.  Check State so the user isn't misled by a
+            # false "Created pad: ..." success message.
+            pad_state = getattr(pad, 'State', [])
+            if 'Invalid' in pad_state:
+                diagnosis = self._diagnose_open_wires(sketch)
+                err = f"Pad created but failed to compute (wire not closed or invalid profile)."
+                if diagnosis:
+                    err += f"\n\nSketch wire diagnosis:\n{diagnosis}"
+                return err
+
+            return base_msg
 
         except Exception as e:
-            return f"Error creating pad: {e}"
+            err = f"Error creating pad: {e}"
+            # Auto-diagnose the sketch profile so the user knows exactly
+            # which endpoints are disconnected and what constraints to add.
+            try:
+                doc = FreeCAD.ActiveDocument
+                sketch = self.get_object(sketch_name, doc) if doc else None
+                if sketch and sketch.TypeId == 'Sketcher::SketchObject':
+                    diagnosis = self._diagnose_open_wires(sketch)
+                    if diagnosis:
+                        err += f"\n\nSketch wire diagnosis:\n{diagnosis}"
+            except Exception:
+                pass
+            return err
 
     def pocket(self, args: Dict[str, Any]) -> str:
         """Create a pocket (subtractive extrusion) from a sketch."""
@@ -86,10 +111,30 @@ class PartDesignOpsHandler(BaseHandler):
             self.recompute(doc)
 
             rev_msg = " (reversed)" if reversed_dir else ""
-            return f"Created pocket: {pocket.Name} from {sketch_name} with depth {length}mm{rev_msg}"
+            base_msg = f"Created pocket: {pocket.Name} from {sketch_name} with depth {length}mm{rev_msg}"
+
+            pocket_state = getattr(pocket, 'State', [])
+            if 'Invalid' in pocket_state:
+                diagnosis = self._diagnose_open_wires(sketch)
+                err = f"Pocket created but failed to compute (wire not closed or invalid profile)."
+                if diagnosis:
+                    err += f"\n\nSketch wire diagnosis:\n{diagnosis}"
+                return err
+
+            return base_msg
 
         except Exception as e:
-            return f"Error creating pocket: {e}"
+            err = f"Error creating pocket: {e}"
+            try:
+                doc = FreeCAD.ActiveDocument
+                sketch = self.get_object(sketch_name, doc) if doc else None
+                if sketch and sketch.TypeId == 'Sketcher::SketchObject':
+                    diagnosis = self._diagnose_open_wires(sketch)
+                    if diagnosis:
+                        err += f"\n\nSketch wire diagnosis:\n{diagnosis}"
+            except Exception:
+                pass
+            return err
 
     def fillet_edges(self, args: Dict[str, Any]) -> str:
         """Add fillets to object edges (Interactive selection workflow)."""

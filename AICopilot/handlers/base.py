@@ -191,6 +191,102 @@ class BaseHandler:
                 return body
         return None
 
+    # -----------------------------------------------------------------
+    # Sketch wire diagnosis helpers
+    # -----------------------------------------------------------------
+
+    def _find_geo_for_point(self, sketch, vertex, tolerance: float = 0.5):
+        """Find the geometry endpoint nearest to an open vertex.
+
+        Iterates non-construction sketch geometry and compares each
+        start/end point to *vertex* (a FreeCAD.Vector).
+
+        Returns:
+            (geo_id, pos_id, dist) tuple, or None if nothing within
+            *tolerance* mm.  pos_id: 1=start, 2=end.
+        """
+        best = None
+        best_dist = tolerance
+        for i in range(sketch.GeometryCount):
+            try:
+                if sketch.getConstruction(i):
+                    continue
+                geo = sketch.Geometry[i]
+                if not hasattr(geo, 'StartPoint') or not hasattr(geo, 'EndPoint'):
+                    continue
+                for pt, pos_id in ((geo.StartPoint, 1), (geo.EndPoint, 2)):
+                    d = FreeCAD.Vector(vertex.x - pt.x,
+                                      vertex.y - pt.y, 0).Length
+                    if d < best_dist:
+                        best_dist = d
+                        best = (i, pos_id, d)
+            except Exception:
+                continue
+        return best
+
+    def _diagnose_open_wires(self, sketch) -> str:
+        """Return an actionable diagnosis for open wire / unclosed profile.
+
+        Combines three FreeCAD APIs:
+        1. ``getOpenVertices()``  — exact XY of every dangling endpoint
+        2. ``_find_geo_for_point()`` — maps each dangling point back to
+           its geo_id + pos_id so the user knows which geometry to fix
+        3. ``detectMissingPointOnPointConstraints()`` +
+           ``getMissingPointOnPointConstraints()`` — generates the exact
+           Coincident constraints needed to close the gaps
+
+        Returns an empty string when no issues are detected.
+        """
+        issues = []
+        open_verts = []
+
+        # --- Step 1: find dangling endpoints ---
+        try:
+            open_verts = sketch.getOpenVertices()
+        except Exception as exc:
+            issues.append(f"  (getOpenVertices unavailable: {exc})")
+
+        if open_verts:
+            pos_names = {1: "start", 2: "end", 3: "center"}
+            issues.append(f"{len(open_verts)} open endpoint(s) found:")
+            for v in open_verts:
+                match = self._find_geo_for_point(sketch, v)
+                if match:
+                    gid, pid, dist = match
+                    gap = f" (gap {dist:.5f} mm)" if dist > 1e-6 else ""
+                    pname = pos_names.get(pid, str(pid))
+                    issues.append(
+                        f"  • geo_id={gid} {pname}-point at "
+                        f"({v.x:.4f}, {v.y:.4f}){gap}"
+                    )
+                else:
+                    issues.append(
+                        f"  • Dangling point at ({v.x:.4f}, {v.y:.4f})"
+                        " — no matching geometry found within 0.5 mm"
+                    )
+
+        # --- Step 2: suggest Coincident constraints to close the gaps ---
+        try:
+            missing_count = sketch.detectMissingPointOnPointConstraints(
+                precision=0.1, includeconstruction=False
+            )
+            if missing_count > 0:
+                pairs = sketch.getMissingPointOnPointConstraints()
+                issues.append(f"\n{missing_count} suggested fix(es):")
+                for c in pairs:
+                    issues.append(
+                        f"  sketch_operations(operation=\"add_constraint\","
+                        f" constraint_type=\"Coincident\","
+                        f" sketch_name=\"{sketch.Name}\","
+                        f" geo_id1={c.First}, pos_id1={c.FirstPos},"
+                        f" geo_id2={c.Second}, pos_id2={c.SecondPos})"
+                    )
+        except Exception:
+            # Graceful degradation for older FC builds
+            pass
+
+        return "\n".join(issues)
+
     def create_body_if_needed(self, doc: FreeCAD.Document = None):
         """Create a PartDesign Body if one doesn't exist.
 

@@ -109,6 +109,9 @@ def _find_freecadcmd() -> str | None:
         "/Applications/FreeCAD 1.0.app/Contents/MacOS/FreeCADCmd",
         "/Applications/FreeCAD 1.1.app/Contents/MacOS/FreeCADCmd",
         "/Applications/FreeCAD 1.2.app/Contents/MacOS/FreeCADCmd",
+        # Local build (FC-clone)
+        os.path.expanduser("~/Documents/FC-clone/build/release/bin/FreeCADCmd"),
+        "/Volumes/Files/claude/FC-clone/build/release/bin/FreeCADCmd",
     ]
     for p in mac_candidates:
         if os.path.isfile(p):
