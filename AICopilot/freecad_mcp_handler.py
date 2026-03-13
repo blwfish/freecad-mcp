@@ -4,7 +4,7 @@
 # Version: 5.0.0 - Core rewrite: eliminated dead code, unified dispatch,
 #                   replaced busy-wait polling with Queue.get(timeout)
 
-__version__ = "5.4.0"
+__version__ = "5.5.0"
 REQUIRED_VERSIONS = {
     "freecad_debug": ">=1.1.0",
     "freecad_health": ">=1.0.1",
@@ -239,6 +239,13 @@ class FreeCADSocketServer:
         self._gui_response_queue = queue.Queue()
         self._request_counter = 0  # monotonic request ID
 
+        # Timeout / busy-guard state
+        # _gui_thread_busy: True while a sync task is executing on the GUI thread.
+        # _stale_req_ids: req_ids whose _run_on_gui_thread call already timed out;
+        #   _process_gui_tasks must discard their results (no waiter left).
+        self._gui_thread_busy = False
+        self._stale_req_ids: set = set()
+
         # Async job tracking: job_id -> {status, started, result, error, elapsed}
         self._async_jobs: Dict[str, Dict] = {}
 
@@ -381,8 +388,19 @@ class FreeCADSocketServer:
 
                 # Synchronous path
                 else:
-                    result = task()
-                    self._gui_response_queue.put((req_id, result))
+                    self._gui_thread_busy = True
+                    try:
+                        result = task()
+                    finally:
+                        self._gui_thread_busy = False
+                    if req_id in self._stale_req_ids:
+                        # Waiter already timed out — discard result, don't pollute the queue
+                        self._stale_req_ids.discard(req_id)
+                        FreeCAD.Console.PrintMessage(
+                            f"[MCP] Discarding result for stale request {req_id}\n"
+                        )
+                    else:
+                        self._gui_response_queue.put((req_id, result))
 
             except queue.Empty:
                 break
@@ -432,6 +450,18 @@ class FreeCADSocketServer:
             except Exception as e:
                 return json.dumps({"error": f"Headless task error: {e}"})
 
+        # Busy guard: if the GUI thread is already blocked on a synchronous task,
+        # refuse to queue more work.  The stuck task is still running; piling up
+        # additional tasks causes cascade failures when it eventually returns.
+        if self._gui_thread_busy:
+            FreeCAD.Console.PrintWarning(
+                "[MCP] Rejected request — GUI thread is still busy with a previous operation\n"
+            )
+            return json.dumps({
+                "error": "GUI thread is busy with a previous operation. "
+                         "Wait for it to complete or use execute_python_async."
+            })
+
         self._request_counter += 1
         req_id = self._request_counter
         self._gui_task_queue.put((req_id, task_fn))
@@ -440,6 +470,8 @@ class FreeCADSocketServer:
         while True:
             remaining = deadline - time.time()
             if remaining <= 0:
+                # Mark as stale so _process_gui_tasks discards the result when it arrives
+                self._stale_req_ids.add(req_id)
                 FreeCAD.Console.PrintWarning(
                     f"[MCP] Request {req_id} timed out after {timeout:.0f}s "
                     f"- GUI thread may still be busy\n"
@@ -874,7 +906,7 @@ class FreeCADSocketServer:
 
         return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
-    def _call_on_gui_thread(self, method, args: Dict[str, Any], label: str) -> str:
+    def _call_on_gui_thread(self, method, args: Dict[str, Any], label: str, timeout: float = 120.0) -> str:
         """Wrap a handler method call for GUI-safe execution."""
         def task():
             try:
@@ -882,7 +914,7 @@ class FreeCADSocketServer:
                 return {"success": True, "result": result}
             except Exception as e:
                 return {"error": f"{label} error: {e}", "traceback": tb_module.format_exc()}
-        return self._run_on_gui_thread(task)
+        return self._run_on_gui_thread(task, timeout=timeout)
 
     def _dispatch_to_handler(self, handler, args: Dict[str, Any], tool_name: str) -> str:
         """Generic dispatch: look up args['operation'] as a method on handler."""
@@ -898,7 +930,7 @@ class FreeCADSocketServer:
                 return {"success": True, "result": result}
             except Exception as e:
                 return {"error": f"{tool_name} {operation} error: {e}", "traceback": tb_module.format_exc()}
-        return self._run_on_gui_thread(task)
+        return self._run_on_gui_thread(task, timeout=120.0)
 
     def _dispatch_partdesign(self, args: Dict[str, Any]) -> str:
         """Route PartDesign operations (operation names differ from method names)."""

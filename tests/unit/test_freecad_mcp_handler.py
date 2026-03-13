@@ -666,7 +666,7 @@ class TestConfiguration:
         assert ss_module.WINDOWS_PORT == 23456
 
     def test_version(self, ss_module):
-        assert ss_module.__version__ == "5.4.0"
+        assert ss_module.__version__ == "5.5.0"
 
     def test_max_message_size(self, ss_module):
         assert ss_module.MAX_MESSAGE_SIZE == 50 * 1024
