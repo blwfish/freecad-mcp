@@ -1148,6 +1148,16 @@ class FreeCADSocketServer:
             pass
         namespace = self._python_namespace
 
+        # Auto-save active document before executing user code.
+        # If the code triggers a crash (e.g., .check() on huge compounds,
+        # boolean ops on 1000+ solids), the saved file survives.
+        try:
+            doc = FreeCAD.ActiveDocument
+            if doc and getattr(doc, 'FileName', ''):
+                doc.save()
+        except Exception:
+            pass  # non-fatal; proceed with execution
+
         result_value = None
         old_stdout = sys.stdout
         sys.stdout = captured = io.StringIO()

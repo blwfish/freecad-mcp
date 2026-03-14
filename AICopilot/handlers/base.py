@@ -154,6 +154,39 @@ class BaseHandler:
         if doc:
             doc.recompute()
 
+    def save_before_risky_op(self, doc: FreeCAD.Document = None):
+        """Auto-save document before a potentially crashy operation.
+
+        Boolean operations on large compounds can crash FreeCAD.
+        Saving first ensures the user doesn't lose work.
+        """
+        if doc is None:
+            doc = FreeCAD.ActiveDocument
+        try:
+            if doc and getattr(doc, 'FileName', ''):
+                doc.save()
+        except Exception:
+            pass  # non-fatal
+
+    def check_complexity(self, objs, max_solids=500, max_faces=10000):
+        """Check if objects are too complex for boolean operations.
+
+        Returns a warning string if complexity is high, or None if OK.
+        """
+        total_solids = 0
+        total_faces = 0
+        for obj in objs:
+            s = getattr(obj, 'Shape', None)
+            if s is None:
+                continue
+            total_solids += len(s.Solids)
+            total_faces += len(s.Faces)
+        if total_solids > max_solids or total_faces > max_faces:
+            return (f"WARNING: High complexity ({total_solids} solids, "
+                    f"{total_faces} faces). Boolean operations on geometry "
+                    f"this large may crash FreeCAD. Consider simplifying first.")
+        return None
+
     def find_body(self, doc: FreeCAD.Document = None):
         """Find a PartDesign Body in the document.
 

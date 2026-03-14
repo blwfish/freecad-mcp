@@ -30,6 +30,12 @@ class BooleanOpsHandler(BaseHandler):
                 else:
                     return f"Object not found: {obj_name}"
 
+            # Safety: warn on high complexity, save before risky op
+            warning = self.check_complexity(objs)
+            if warning:
+                FreeCAD.Console.PrintWarning(f"[MCP] {warning}\n")
+            self.save_before_risky_op(doc)
+
             # Create fusion and hide sources
             fusion = doc.addObject("Part::MultiFuse", name)
             fusion.Label = name
@@ -70,6 +76,9 @@ class BooleanOpsHandler(BaseHandler):
                 else:
                     return f"Tool object not found: {tool_name}"
 
+            # Safety: save before risky op
+            self.save_before_risky_op(doc)
+
             # Create cut and hide sources
             cut = doc.addObject("Part::Cut", name)
             cut.Label = name
@@ -106,6 +115,12 @@ class BooleanOpsHandler(BaseHandler):
                     objs.append(obj)
                 else:
                     return f"Object not found: {obj_name}"
+
+            # Safety: warn on high complexity, save before risky op
+            warning = self.check_complexity(objs)
+            if warning:
+                FreeCAD.Console.PrintWarning(f"[MCP] {warning}\n")
+            self.save_before_risky_op(doc)
 
             # Create common and hide sources
             common = doc.addObject("Part::MultiCommon", name)
