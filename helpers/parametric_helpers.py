@@ -90,9 +90,10 @@ class ParametricHelpers:
                 # Not a parameter, might be a unit like "mm" or "ft"
                 pass
 
-        # Evaluate the expression (this is safe because we control the tokens)
+        # Restricted eval: disable builtins to prevent arbitrary code execution.
+        # Only numeric literals and arithmetic operators should remain after token substitution.
         try:
-            return eval(result_expr)
+            return eval(result_expr, {"__builtins__": {}}, {})
         except Exception as e:
             raise ValueError(f"Failed to evaluate expression '{expr}': {e}")
 

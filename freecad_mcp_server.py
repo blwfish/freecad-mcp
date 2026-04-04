@@ -1295,7 +1295,7 @@ async def main():
                 text=response
             )]
             
-        # execute_python: submit as async job, poll indefinitely (no timeout)
+        # execute_python: submit as async job, poll with timeout
         elif name == "execute_python":
             args = arguments or {}
             submit_resp = json.loads(await send_to_freecad("execute_python_async", {"code": args.get("code", "")}))
@@ -1304,8 +1304,18 @@ async def main():
             job_id = submit_resp.get("job_id")
             if not job_id:
                 return [types.TextContent(type="text", text=json.dumps({"error": "no job_id returned", "response": submit_resp}))]
+            max_poll_seconds = 600  # 10 minute timeout
+            poll_start = time.time()
             while True:
                 await asyncio.sleep(1.0)
+                if time.time() - poll_start > max_poll_seconds:
+                    return [types.TextContent(type="text", text=json.dumps({
+                        "error": f"execute_python timed out after {max_poll_seconds}s. "
+                                 f"Job {job_id} may still be running. "
+                                 f"Use poll_job(job_id='{job_id}') to check status, "
+                                 f"or cancel_job(job_id='{job_id}') to abort.",
+                        "job_id": job_id,
+                    }))]
                 poll_resp = json.loads(await send_to_freecad("poll_job", {"job_id": job_id}))
                 status = poll_resp.get("status")
                 if status == "done":
@@ -1441,6 +1451,16 @@ async def main():
             label = args.get("label")
             sock_path = args.get("socket_path") or f"/tmp/freecad_mcp_{uuid.uuid4().hex[:8]}.sock"
             select_new = args.get("select", True)
+
+            # Validate socket path: must resolve to within /tmp/ to prevent path traversal
+            real_sock_path = os.path.realpath(sock_path)
+            if ".." in sock_path or not real_sock_path.startswith("/tmp/"):
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({
+                        "error": f"Invalid socket_path: must be within /tmp/ (resolved to {real_sock_path})"
+                    })
+                )]
 
             freecadcmd = _find_freecadcmd()
             if not freecadcmd:

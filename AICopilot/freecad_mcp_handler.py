@@ -34,6 +34,11 @@ else:
 
 IS_WINDOWS = platform.system() == "Windows"
 
+# Limit on concurrent/retained async jobs to prevent unbounded memory growth
+MAX_ASYNC_JOBS = 50
+# Completed jobs older than this (seconds) are automatically cleaned up
+ASYNC_JOB_TTL = 600
+
 # Configurable socket path/port via environment variables
 SOCKET_PATH = os.environ.get("FREECAD_MCP_SOCKET", "/tmp/freecad_mcp.sock")
 WINDOWS_HOST = "localhost"
@@ -66,8 +71,13 @@ try:
     )
     from freecad_health import init_monitor, get_monitor
 
+    _log_dir = os.path.expanduser("~/.freecad-mcp/logs")
+    _crash_dir = os.path.expanduser("~/.freecad-mcp/crashes")
+    os.makedirs(_log_dir, mode=0o700, exist_ok=True)
+    os.makedirs(_crash_dir, mode=0o700, exist_ok=True)
+
     _debugger = init_debugger(
-        log_dir="/tmp/freecad_mcp_debug",
+        log_dir=_log_dir,
         enable_console=False,
         enable_file=True,
         lean_logging=False,
@@ -79,8 +89,8 @@ try:
 
     DEBUG_ENABLED = True
     FreeCAD.Console.PrintMessage("MCP Debug infrastructure loaded\n")
-    FreeCAD.Console.PrintMessage("  Logs: /tmp/freecad_mcp_debug/\n")
-    FreeCAD.Console.PrintMessage("  Crashes: /tmp/freecad_mcp_crashes/\n")
+    FreeCAD.Console.PrintMessage(f"  Logs: {_log_dir}/\n")
+    FreeCAD.Console.PrintMessage(f"  Crashes: {_crash_dir}/\n")
 
 except ImportError as e:
     FreeCAD.Console.PrintMessage(f"MCP Debug not available (optional): {e}\n")
@@ -315,7 +325,7 @@ class FreeCADSocketServer:
                     os.remove(self.socket_path)
                 self.server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 self.server_socket.bind(self.socket_path)
-                os.chmod(self.socket_path, 0o666)
+                os.chmod(self.socket_path, 0o600)
                 FreeCAD.Console.PrintMessage(f"Socket server started on {self.socket_path}\n")
 
             self.server_socket.listen(5)
@@ -381,6 +391,7 @@ class FreeCADSocketServer:
                         "status": "done",
                         "result": result,
                         "elapsed": time.time() - job["started"],
+                        "finished": time.time(),
                     })
                     FreeCAD.Console.PrintMessage(
                         f"[MCP] async job {job_id} done\n"
@@ -415,6 +426,7 @@ class FreeCADSocketServer:
                             "error": str(e),
                             "traceback": tb,
                             "elapsed": time.time() - job["started"],
+                            "finished": time.time(),
                         })
                         FreeCAD.Console.PrintMessage(
                             f"[MCP] async job {job_id} error: {e}\n"
@@ -524,6 +536,7 @@ class FreeCADSocketServer:
                     "status": "done",
                     "result": result,
                     "elapsed": time.time() - self._async_jobs[job_id]["started"],
+                    "finished": time.time(),
                 })
             except Exception as e:
                 self._async_jobs[job_id].update({
@@ -531,7 +544,19 @@ class FreeCADSocketServer:
                     "error": str(e),
                     "traceback": tb_module.format_exc(),
                     "elapsed": time.time() - self._async_jobs[job_id]["started"],
+                    "finished": time.time(),
                 })
+
+    def _cleanup_stale_async_jobs(self):
+        """Remove completed async jobs older than ASYNC_JOB_TTL seconds."""
+        now = time.time()
+        stale = [
+            jid for jid, job in self._async_jobs.items()
+            if job["status"] in ("done", "error")
+            and (now - job.get("finished", job["started"])) > ASYNC_JOB_TTL
+        ]
+        for jid in stale:
+            del self._async_jobs[jid]
 
     def _execute_python_async(self, args: Dict[str, Any]) -> str:
         """Submit Python code for async GUI-safe execution; returns job_id immediately.
@@ -542,6 +567,15 @@ class FreeCADSocketServer:
         code = args.get("code", "")
         if not code:
             return json.dumps({"error": "No code provided"})
+
+        # Clean up old completed jobs before checking the limit
+        self._cleanup_stale_async_jobs()
+
+        if len(self._async_jobs) >= MAX_ASYNC_JOBS:
+            return json.dumps({
+                "error": f"Too many async jobs ({len(self._async_jobs)}). "
+                         f"Max is {MAX_ASYNC_JOBS}. Wait for jobs to complete or cancel some."
+            })
 
         job_id = uuid.uuid4().hex[:8]
         self._async_jobs[job_id] = {
@@ -919,6 +953,11 @@ class FreeCADSocketServer:
     def _dispatch_to_handler(self, handler, args: Dict[str, Any], tool_name: str) -> str:
         """Generic dispatch: look up args['operation'] as a method on handler."""
         operation = args.get("operation", "")
+
+        # Reject private/dunder methods to prevent access to internal APIs
+        if not operation or operation.startswith("_"):
+            return json.dumps({"error": f"Invalid operation: {operation}"})
+
         method = getattr(handler, operation, None)
 
         if not method or not callable(method):
