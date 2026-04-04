@@ -400,7 +400,7 @@ class TestDispatchToHandler:
         handler = MagicMock(spec=[])
         result = server._dispatch_to_handler(handler, {}, "test_tool")
         parsed = json.loads(result)
-        assert "Unknown test_tool operation" in parsed["error"]
+        assert "Invalid operation" in parsed["error"]
 
 
 # ---------------------------------------------------------------------------
