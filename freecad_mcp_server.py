@@ -1491,8 +1491,9 @@ async def main():
             select_new = args.get("select", True)
 
             # Validate socket path: must resolve to within /tmp/ to prevent path traversal
+            # On macOS, /tmp is a symlink to /private/tmp, so accept both
             real_sock_path = os.path.realpath(sock_path)
-            if ".." in sock_path or not real_sock_path.startswith("/tmp/"):
+            if ".." in sock_path or not (real_sock_path.startswith("/tmp/") or real_sock_path.startswith("/private/tmp/")):
                 return [types.TextContent(
                     type="text",
                     text=json.dumps({
