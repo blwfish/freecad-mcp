@@ -1387,6 +1387,44 @@ async def main():
             else:
                 response = await send_to_freecad(name, args)
 
+            # If FreeCAD returned a job_id, auto-poll until done (transparent to the agent).
+            # This handles long-running ops (boolean fuse/cut/common on complex geometry)
+            # that use the async GUI-thread path to avoid the sync timeout.
+            try:
+                result = json.loads(response)
+                if isinstance(result, dict) and result.get("job_id") and result.get("status") == "submitted":
+                    job_id = result["job_id"]
+                    max_poll_seconds = 600  # 10 minute ceiling
+                    poll_start = time.time()
+                    while True:
+                        await asyncio.sleep(1.0)
+                        if time.time() - poll_start > max_poll_seconds:
+                            return [types.TextContent(type="text", text=json.dumps({
+                                "error": f"Operation timed out after {max_poll_seconds}s. "
+                                         f"Job {job_id} may still be running. "
+                                         f"Use poll_job(job_id='{job_id}') to check status, "
+                                         f"or cancel_job(job_id='{job_id}') to abort.",
+                                "job_id": job_id,
+                            }))]
+                        poll_resp = json.loads(await send_to_freecad("poll_job", {"job_id": job_id}))
+                        status = poll_resp.get("status")
+                        if status == "done":
+                            _complete_op()
+                            return [types.TextContent(type="text", text=json.dumps({
+                                "result": poll_resp.get("result"),
+                                "elapsed": poll_resp.get("elapsed"),
+                            }))]
+                        elif status == "error":
+                            return [types.TextContent(type="text", text=json.dumps({
+                                "error": poll_resp.get("error"),
+                                "elapsed": poll_resp.get("elapsed"),
+                            }))]
+                        elif "error" in poll_resp and "Crash" in poll_resp.get("error", ""):
+                            return [types.TextContent(type="text", text=json.dumps(poll_resp))]
+                        # status == "running" → keep polling
+            except (json.JSONDecodeError, Exception):
+                pass
+
             # Return image content when the response contains base64 image data
             try:
                 result = json.loads(response)
