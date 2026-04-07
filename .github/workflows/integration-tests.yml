@@ -70,7 +70,6 @@ jobs:
             if [ -n "$FOUND" ]; then
               echo "Found $name at: $FOUND"
               echo "bin=$FOUND" >> "$GITHUB_OUTPUT"
-              "$FOUND" --version || true
               exit 0
             fi
           done
@@ -80,41 +79,24 @@ jobs:
           exit 1
 
       - name: Show AppRun contents
-        run: |
-          cat ~/freecad-appimage/squashfs-root/AppRun
+        run: cat ~/freecad-appimage/squashfs-root/AppRun
 
-      - name: Deploy AICopilot module for headless server
+      - name: Create freecadcmd wrapper
         run: |
-          SQUASHFS=~/freecad-appimage/squashfs-root
-
-          echo "FREECAD_MCP_MODULE_DIR=${{ github.workspace }}/AICopilot" >> "$GITHUB_ENV"
+          SQUASHFS="$HOME/freecad-appimage/squashfs-root"
 
           # The raw freecadcmd binary needs the AppImage's bundled environment.
-          # Create a wrapper that uses AppRun to set up LD_LIBRARY_PATH etc.,
-          # then execs freecadcmd with forwarded arguments.
-          cat > ~/freecad-appimage/freecadcmd-wrapper.sh << 'WRAPPER'
-#!/bin/bash
-SQUASHFS="$(dirname "$0")/squashfs-root"
-export APPDIR="$SQUASHFS"
-# Source AppRun's environment setup, then exec freecadcmd
-exec env \
-  LD_LIBRARY_PATH="$SQUASHFS/usr/lib:${LD_LIBRARY_PATH:-}" \
-  PYTHONHOME="$SQUASHFS/usr" \
-  PYTHONPATH="$SQUASHFS/usr/lib/python3/dist-packages:${PYTHONPATH:-}" \
-  "$SQUASHFS/usr/bin/freecadcmd" "$@"
-WRAPPER
+          # Create a wrapper that sets up LD_LIBRARY_PATH, PYTHONHOME, etc.
+          printf '#!/bin/bash\nSQUASHFS="%s"\nexec env LD_LIBRARY_PATH="$SQUASHFS/usr/lib:${LD_LIBRARY_PATH:-}" PYTHONHOME="$SQUASHFS/usr" PYTHONPATH="$SQUASHFS/usr/lib/python3/dist-packages:${PYTHONPATH:-}" "$SQUASHFS/usr/bin/freecadcmd" "$@"\n' "$SQUASHFS" \
+            > ~/freecad-appimage/freecadcmd-wrapper.sh
           chmod +x ~/freecad-appimage/freecadcmd-wrapper.sh
 
           echo "FREECAD_MCP_FREECAD_BIN=$HOME/freecad-appimage/freecadcmd-wrapper.sh" >> "$GITHUB_ENV"
+          echo "FREECAD_MCP_MODULE_DIR=${{ github.workspace }}/AICopilot" >> "$GITHUB_ENV"
 
-          # Quick smoke test
-          ~/freecad-appimage/freecadcmd-wrapper.sh --version || echo "WARNING: freecadcmd wrapper failed"
+          # Smoke test
+          ~/freecad-appimage/freecadcmd-wrapper.sh --version || echo "::warning::freecadcmd wrapper smoke test failed"
 
       - name: Run integration tests
-        run: |
-          echo "FREECAD_MCP_FREECAD_BIN=$FREECAD_MCP_FREECAD_BIN"
-          echo "FREECAD_MCP_MODULE_DIR=$FREECAD_MCP_MODULE_DIR"
-          ls -la "$FREECAD_MCP_FREECAD_BIN" || true
-          ls -la "$FREECAD_MCP_MODULE_DIR/headless_server.py" || true
-          python -m pytest tests/integration/ -v -rs --timeout=120
+        run: python -m pytest tests/integration/ -v -rs --timeout=120
         timeout-minutes: 5
