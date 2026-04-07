@@ -115,8 +115,8 @@ def _spawn_headless(timeout: float = 30.0) -> tuple[subprocess.Popen, str]:
     proc = subprocess.Popen(
         [freecadcmd, headless_script, "--socket-path", sock_path],
         env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         start_new_session=True,
     )
 
@@ -124,8 +124,13 @@ def _spawn_headless(timeout: float = 30.0) -> tuple[subprocess.Popen, str]:
     deadline = time.time() + timeout
     while time.time() < deadline:
         if proc.poll() is not None:
+            stdout = proc.stdout.read().decode("utf-8", errors="replace") if proc.stdout else ""
+            stderr = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
             raise RuntimeError(
-                f"FreeCADCmd exited prematurely with code {proc.returncode}"
+                f"FreeCADCmd exited prematurely with code {proc.returncode}\n"
+                f"  cmd: {[freecadcmd, headless_script, '--socket-path', sock_path]}\n"
+                f"  stdout: {stdout[:500]}\n"
+                f"  stderr: {stderr[:500]}"
             )
         if _socket_responds(sock_path):
             return proc, sock_path
