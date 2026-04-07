@@ -62,18 +62,40 @@ jobs:
       - name: Locate FreeCADCmd
         id: freecad
         run: |
-          # Find FreeCADCmd inside the extracted AppImage
-          FREECADCMD=$(find ~/freecad-appimage/squashfs-root -name FreeCADCmd -type f | head -1)
-          if [ -z "$FREECADCMD" ]; then
-            echo "::error::FreeCADCmd not found in extracted AppImage"
-            find ~/freecad-appimage/squashfs-root -maxdepth 3 -type f -name 'FreeCAD*'
-            exit 1
-          fi
-          echo "Found FreeCADCmd at: $FREECADCMD"
-          echo "bin=$FREECADCMD" >> "$GITHUB_OUTPUT"
+          SQUASHFS=~/freecad-appimage/squashfs-root
 
-          # Verify it runs
-          "$FREECADCMD" --version || true
+          # Debug: show the AppImage layout
+          echo "=== Top-level ==="
+          ls "$SQUASHFS/"
+          echo "=== usr/bin/ ==="
+          ls "$SQUASHFS/usr/bin/" 2>/dev/null || echo "(no usr/bin/)"
+          echo "=== FreeCAD binaries ==="
+          find "$SQUASHFS" -maxdepth 4 -name 'FreeCAD*' -type f 2>/dev/null | head -20
+          echo "=== AppRun ==="
+          file "$SQUASHFS/AppRun" 2>/dev/null || echo "(no AppRun)"
+          head -20 "$SQUASHFS/AppRun" 2>/dev/null || true
+
+          # Try candidates in order
+          for name in FreeCADCmd freecadcmd FreeCAD freecad; do
+            FOUND=$(find "$SQUASHFS" -name "$name" -type f | head -1)
+            if [ -n "$FOUND" ]; then
+              echo "Found $name at: $FOUND"
+              echo "bin=$FOUND" >> "$GITHUB_OUTPUT"
+              "$FOUND" --version || true
+              exit 0
+            fi
+          done
+
+          # Fallback: AppRun might work as the entry point
+          if [ -x "$SQUASHFS/AppRun" ]; then
+            echo "No FreeCADCmd found, trying AppRun"
+            echo "bin=$SQUASHFS/AppRun" >> "$GITHUB_OUTPUT"
+            "$SQUASHFS/AppRun" --version || true
+            exit 0
+          fi
+
+          echo "::error::No FreeCAD binary found in extracted AppImage"
+          exit 1
 
       - name: Deploy AICopilot module for headless server
         run: |
