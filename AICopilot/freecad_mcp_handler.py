@@ -870,9 +870,6 @@ class FreeCADSocketServer:
             "create_cone": self.primitives.create_cone,
             "create_torus": self.primitives.create_torus,
             "create_wedge": self.primitives.create_wedge,
-            "fuse_objects": self.boolean_ops.fuse_objects,
-            "cut_objects": self.boolean_ops.cut_objects,
-            "common_objects": self.boolean_ops.common_objects,
             "move_object": self.transforms.move_object,
             "rotate_object": self.transforms.rotate_object,
             "copy_object": self.transforms.copy_object,
@@ -880,6 +877,16 @@ class FreeCADSocketServer:
             "create_sketch": self.sketch_ops.create_sketch,
             "sketch_verify": self.sketch_ops.verify_sketch,
         }
+
+        # Boolean ops use the async path — they can run arbitrarily long on complex
+        # geometry and must not be subject to the sync GUI-thread timeout.
+        async_boolean_map = {
+            "fuse_objects": self.boolean_ops.fuse_objects,
+            "cut_objects": self.boolean_ops.cut_objects,
+            "common_objects": self.boolean_ops.common_objects,
+        }
+        if tool_name in async_boolean_map:
+            return self._call_on_gui_thread_async(async_boolean_map[tool_name], args, tool_name)
 
         if tool_name in direct_map:
             method = direct_map[tool_name]
@@ -949,6 +956,35 @@ class FreeCADSocketServer:
             except Exception as e:
                 return {"error": f"{label} error: {e}", "traceback": tb_module.format_exc()}
         return self._run_on_gui_thread(task, timeout=timeout)
+
+    def _call_on_gui_thread_async(self, method, args: Dict[str, Any], label: str) -> str:
+        """Submit a handler method call for async GUI execution; returns job_id immediately.
+
+        Use poll_job(job_id) to retrieve the result. Intended for long-running
+        operations (boolean ops on complex geometry) that would otherwise hit
+        the sync timeout and leave the GUI thread stuck.
+        """
+        self._cleanup_stale_async_jobs()
+        if len(self._async_jobs) >= MAX_ASYNC_JOBS:
+            return json.dumps({"error": f"Too many async jobs ({len(self._async_jobs)}). "
+                                        "Use poll_job / cancel_job to clear existing jobs."})
+        job_id = uuid.uuid4().hex[:8]
+        self._async_jobs[job_id] = {
+            "status": "running",
+            "started": time.time(),
+            "label": label,
+            "result": None,
+            "error": None,
+            "elapsed": None,
+        }
+        def task():
+            try:
+                result = method(args)
+                return {"success": True, "result": result}
+            except Exception as e:
+                return {"error": f"{label} error: {e}", "traceback": tb_module.format_exc()}
+        self._run_on_gui_thread_async(job_id, task)
+        return json.dumps({"job_id": job_id, "status": "submitted"})
 
     def _dispatch_to_handler(self, handler, args: Dict[str, Any], tool_name: str) -> str:
         """Generic dispatch: look up args['operation'] as a method on handler."""
@@ -1072,6 +1108,9 @@ class FreeCADSocketServer:
 
         if not method:
             return json.dumps({"error": f"Unknown Part operation: {operation}"})
+
+        if operation in ("fuse", "cut", "common"):
+            return self._call_on_gui_thread_async(method, args, f"Part {operation}")
 
         return self._call_on_gui_thread(method, args, f"Part {operation}")
 
