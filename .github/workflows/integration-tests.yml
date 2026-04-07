@@ -73,8 +73,17 @@ jobs:
           echo "FREECAD_MCP_FREECAD_BIN=$HOME/freecad-appimage/freecadcmd-wrapper.sh" >> "$GITHUB_ENV"
           echo "FREECAD_MCP_MODULE_DIR=${{ github.workspace }}/AICopilot" >> "$GITHUB_ENV"
 
-          # Smoke test — should print FreeCAD version
-          ~/freecad-appimage/freecadcmd-wrapper.sh --version 2>&1 || echo "::warning::freecadcmd smoke test exited with code $?"
+          # Install AICopilot module into AppImage's FreeCAD Mod directory
+          # so FreeCAD's Init.py puts it on sys.path automatically
+          MODDIR="$SQUASHFS/usr/Mod/AICopilot"
+          if [ ! -d "$MODDIR" ]; then
+            ln -s "${{ github.workspace }}/AICopilot" "$MODDIR"
+            echo "Linked AICopilot module into $MODDIR"
+          fi
+
+          # Smoke test — print version and check the module is importable
+          ~/freecad-appimage/freecadcmd-wrapper.sh --version 2>&1 || echo "::warning::freecadcmd --version exited with code $?"
+          echo "import sys; sys.path.insert(0, '${{ github.workspace }}/AICopilot'); print('sys.path:', [p for p in sys.path if 'AICopilot' in p or 'Mod' in p])" | ~/freecad-appimage/freecadcmd-wrapper.sh 2>&1 || true
 
       - name: Run integration tests
         run: python -m pytest tests/integration/ -v -rs --timeout=120
