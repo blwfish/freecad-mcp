@@ -112,8 +112,10 @@ def _spawn_headless(timeout: float = 30.0) -> tuple[subprocess.Popen, str]:
     env = os.environ.copy()
     env["FREECAD_MCP_SOCKET"] = sock_path
 
+    # Pass socket path via env var only — some FreeCADCmd builds (e.g. AppImage)
+    # reject unknown CLI flags before the script can parse them.
     proc = subprocess.Popen(
-        [freecadcmd, headless_script, "--socket-path", sock_path],
+        [freecadcmd, headless_script],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -128,7 +130,8 @@ def _spawn_headless(timeout: float = 30.0) -> tuple[subprocess.Popen, str]:
             stderr = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
             raise RuntimeError(
                 f"FreeCADCmd exited prematurely with code {proc.returncode}\n"
-                f"  cmd: {[freecadcmd, headless_script, '--socket-path', sock_path]}\n"
+                f"  cmd: {[freecadcmd, headless_script]}\n"
+                f"  socket: {sock_path}\n"
                 f"  stdout: {stdout[:500]}\n"
                 f"  stderr: {stderr[:500]}"
             )
