@@ -20,6 +20,7 @@ def mock_freecad(monkeypatch):
     fc.ActiveDocument = None
     fc.newDocument = MagicMock()
     fc.getUserAppDataDir = MagicMock(return_value="/tmp/fake_freecad")
+    fc.Document = type("Document", (), {})  # type stub for annotations
 
     # Create mock FreeCADGui
     fcgui = types.ModuleType("FreeCADGui")

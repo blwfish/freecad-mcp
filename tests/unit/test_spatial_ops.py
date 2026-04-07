@@ -29,6 +29,7 @@ class FakeVector:
 # Setup: ensure FreeCAD mock has what we need before importing handler
 # ---------------------------------------------------------------------------
 
+# Ensure FreeCAD mock exists (conftest may have already installed one)
 if 'FreeCAD' not in sys.modules:
     _fc_mod = MagicMock()
     _fc_mod.GuiUp = False
@@ -37,11 +38,19 @@ if 'FreeCAD' not in sys.modules:
     sys.modules['FreeCADGui'] = MagicMock()
     sys.modules['Part'] = MagicMock()
 
+# Always set Vector and Document — conftest's types.ModuleType mock
+# doesn't auto-create attributes like MagicMock does
 sys.modules['FreeCAD'].Vector = FakeVector
+if not hasattr(sys.modules['FreeCAD'], 'Document'):
+    sys.modules['FreeCAD'].Document = type("Document", (), {})
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'AICopilot'))
 
-# Import the module itself so we can patch its FreeCAD reference
+# Force reimport of handler modules so they pick up our FakeVector
+for mod_name in list(sys.modules):
+    if mod_name.startswith('handlers'):
+        del sys.modules[mod_name]
+
 import handlers.spatial_ops as spatial_ops_module
 from handlers.spatial_ops import SpatialOpsHandler
 
@@ -147,13 +156,31 @@ def _make_fc_mock():
 
 @pytest.fixture(autouse=True)
 def _patch_fc():
-    """Patch the handler module's FreeCAD reference so our mocks take effect."""
+    """Patch the handler module's FreeCAD reference so our mocks take effect.
+
+    Other test files (e.g. test_document_ops) delete handlers.* from
+    sys.modules and reimport, creating new module objects.  But
+    SpatialOpsHandler's inherited BaseHandler methods still reference the
+    OLD handlers.base module via their __globals__ dict.  We must patch
+    FreeCAD on THAT module, not the current sys.modules entry.
+    """
     fc = _make_fc_mock()
-    with patch.object(spatial_ops_module, 'FreeCAD', fc):
-        # Also patch the base module's FreeCAD (used by get_document, get_object)
-        import handlers.base as base_module
-        with patch.object(base_module, 'FreeCAD', fc):
-            yield fc
+
+    # Find the actual base module that SpatialOpsHandler's methods use
+    base_globals = SpatialOpsHandler.get_document.__globals__
+    # base_globals is the __dict__ of the handlers.base module object
+    # that was live when SpatialOpsHandler was first imported
+
+    old_fc = base_globals.get('FreeCAD')
+    old_spatial_fc = getattr(spatial_ops_module, 'FreeCAD', None)
+
+    base_globals['FreeCAD'] = fc
+    spatial_ops_module.FreeCAD = fc
+    try:
+        yield fc
+    finally:
+        base_globals['FreeCAD'] = old_fc
+        spatial_ops_module.FreeCAD = old_spatial_fc
 
 
 # ---------------------------------------------------------------------------
