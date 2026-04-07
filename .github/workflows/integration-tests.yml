@@ -1,0 +1,88 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  # Pin to a specific weekly build for reproducibility
+  FREECAD_WEEKLY: "weekly-2026.04.01"
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    # Only run on Python 3.12 — headless FreeCAD bundles its own Python,
+    # but we need a system Python for pytest and the test harness.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install pytest
+
+      - name: Cache FreeCAD AppImage
+        id: cache-freecad
+        uses: actions/cache@v4
+        with:
+          path: ~/freecad-appimage
+          key: freecad-${{ env.FREECAD_WEEKLY }}-x86_64
+
+      - name: Download FreeCAD AppImage
+        if: steps.cache-freecad.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/freecad-appimage
+          cd ~/freecad-appimage
+
+          # Download the weekly AppImage + checksum from FreeCAD GitHub releases
+          gh release download "$FREECAD_WEEKLY" \
+            --repo FreeCAD/FreeCAD \
+            --pattern '*Linux-x86_64.AppImage' \
+            --pattern '*Linux-x86_64.AppImage-SHA256.txt' \
+            --dir .
+
+          APPIMAGE=$(ls *Linux-x86_64.AppImage | head -1)
+
+          # Verify checksum
+          sha256sum -c "${APPIMAGE}-SHA256.txt"
+
+          chmod +x "$APPIMAGE"
+
+          # Extract — AppImage requires FUSE which isn't available in CI
+          "./$APPIMAGE" --appimage-extract
+          rm "$APPIMAGE"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Locate FreeCADCmd
+        id: freecad
+        run: |
+          # Find FreeCADCmd inside the extracted AppImage
+          FREECADCMD=$(find ~/freecad-appimage/squashfs-root -name FreeCADCmd -type f | head -1)
+          if [ -z "$FREECADCMD" ]; then
+            echo "::error::FreeCADCmd not found in extracted AppImage"
+            find ~/freecad-appimage/squashfs-root -maxdepth 3 -type f -name 'FreeCAD*'
+            exit 1
+          fi
+          echo "Found FreeCADCmd at: $FREECADCMD"
+          echo "bin=$FREECADCMD" >> "$GITHUB_OUTPUT"
+
+          # Verify it runs
+          "$FREECADCMD" --version || true
+
+      - name: Deploy AICopilot module for headless server
+        run: |
+          # The headless server needs the AICopilot module on FreeCAD's path.
+          # Point FREECAD_MCP_MODULE_DIR to our repo's AICopilot directory.
+          echo "FREECAD_MCP_MODULE_DIR=${{ github.workspace }}/AICopilot" >> "$GITHUB_ENV"
+          echo "FREECAD_MCP_FREECAD_BIN=${{ steps.freecad.outputs.bin }}" >> "$GITHUB_ENV"
+
+      - name: Run integration tests
+        run: |
+          python -m pytest tests/integration/ -v --timeout=120
+        timeout-minutes: 5
