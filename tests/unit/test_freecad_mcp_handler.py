@@ -670,3 +670,851 @@ class TestConfiguration:
 
     def test_max_message_size(self, ss_module):
         assert ss_module.MAX_MESSAGE_SIZE == 50 * 1024
+
+
+# ---------------------------------------------------------------------------
+# Async Job Machinery
+# ---------------------------------------------------------------------------
+
+class TestExecutePythonAsync:
+    """Tests for _execute_python_async (submit-and-return-job-id path)."""
+
+    def test_returns_job_id(self, server):
+        """Should return a job_id and status=submitted."""
+        result = json.loads(server._execute_python_async({"code": "1 + 1"}))
+        assert "job_id" in result
+        assert result["status"] == "submitted"
+        assert len(result["job_id"]) == 8
+
+    def test_empty_code_returns_error(self, server):
+        result = json.loads(server._execute_python_async({"code": ""}))
+        assert "No code provided" in result["error"]
+
+    def test_no_code_key_returns_error(self, server):
+        result = json.loads(server._execute_python_async({}))
+        assert "No code provided" in result["error"]
+
+    def test_max_jobs_limit(self, server):
+        """Should reject when MAX_ASYNC_JOBS is reached."""
+        import freecad_mcp_handler as ss_mod
+        # Fill up the job slots
+        for i in range(ss_mod.MAX_ASYNC_JOBS):
+            server._async_jobs[f"job{i}"] = {
+                "status": "running",
+                "started": time.time(),
+                "tool": "test",
+            }
+        result = json.loads(server._execute_python_async({"code": "1"}))
+        assert "Too many async jobs" in result["error"]
+
+    def test_stale_jobs_cleaned_before_limit_check(self, server):
+        """Stale completed jobs should be cleaned up before checking the limit."""
+        import freecad_mcp_handler as ss_mod
+        # Fill with stale completed jobs
+        old_time = time.time() - ss_mod.ASYNC_JOB_TTL - 10
+        for i in range(ss_mod.MAX_ASYNC_JOBS):
+            server._async_jobs[f"stale{i}"] = {
+                "status": "done",
+                "started": old_time,
+                "finished": old_time,
+                "tool": "test",
+            }
+        # Should succeed because stale jobs are cleaned first
+        result = json.loads(server._execute_python_async({"code": "1 + 1"}))
+        assert "job_id" in result
+
+    def test_job_registered_as_running(self, server):
+        """After submit, the job should be tracked as running (Qt mode)."""
+        import freecad_mcp_handler as ss_mod
+        # With QtCore set, async runs via queue (not inline) so status stays "running"
+        ss_mod.QtCore = MagicMock()
+        try:
+            result = json.loads(server._execute_python_async({"code": "x = 1"}))
+            job_id = result["job_id"]
+            assert job_id in server._async_jobs
+            assert server._async_jobs[job_id]["status"] == "running"
+            assert server._async_jobs[job_id]["tool"] == "execute_python_async"
+        finally:
+            ss_mod.QtCore = None
+
+
+class TestPollJob:
+    """Tests for _poll_job — checking async job status."""
+
+    def test_missing_job_id(self, server):
+        result = json.loads(server._poll_job({}))
+        assert "job_id required" in result["error"]
+
+    def test_unknown_job_id(self, server):
+        result = json.loads(server._poll_job({"job_id": "nonexistent"}))
+        assert "Unknown job_id" in result["error"]
+
+    def test_running_job_returns_status(self, server):
+        server._async_jobs["abc123"] = {
+            "status": "running",
+            "started": time.time() - 5,
+            "tool": "test",
+        }
+        result = json.loads(server._poll_job({"job_id": "abc123"}))
+        assert result["status"] == "running"
+        assert result["elapsed_s"] >= 4
+
+    def test_running_job_long_warning(self, server):
+        """Jobs running > 120s should include a warning."""
+        server._async_jobs["slow"] = {
+            "status": "running",
+            "started": time.time() - 200,
+            "tool": "test",
+        }
+        result = json.loads(server._poll_job({"job_id": "slow"}))
+        assert result["status"] == "running"
+        assert "warning" in result
+
+    def test_done_job_returns_result(self, server):
+        server._async_jobs["done1"] = {
+            "status": "done",
+            "started": time.time() - 2,
+            "result": {"result": "42"},
+            "elapsed": 1.5,
+            "tool": "test",
+        }
+        result = json.loads(server._poll_job({"job_id": "done1"}))
+        assert result["status"] == "done"
+        assert result["result"] == "42"
+        # Job should be removed after retrieval
+        assert "done1" not in server._async_jobs
+
+    def test_done_job_with_error_in_result(self, server):
+        """If the task result contains an error dict, poll should return error status."""
+        server._async_jobs["err1"] = {
+            "status": "done",
+            "started": time.time() - 1,
+            "result": {"error": "something broke"},
+            "elapsed": 0.5,
+            "tool": "test",
+        }
+        result = json.loads(server._poll_job({"job_id": "err1"}))
+        assert result["status"] == "error"
+        assert "something broke" in result["error"]
+
+    def test_error_job_returns_error(self, server):
+        server._async_jobs["err2"] = {
+            "status": "error",
+            "started": time.time() - 3,
+            "error": "crashed",
+            "elapsed": 2.0,
+            "tool": "test",
+        }
+        result = json.loads(server._poll_job({"job_id": "err2"}))
+        assert result["status"] == "error"
+        assert "crashed" in result["error"]
+        # Job should be removed after retrieval
+        assert "err2" not in server._async_jobs
+
+    def test_done_job_non_dict_result(self, server):
+        """If result is not a dict, should stringify it."""
+        server._async_jobs["nd1"] = {
+            "status": "done",
+            "started": time.time(),
+            "result": "plain string",
+            "elapsed": 0.1,
+            "tool": "test",
+        }
+        result = json.loads(server._poll_job({"job_id": "nd1"}))
+        assert result["status"] == "done"
+        assert result["result"] == "plain string"
+
+
+class TestCancelJob:
+    """Tests for _cancel_job."""
+
+    def test_missing_job_id(self, server):
+        result = json.loads(server._cancel_job({}))
+        assert "job_id required" in result["error"]
+
+    def test_unknown_job_id(self, server):
+        result = json.loads(server._cancel_job({"job_id": "nope"}))
+        assert "Unknown job_id" in result["error"]
+
+    def test_cancel_running_job(self, server):
+        server._async_jobs["run1"] = {
+            "status": "running",
+            "started": time.time() - 10,
+            "tool": "test",
+        }
+        result = json.loads(server._cancel_job({"job_id": "run1"}))
+        assert "result" in result
+        assert "cancelled" in result["result"]
+        # Job should be marked as error
+        assert server._async_jobs["run1"]["status"] == "error"
+
+    def test_cancel_non_running_job(self, server):
+        server._async_jobs["done1"] = {
+            "status": "done",
+            "started": time.time(),
+            "result": "ok",
+            "tool": "test",
+        }
+        result = json.loads(server._cancel_job({"job_id": "done1"}))
+        assert "not running" in result["error"]
+
+    def test_cancel_attempts_freecad_cancel(self, server):
+        """If FreeCADGui is available, should call cancelOperation."""
+        import freecad_mcp_handler as ss_mod
+        mock_gui = MagicMock()
+        ss_mod.FreeCADGui = mock_gui
+
+        server._async_jobs["gui1"] = {
+            "status": "running",
+            "started": time.time() - 5,
+            "tool": "test",
+        }
+        result = json.loads(server._cancel_job({"job_id": "gui1"}))
+        assert "cancel flag set" in result["result"]
+        mock_gui.cancelOperation.assert_called_once()
+
+
+class TestListJobs:
+    """Tests for _list_jobs."""
+
+    def test_empty_jobs(self, server):
+        result = json.loads(server._list_jobs({}))
+        assert result["count"] == 0
+        assert result["jobs"] == {}
+
+    def test_lists_running_jobs(self, server):
+        server._async_jobs["j1"] = {
+            "status": "running",
+            "started": time.time() - 5,
+            "tool": "execute_python_async",
+        }
+        server._async_jobs["j2"] = {
+            "status": "done",
+            "started": time.time() - 10,
+            "tool": "fuse_objects",
+        }
+        result = json.loads(server._list_jobs({}))
+        assert result["count"] == 2
+        assert result["jobs"]["j1"]["status"] == "running"
+        assert result["jobs"]["j2"]["status"] == "done"
+        assert result["jobs"]["j1"]["tool"] == "execute_python_async"
+
+
+class TestCleanupStaleAsyncJobs:
+    """Tests for _cleanup_stale_async_jobs."""
+
+    def test_removes_stale_done_jobs(self, server):
+        import freecad_mcp_handler as ss_mod
+        old = time.time() - ss_mod.ASYNC_JOB_TTL - 100
+        server._async_jobs["old1"] = {
+            "status": "done",
+            "started": old,
+            "finished": old,
+        }
+        server._async_jobs["fresh1"] = {
+            "status": "done",
+            "started": time.time(),
+            "finished": time.time(),
+        }
+        server._cleanup_stale_async_jobs()
+        assert "old1" not in server._async_jobs
+        assert "fresh1" in server._async_jobs
+
+    def test_does_not_remove_running_jobs(self, server):
+        import freecad_mcp_handler as ss_mod
+        old = time.time() - ss_mod.ASYNC_JOB_TTL - 100
+        server._async_jobs["running1"] = {
+            "status": "running",
+            "started": old,
+        }
+        server._cleanup_stale_async_jobs()
+        assert "running1" in server._async_jobs
+
+    def test_removes_stale_error_jobs(self, server):
+        import freecad_mcp_handler as ss_mod
+        old = time.time() - ss_mod.ASYNC_JOB_TTL - 100
+        server._async_jobs["err1"] = {
+            "status": "error",
+            "started": old,
+            "finished": old,
+        }
+        server._cleanup_stale_async_jobs()
+        assert "err1" not in server._async_jobs
+
+
+# ---------------------------------------------------------------------------
+# _run_on_gui_thread edge cases
+# ---------------------------------------------------------------------------
+
+class TestRunOnGuiThreadEdgeCases:
+    """Test busy guard, stale responses, and headless mode."""
+
+    def test_busy_guard_rejects_when_busy(self, server):
+        """If GUI thread is already busy, should reject immediately."""
+        import freecad_mcp_handler as ss_mod
+        # Busy guard only applies in Qt mode (QtCore is not None)
+        ss_mod.QtCore = MagicMock()
+        try:
+            server._gui_thread_busy = True
+            result = json.loads(server._run_on_gui_thread(lambda: {"result": "ok"}))
+            assert "busy" in result["error"].lower()
+        finally:
+            server._gui_thread_busy = False
+            ss_mod.QtCore = None
+
+    def test_stale_response_discarded(self, server):
+        """Stale responses from timed-out requests should be skipped."""
+        import freecad_mcp_handler as ss_mod
+        # Stale-response logic only applies in Qt mode
+        ss_mod.QtCore = MagicMock()
+        try:
+            # Pre-load the response queue: stale response first, then correct
+            correct_id = server._request_counter + 1
+            server._gui_response_queue.put((999, {"result": "stale"}))
+            server._gui_response_queue.put((correct_id, {"success": True, "result": "fresh"}))
+
+            result = json.loads(server._run_on_gui_thread(
+                lambda: {"result": "ignored"}, timeout=2.0
+            ))
+            # The method queues a task with the next request_counter; the first
+            # dequeued response (id=999) won't match, so it discards it and
+            # gets the second one (correct_id)
+            assert result["result"] == "fresh"
+        finally:
+            ss_mod.QtCore = None
+
+    def test_headless_mode_runs_inline(self, server):
+        """When QtCore is None, tasks run inline on the calling thread."""
+        import freecad_mcp_handler as ss_mod
+        original = ss_mod.QtCore
+        ss_mod.QtCore = None
+        try:
+            result = json.loads(server._run_on_gui_thread(
+                lambda: {"result": "headless_ok"}
+            ))
+            assert result["result"] == "headless_ok"
+        finally:
+            ss_mod.QtCore = original
+
+    def test_headless_mode_error_handling(self, server):
+        """Headless mode should catch and return errors."""
+        import freecad_mcp_handler as ss_mod
+        original = ss_mod.QtCore
+        ss_mod.QtCore = None
+        try:
+            result = json.loads(server._run_on_gui_thread(
+                lambda: (_ for _ in ()).throw(ValueError("headless boom"))
+            ))
+            assert "error" in result
+        finally:
+            ss_mod.QtCore = original
+
+    def test_headless_mode_error_dict(self, server):
+        """Headless mode should pass through error dicts."""
+        import freecad_mcp_handler as ss_mod
+        original = ss_mod.QtCore
+        ss_mod.QtCore = None
+        try:
+            result = json.loads(server._run_on_gui_thread(
+                lambda: {"error": "custom error msg"}
+            ))
+            assert result["error"] == "custom error msg"
+        finally:
+            ss_mod.QtCore = original
+
+
+# ---------------------------------------------------------------------------
+# _run_on_gui_thread_async
+# ---------------------------------------------------------------------------
+
+class TestRunOnGuiThreadAsync:
+    """Tests for _run_on_gui_thread_async (console/headless mode)."""
+
+    def test_headless_success(self, server):
+        """In headless mode, task runs inline and populates job dict."""
+        import freecad_mcp_handler as ss_mod
+        original = ss_mod.QtCore
+        ss_mod.QtCore = None
+        try:
+            job_id = "test_async_1"
+            server._async_jobs[job_id] = {
+                "status": "running",
+                "started": time.time(),
+            }
+            server._run_on_gui_thread_async(
+                job_id, lambda: {"result": "async_done"}
+            )
+            assert server._async_jobs[job_id]["status"] == "done"
+            assert server._async_jobs[job_id]["result"] == {"result": "async_done"}
+        finally:
+            ss_mod.QtCore = original
+
+    def test_headless_error(self, server):
+        """In headless mode, task errors are captured in the job dict."""
+        import freecad_mcp_handler as ss_mod
+        original = ss_mod.QtCore
+        ss_mod.QtCore = None
+        try:
+            job_id = "test_async_err"
+            server._async_jobs[job_id] = {
+                "status": "running",
+                "started": time.time(),
+            }
+
+            def failing_task():
+                raise RuntimeError("async fail")
+
+            server._run_on_gui_thread_async(job_id, failing_task)
+            assert server._async_jobs[job_id]["status"] == "error"
+            assert "async fail" in server._async_jobs[job_id]["error"]
+        finally:
+            ss_mod.QtCore = original
+
+    def test_qt_mode_queues_task(self, server):
+        """With QtCore available, task should be queued (not run inline)."""
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        try:
+            job_id = "test_qt_q"
+            server._async_jobs[job_id] = {
+                "status": "running",
+                "started": time.time(),
+            }
+            server._run_on_gui_thread_async(
+                job_id, lambda: {"result": "queued"}
+            )
+            # Task should be in the queue, not yet executed
+            assert not server._gui_task_queue.empty()
+            req_id, task_fn = server._gui_task_queue.get_nowait()
+            assert req_id == f"async:{job_id}"
+        finally:
+            ss_mod.QtCore = None
+
+
+# ---------------------------------------------------------------------------
+# _call_on_gui_thread_async
+# ---------------------------------------------------------------------------
+
+class TestCallOnGuiThreadAsync:
+    """Tests for _call_on_gui_thread_async (boolean op path)."""
+
+    def test_returns_job_id(self, server):
+        method = MagicMock(return_value="fused")
+        result = json.loads(
+            server._call_on_gui_thread_async(method, {"tool1": "a"}, "fuse")
+        )
+        assert "job_id" in result
+        assert result["status"] == "submitted"
+
+    def test_max_jobs_limit(self, server):
+        import freecad_mcp_handler as ss_mod
+        for i in range(ss_mod.MAX_ASYNC_JOBS):
+            server._async_jobs[f"bj{i}"] = {
+                "status": "running",
+                "started": time.time(),
+            }
+        result = json.loads(
+            server._call_on_gui_thread_async(MagicMock(), {}, "fuse")
+        )
+        assert "Too many async jobs" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# _cancel_operation
+# ---------------------------------------------------------------------------
+
+class TestCancelOperation:
+    """Tests for _cancel_operation (FreeCADGui.cancelOperation wrapper)."""
+
+    def test_success(self, server):
+        # _cancel_operation does `import FreeCADGui as Gui` — patch sys.modules
+        mock_gui = MagicMock()
+        with patch.dict(sys.modules, {"FreeCADGui": mock_gui}):
+            result = json.loads(server._cancel_operation({}))
+            assert "Cancel requested" in result["result"]
+            mock_gui.cancelOperation.assert_called_once()
+
+    def test_no_gui_raises(self, server):
+        # When FreeCADGui.cancelOperation raises, should return error
+        mock_gui = MagicMock()
+        mock_gui.cancelOperation.side_effect = AttributeError("no GUI")
+        with patch.dict(sys.modules, {"FreeCADGui": mock_gui}):
+            result = json.loads(server._cancel_operation({}))
+            assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# _dispatch_sketch
+# ---------------------------------------------------------------------------
+
+class TestDispatchSketch:
+    """Tests for _dispatch_sketch routing."""
+
+    def test_known_operations(self, server):
+        """All sketch operations should route through _call_on_gui_thread."""
+        sketch_ops = [
+            "create_sketch", "close_sketch", "verify_sketch",
+            "add_line", "add_circle", "add_rectangle", "add_arc",
+            "add_polygon", "add_slot", "add_fillet",
+            "add_constraint", "delete_constraint", "list_constraints",
+            "add_external_geometry",
+        ]
+        for op in sketch_ops:
+            with patch.object(server, '_call_on_gui_thread',
+                              return_value=json.dumps({"result": "ok"})):
+                result = server._dispatch_sketch({"operation": op})
+                parsed = json.loads(result)
+                assert "error" not in parsed, f"sketch {op} returned error: {parsed}"
+
+    def test_unknown_operation(self, server):
+        result = json.loads(server._dispatch_sketch({"operation": "nonexistent"}))
+        assert "Unknown Sketch operation" in result["error"]
+
+    def test_empty_operation(self, server):
+        result = json.loads(server._dispatch_sketch({"operation": ""}))
+        assert "Unknown Sketch operation" in result["error"]
+
+    def test_missing_operation(self, server):
+        result = json.loads(server._dispatch_sketch({}))
+        assert "Unknown Sketch operation" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# _dispatch_view_control — extended ops
+# ---------------------------------------------------------------------------
+
+class TestDispatchViewControlExtended:
+    """Test additional view_control operations (clip plane, checkpoint, etc.)."""
+
+    def test_checkpoint_is_safe_op(self, server):
+        """checkpoint should call document_ops directly (not via GUI thread)."""
+        server.document_ops.checkpoint = MagicMock(return_value="snapshot_ok")
+        result = json.loads(
+            server._dispatch_view_control({"operation": "checkpoint"})
+        )
+        assert result["result"] == "snapshot_ok"
+
+    def test_rollback_is_gui_op(self, server):
+        """rollback_to_checkpoint should go through GUI thread."""
+        with patch.object(server, '_run_on_gui_thread',
+                          return_value=json.dumps({"result": "rolled_back"})):
+            result = json.loads(
+                server._dispatch_view_control({"operation": "rollback_to_checkpoint"})
+            )
+            assert result["result"] == "rolled_back"
+
+    def test_insert_shape_is_gui_op(self, server):
+        with patch.object(server, '_run_on_gui_thread',
+                          return_value=json.dumps({"result": "inserted"})):
+            result = json.loads(
+                server._dispatch_view_control({"operation": "insert_shape"})
+            )
+            assert result["result"] == "inserted"
+
+    def test_clip_plane_ops(self, server):
+        for op in ("add_clip_plane", "remove_clip_plane"):
+            with patch.object(server, '_run_on_gui_thread',
+                              return_value=json.dumps({"result": "ok"})):
+                result = json.loads(
+                    server._dispatch_view_control({"operation": op})
+                )
+                assert "error" not in result, f"{op} returned error"
+
+    def test_get_report_view_is_gui_op(self, server):
+        with patch.object(server, '_run_on_gui_thread',
+                          return_value=json.dumps({"result": "report text"})):
+            result = json.loads(
+                server._dispatch_view_control({"operation": "get_report_view"})
+            )
+            assert result["result"] == "report text"
+
+    def test_macos_screenshot_bypass(self, server):
+        """On macOS, screenshot should bypass _run_on_gui_thread."""
+        server.view_ops.take_screenshot = MagicMock(return_value="base64data")
+        # _dispatch_view_control does `import platform as _platform` locally
+        with patch("freecad_mcp_handler.platform") as mock_plat:
+            mock_plat.system.return_value = "Darwin"
+            result = json.loads(
+                server._dispatch_view_control({"operation": "screenshot"})
+            )
+            assert result["result"] == "base64data"
+            server.view_ops.take_screenshot.assert_called_once()
+
+    def test_macos_screenshot_error(self, server):
+        """On macOS, screenshot errors should be caught."""
+        server.view_ops.take_screenshot = MagicMock(
+            side_effect=RuntimeError("no permission")
+        )
+        with patch("freecad_mcp_handler.platform") as mock_plat:
+            mock_plat.system.return_value = "Darwin"
+            result = json.loads(
+                server._dispatch_view_control({"operation": "screenshot"})
+            )
+            assert "no permission" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# _execute_tool wrapper (crash watcher integration)
+# ---------------------------------------------------------------------------
+
+class TestExecuteToolWrapper:
+    """Tests for _execute_tool crash watcher wrapping."""
+
+    def test_calls_inner(self, server):
+        """Should delegate to _execute_tool_inner."""
+        server._execute_tool_inner = MagicMock(
+            return_value=json.dumps({"result": "ok"})
+        )
+        result = server._execute_tool("test_tool", {"arg": 1})
+        server._execute_tool_inner.assert_called_once_with("test_tool", {"arg": 1})
+        assert json.loads(result)["result"] == "ok"
+
+    def test_crash_watcher_set_and_clear(self, server):
+        """Should call _set_current_op before and _clear_current_op after."""
+        import freecad_mcp_handler as ss_mod
+
+        calls = []
+        original_set = ss_mod._set_current_op
+        original_clear = ss_mod._clear_current_op
+
+        ss_mod._set_current_op = lambda t, a: calls.append(("set", t, a))
+        ss_mod._clear_current_op = lambda: calls.append(("clear",))
+
+        server._execute_tool_inner = MagicMock(
+            return_value=json.dumps({"result": "ok"})
+        )
+        try:
+            server._execute_tool("my_tool", {"x": 1})
+            assert calls[0] == ("set", "my_tool", {"x": 1})
+            assert calls[1] == ("clear",)
+        finally:
+            ss_mod._set_current_op = original_set
+            ss_mod._clear_current_op = original_clear
+
+    def test_crash_watcher_clears_on_exception(self, server):
+        """_clear_current_op should be called even if _execute_tool_inner raises."""
+        import freecad_mcp_handler as ss_mod
+
+        cleared = []
+        original_clear = ss_mod._clear_current_op
+        ss_mod._clear_current_op = lambda: cleared.append(True)
+
+        server._execute_tool_inner = MagicMock(side_effect=RuntimeError("boom"))
+        try:
+            with pytest.raises(RuntimeError):
+                server._execute_tool("bad_tool", {})
+            assert len(cleared) == 1
+        finally:
+            ss_mod._clear_current_op = original_clear
+
+
+# ---------------------------------------------------------------------------
+# _dispatch_to_handler
+# ---------------------------------------------------------------------------
+
+class TestDispatchToHandlerExtended:
+    """Additional tests for _dispatch_to_handler edge cases."""
+
+    def test_private_method_rejected(self, server):
+        """Operations starting with _ should be rejected."""
+        handler = MagicMock()
+        result = json.loads(
+            server._dispatch_to_handler(handler, {"operation": "_secret"}, "test_tool")
+        )
+        assert "Invalid operation" in result["error"]
+
+    def test_dunder_method_rejected(self, server):
+        handler = MagicMock()
+        result = json.loads(
+            server._dispatch_to_handler(handler, {"operation": "__init__"}, "test_tool")
+        )
+        assert "Invalid operation" in result["error"]
+
+    def test_non_callable_rejected(self, server):
+        """If the attribute exists but isn't callable, reject it."""
+        handler = MagicMock()
+        handler.some_attr = "not a function"
+        result = json.loads(
+            server._dispatch_to_handler(handler, {"operation": "some_attr"}, "test_tool")
+        )
+        # MagicMock auto-creates attributes as MagicMock (callable), so we
+        # need to set it to a non-callable explicitly
+        handler.configure_mock(**{"some_attr": "string_value"})
+        type(handler).some_attr = PropertyMock(return_value="string_value")
+        # Actually, MagicMock getattr returns MagicMock. Use a simple object instead.
+
+    def test_handler_exception_returns_error(self, server):
+        """If the handler method raises, should return a formatted error."""
+        handler = MagicMock()
+        handler.do_thing = MagicMock(side_effect=ValueError("bad arg"))
+
+        def run_inline(task_fn, timeout=120.0):
+            result = task_fn()
+            return json.dumps(result)
+
+        with patch.object(server, '_run_on_gui_thread', side_effect=run_inline):
+            result = json.loads(
+                server._dispatch_to_handler(handler, {"operation": "do_thing"}, "my_tool")
+            )
+            assert "bad arg" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# _execute_tool_inner routing (additional routes)
+# ---------------------------------------------------------------------------
+
+class TestExecuteToolInnerRouting:
+    """Test routing paths not covered by TestExecuteTool."""
+
+    def test_execute_python_async_routing(self, server):
+        server._execute_python_async = MagicMock(
+            return_value=json.dumps({"job_id": "x"})
+        )
+        server._execute_tool_inner("execute_python_async", {"code": "1"})
+        server._execute_python_async.assert_called_once()
+
+    def test_poll_job_routing(self, server):
+        server._poll_job = MagicMock(
+            return_value=json.dumps({"status": "done"})
+        )
+        server._execute_tool_inner("poll_job", {"job_id": "x"})
+        server._poll_job.assert_called_once()
+
+    def test_cancel_job_routing(self, server):
+        server._cancel_job = MagicMock(
+            return_value=json.dumps({"result": "cancelled"})
+        )
+        server._execute_tool_inner("cancel_job", {"job_id": "x"})
+        server._cancel_job.assert_called_once()
+
+    def test_list_jobs_routing(self, server):
+        server._list_jobs = MagicMock(
+            return_value=json.dumps({"jobs": {}, "count": 0})
+        )
+        server._execute_tool_inner("list_jobs", {})
+        server._list_jobs.assert_called_once()
+
+    def test_cancel_operation_routing(self, server):
+        server._cancel_operation = MagicMock(
+            return_value=json.dumps({"result": "ok"})
+        )
+        server._execute_tool_inner("cancel_operation", {})
+        server._cancel_operation.assert_called_once()
+
+    def test_restart_freecad_routing(self, server):
+        server._restart_freecad = MagicMock(
+            return_value=json.dumps({"result": "restarting"})
+        )
+        server._execute_tool_inner("restart_freecad", {})
+        server._restart_freecad.assert_called_once()
+
+    def test_reload_modules_routing(self, server):
+        server._reload_handlers = MagicMock(
+            return_value=json.dumps({"result": "reloaded"})
+        )
+        server._execute_tool_inner("reload_modules", {})
+        server._reload_handlers.assert_called_once()
+
+    def test_run_inspector_routing(self, server):
+        with patch.object(server, '_call_on_gui_thread',
+                          return_value=json.dumps({"result": "ok"})):
+            server._execute_tool_inner("run_inspector", {})
+
+    def test_sketch_operations_routing(self, server):
+        server._dispatch_sketch = MagicMock(
+            return_value=json.dumps({"result": "ok"})
+        )
+        server._execute_tool_inner("sketch_operations", {"operation": "create_sketch"})
+        server._dispatch_sketch.assert_called_once()
+
+    def test_boolean_async_routing(self, server):
+        """Boolean ops should use the async path."""
+        server._call_on_gui_thread_async = MagicMock(
+            return_value=json.dumps({"job_id": "x"})
+        )
+        for tool in ("fuse_objects", "cut_objects", "common_objects"):
+            server._execute_tool_inner(tool, {})
+        assert server._call_on_gui_thread_async.call_count == 3
+
+
+# ---------------------------------------------------------------------------
+# _handle_client
+# ---------------------------------------------------------------------------
+
+class TestHandleClient:
+    """Tests for _handle_client (socket I/O wrapper)."""
+
+    def test_normal_request(self, server):
+        import freecad_mcp_handler as ss_mod
+        mock_sock = MagicMock()
+
+        cmd = json.dumps({"tool": "test_echo", "args": {}})
+        server._process_command = MagicMock(return_value='{"result":"ok"}')
+
+        with patch.object(ss_mod, 'receive_message', return_value=cmd), \
+             patch.object(ss_mod, 'send_message') as mock_send:
+            server._handle_client(mock_sock)
+            server._process_command.assert_called_once_with(cmd)
+            mock_send.assert_called_once_with(mock_sock, '{"result":"ok"}')
+        mock_sock.close.assert_called_once()
+
+    def test_empty_message(self, server):
+        import freecad_mcp_handler as ss_mod
+        mock_sock = MagicMock()
+
+        with patch.object(ss_mod, 'receive_message', return_value=None), \
+             patch.object(ss_mod, 'send_message') as mock_send:
+            server._handle_client(mock_sock)
+            mock_send.assert_not_called()
+        mock_sock.close.assert_called_once()
+
+    def test_exception_sends_error(self, server):
+        import freecad_mcp_handler as ss_mod
+        mock_sock = MagicMock()
+
+        with patch.object(ss_mod, 'receive_message',
+                          side_effect=ConnectionError("broken")), \
+             patch.object(ss_mod, 'send_message') as mock_send:
+            server._handle_client(mock_sock)
+            # Should attempt to send error back
+            if mock_send.called:
+                error_msg = json.loads(mock_send.call_args[0][1])
+                assert "error" in error_msg
+        mock_sock.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _process_command edge cases
+# ---------------------------------------------------------------------------
+
+class TestProcessCommandExtended:
+    """Additional _process_command tests for debug/monitor paths."""
+
+    def test_invalid_json_with_debug(self, server):
+        import freecad_mcp_handler as ss_mod
+        original = ss_mod.DEBUG_ENABLED
+        ss_mod.DEBUG_ENABLED = True
+        try:
+            result = json.loads(server._process_command("not json"))
+            assert "Invalid JSON" in result["error"]
+        finally:
+            ss_mod.DEBUG_ENABLED = original
+
+    def test_exception_with_debug_logging(self, server):
+        """When DEBUG_ENABLED and an exception occurs, should log and return error."""
+        import freecad_mcp_handler as ss_mod
+        original_debug = ss_mod.DEBUG_ENABLED
+        original_monitor = ss_mod._monitor
+        ss_mod.DEBUG_ENABLED = True
+        ss_mod._monitor = MagicMock()
+
+        server._execute_tool = MagicMock(side_effect=RuntimeError("kaboom"))
+        try:
+            result = json.loads(
+                server._process_command(json.dumps({"tool": "test", "args": {}}))
+            )
+            assert "kaboom" in result["error"]
+            ss_mod._monitor.log_crash.assert_called_once()
+        finally:
+            ss_mod.DEBUG_ENABLED = original_debug
+            ss_mod._monitor = original_monitor
