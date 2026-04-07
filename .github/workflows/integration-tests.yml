@@ -88,5 +88,9 @@ jobs:
 
       - name: Run integration tests
         run: |
-          python -m pytest tests/integration/ -v --timeout=120
+          echo "FREECAD_MCP_FREECAD_BIN=$FREECAD_MCP_FREECAD_BIN"
+          echo "FREECAD_MCP_MODULE_DIR=$FREECAD_MCP_MODULE_DIR"
+          ls -la "$FREECAD_MCP_FREECAD_BIN" || true
+          ls -la "$FREECAD_MCP_MODULE_DIR/headless_server.py" || true
+          python -m pytest tests/integration/ -v -rs --timeout=120
         timeout-minutes: 5
