@@ -19,7 +19,10 @@ sys.path.insert(0, AICOPILOT_DIR)
 @pytest.fixture
 def doc_handler():
     """Create a DocumentOpsHandler with mocked dependencies."""
-    for mod in ("handlers.base", "handlers.document_ops", "handlers"):
+    # Reimport only the specific submodules so they pick up conftest's
+    # FreeCAD mock.  Do NOT delete "handlers" (the package) — that breaks
+    # other test files that reference handlers.view_ops etc.
+    for mod in ("handlers.base", "handlers.document_ops"):
         if mod in sys.modules:
             del sys.modules[mod]
 
