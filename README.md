@@ -25,6 +25,9 @@ Your agent will handle the rest — installing prerequisites, cloning the repo, 
 - **Generate CNC toolpaths** — "Create a pocket operation for this part using a 6mm end mill"
 - **Export for manufacturing** — "Export this as STEP and generate the G-code for my CNC router"
 - **Work with meshes** — "Import this STL, convert it to a solid, and add mounting features"
+- **Diagnose problems** — "I just tried to pad this sketch and got a weird result, what went wrong?" The agent can inspect the model state, check sketch constraints, and explain what FreeCAD is telling you.
+- **Build automation** — "Write me a script that generates a parametric enclosure from a spreadsheet of dimensions" or "Create a macro that imports DXF profiles and extrudes them to different heights"
+- **Check your work** — "Does this model have any geometry errors?", "Will this part have thin walls that might fail in printing?", or "Are any of these parts interfering with each other?"
 
 ## Background
 
@@ -33,12 +36,17 @@ I built this for myself. I use Claude Code on a Mac. Other platforms *should* wo
 ### For Developers
 
 ```bash
-# 174 tests, no FreeCAD required
-python3 -m pytest
+# Unit tests (593 tests, no FreeCAD required)
+python3 -m pytest tests/unit/
 
-# Sync AICopilot workbench to FreeCAD's Mod directory
-./deploy.sh
+# Integration tests (91 tests, requires running FreeCAD with AICopilot loaded)
+python3 -m pytest tests/integration/
+
+# All tests with coverage
+python3 -m pytest --cov=AICopilot
 ```
+
+The test suite covers the handler dispatch layer, base infrastructure, and document operations via unit tests, plus end-to-end coverage of Part, PartDesign, Sketch, Draft, Boolean, Transform, Measurement, and CAM workflows via integration tests against a live FreeCAD instance. CI runs both suites on every push.
 
 See [AGENT-INSTALL.md](AGENT-INSTALL.md) for full technical details, architecture, contributing guidelines, and how to add new tools.
 
