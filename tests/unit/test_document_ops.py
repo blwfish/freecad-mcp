@@ -83,7 +83,7 @@ class TestCreateDocument:
 
     def test_create_fallback_no_server(self, mock_freecad):
         """Without server, should create document directly."""
-        for mod in ("handlers.base", "handlers.document_ops", "handlers"):
+        for mod in ("handlers.base", "handlers.document_ops"):
             if mod in sys.modules:
                 del sys.modules[mod]
         from handlers.document_ops import DocumentOpsHandler
@@ -115,7 +115,7 @@ class TestCreateDocument:
 
     def test_create_exception(self, mock_freecad):
         """Exception during creation should return error."""
-        for mod in ("handlers.base", "handlers.document_ops", "handlers"):
+        for mod in ("handlers.base", "handlers.document_ops"):
             if mod in sys.modules:
                 del sys.modules[mod]
         from handlers.document_ops import DocumentOpsHandler

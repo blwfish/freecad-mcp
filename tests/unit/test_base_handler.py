@@ -22,8 +22,7 @@ def base_handler():
     # Need handlers.base to import properly
     if "handlers.base" in sys.modules:
         del sys.modules["handlers.base"]
-    if "handlers" in sys.modules:
-        del sys.modules["handlers"]
+    # Do NOT delete "handlers" (the package) — only delete submodules
 
     from handlers.base import BaseHandler
     server = MagicMock()
@@ -38,8 +37,7 @@ def base_handler_class():
     """Return the BaseHandler class for instantiation tests."""
     if "handlers.base" in sys.modules:
         del sys.modules["handlers.base"]
-    if "handlers" in sys.modules:
-        del sys.modules["handlers"]
+    # Do NOT delete "handlers" (the package) — only delete submodules
     from handlers.base import BaseHandler
     return BaseHandler
 

@@ -46,9 +46,11 @@ if not hasattr(sys.modules['FreeCAD'], 'Document'):
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'AICopilot'))
 
-# Force reimport of handler modules so they pick up our FakeVector
+# Force reimport of handler submodules so they pick up our FakeVector.
+# Do NOT delete "handlers" (the package itself) — that breaks other test
+# files that reference handlers.view_ops etc. at module level.
 for mod_name in list(sys.modules):
-    if mod_name.startswith('handlers'):
+    if mod_name.startswith('handlers.'):
         del sys.modules[mod_name]
 
 import handlers.spatial_ops as spatial_ops_module
