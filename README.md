@@ -31,7 +31,9 @@ Your agent will handle the rest — installing prerequisites, cloning the repo, 
 
 ## Background
 
-I built this for myself. I use Claude Code on a Mac. Other platforms *should* work — the code handles macOS, Windows, and Linux — but are less tested. PRs for other agents and platforms will be considered.
+I built this for myself and use it daily for real work — designing parts, generating toolpaths, and cutting them on my CNC router. This is not a demo or a proof of concept. It's a production tool that I rely on.
+
+I use Claude Code on a Mac. Other platforms *should* work — the code handles macOS, Windows, and Linux — but are less tested. PRs for other agents and platforms will be considered.
 
 ### For Developers
 
