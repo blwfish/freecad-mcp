@@ -50,6 +50,19 @@ python3 -m pytest --cov=AICopilot
 
 The test suite covers the handler dispatch layer, base infrastructure, and document operations via unit tests, plus end-to-end coverage of Part, PartDesign, Sketch, Draft, Boolean, Transform, Measurement, and CAM workflows via integration tests against a live FreeCAD instance. CI runs both suites on every push.
 
+#### Built-in Diagnostics
+
+The project includes debugging infrastructure that you will want to know about if you're developing or troubleshooting:
+
+- **`get_debug_logs`** — structured operation logs with before/after state snapshots, written to `/tmp/freecad_mcp_debug/`. Every tool call records what changed.
+- **`get_report_view`** — reads FreeCAD's Report View panel (the console output most users never look at). Supports filtering and tail. This is often where FreeCAD tells you what actually went wrong.
+- **`manage_connection`** — bridge-side diagnostics that work even when FreeCAD is down: connection health, recovery file validation, and clearing corrupt `.FCStd` recovery files that cause crash loops.
+- **Crash watcher** — writes the current operation to `/tmp/freecad_mcp_last_op.json` before each dispatch. If FreeCAD crashes mid-operation, this file survives and the bridge reports what was running when it died.
+- **Health monitor** — tracks operation timing, error rates, and crash history. Detects patterns like "this operation crashes every time" before you waste an afternoon on it.
+- **`run_inspector`** — runs design-rule checks against the live document (via the FC-tools sibling repo).
+
+These tools exist because FreeCAD's error reporting is often cryptic and OCCT kernel crashes leave no trace. When something goes wrong, the agent can pull debug logs, read the report view, and check crash history — usually enough to diagnose the problem without manual investigation.
+
 See [AGENT-INSTALL.md](AGENT-INSTALL.md) for full technical details, architecture, contributing guidelines, and how to add new tools.
 
 ## Security
