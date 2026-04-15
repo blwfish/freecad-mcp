@@ -124,6 +124,9 @@ view_control(operation="screenshot")
 | Snapshot object list | `view_control(operation="checkpoint", name="before_feature")` |
 | Roll back to snapshot | `view_control(operation="rollback_to_checkpoint", name="before_feature")` |
 | Copy shape from another open doc | `view_control(operation="insert_shape", source_doc="MyPart", source_object="Body")` |
+| Create extrudable 3D text (engraving, raised lettering) | `draft_operations(operation="shape_string", string="Hello", size=10, font_file="/path/to/font.ttf")` |
+| Add a text annotation in the 3D view | `draft_operations(operation="text", text="Label", x=0, y=0, z=0)` |
+| Clone / array objects | `draft_operations(operation="clone\|array\|polar_array\|path_array\|point_array")` |
 | Generate CNC toolpaths | `cam_operations` + `cam_tools` + `cam_tool_controllers` |
 | Store parametric values | `spreadsheet_operations` |
 | Check if parts collide | `spatial_query(operation="interference_check")` |

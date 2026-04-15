@@ -1,5 +1,6 @@
 # Draft workbench operation handlers for FreeCAD MCP
 
+import os
 import FreeCAD
 from typing import Dict, Any
 from .base import BaseHandler
@@ -159,6 +160,123 @@ class DraftOpsHandler(BaseHandler):
             return "Error: Draft module not available"
         except Exception as e:
             return f"Error creating path array: {e}"
+
+    def _find_font(self, font_file: str = '') -> str:
+        """Find a usable .ttf font, trying the given path then common system locations."""
+        if font_file and os.path.exists(font_file):
+            return font_file
+
+        # FreeCAD bundles fonts in its resource directory
+        try:
+            fc_fonts = os.path.join(FreeCAD.getResourceDir(), 'fonts')
+            for name in ('LiberationSans-Regular.ttf', 'DejaVuSans.ttf'):
+                path = os.path.join(fc_fonts, name)
+                if os.path.exists(path):
+                    return path
+        except Exception:
+            pass
+
+        candidates = [
+            # macOS
+            '/System/Library/Fonts/Supplemental/Arial.ttf',
+            '/Library/Fonts/Arial.ttf',
+            # Linux
+            '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
+            '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+            '/usr/share/fonts/TTF/DejaVuSans.ttf',
+            # Windows
+            'C:/Windows/Fonts/arial.ttf',
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                return path
+        return ''
+
+    def shape_string(self, args: Dict[str, Any]) -> str:
+        """Create a Draft ShapeString — text as extrudable wire profiles.
+
+        The result is a compound of closed wires (one per character) that can be:
+        - Padded via partdesign_operations pad
+        - Extruded via part_operations extrude
+        - Used as a Pocket profile for engraving
+        """
+        try:
+            string = args.get('string', 'Text')
+            font_file = args.get('font_file', '')
+            size = float(args.get('size', 10.0))
+            tracking = float(args.get('tracking', 0))
+            x = float(args.get('x', 0))
+            y = float(args.get('y', 0))
+            z = float(args.get('z', 0))
+            name = args.get('name', '')
+
+            doc = self.get_document()
+            if not doc:
+                return "No active document"
+
+            import Draft
+
+            font = self._find_font(font_file)
+            if not font:
+                return (
+                    "Error: no font file found. "
+                    "Specify font_file with a path to a .ttf font, e.g. "
+                    "/System/Library/Fonts/Supplemental/Arial.ttf"
+                )
+
+            ss = Draft.make_shape_string(String=string, FontFile=font, Size=size, Tracking=tracking)
+            ss.Placement.Base = FreeCAD.Vector(x, y, z)
+            if name:
+                ss.Label = name
+
+            self.recompute(doc)
+
+            return (
+                f"Created ShapeString '{string}' ({ss.Name}) at ({x},{y},{z}), "
+                f"size={size}mm, font={os.path.basename(font)}. "
+                f"To extrude: part_operations extrude with profile_sketch={ss.Name}. "
+                f"To engrave: use as Pocket profile in PartDesign."
+            )
+
+        except ImportError:
+            return "Error: Draft module not available"
+        except Exception as e:
+            return f"Error creating ShapeString: {e}"
+
+    def text(self, args: Dict[str, Any]) -> str:
+        """Create a Draft Text annotation in the 3D view.
+
+        Creates a non-extrudable text label. For extrudable 3D text use shape_string instead.
+        The text parameter accepts a string or list of strings for multi-line text.
+        """
+        try:
+            text_content = args.get('text', 'Text')
+            x = float(args.get('x', 0))
+            y = float(args.get('y', 0))
+            z = float(args.get('z', 0))
+            name = args.get('name', '')
+
+            doc = self.get_document()
+            if not doc:
+                return "No active document"
+
+            import Draft
+
+            lines = [text_content] if isinstance(text_content, str) else list(text_content)
+            placement = FreeCAD.Placement(FreeCAD.Vector(x, y, z), FreeCAD.Rotation())
+            t = Draft.make_text(lines, placement=placement)
+            if name:
+                t.Label = name
+
+            self.recompute(doc)
+
+            preview = text_content if isinstance(text_content, str) else ' / '.join(text_content)
+            return f"Created Draft Text '{preview}' ({t.Name}) at ({x},{y},{z})"
+
+        except ImportError:
+            return "Error: Draft module not available"
+        except Exception as e:
+            return f"Error creating Draft Text: {e}"
 
     def point_array(self, args: Dict[str, Any]) -> str:
         """Create a Draft point array (objects placed at point locations)."""
