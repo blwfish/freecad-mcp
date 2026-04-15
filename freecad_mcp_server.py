@@ -831,7 +831,7 @@ async def main():
                 ),
                 types.Tool(
                     name="draft_operations",
-                    description="Draft workbench operations for 2D annotations and arrays",
+                    description="Draft workbench operations: arrays, clones, text annotations, and ShapeString (extrudable 3D text)",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -839,13 +839,23 @@ async def main():
                                 "type": "string",
                                 "description": "Draft operation to perform",
                                 "enum": [
-                                    "clone", "array", "polar_array", "path_array", "point_array"
+                                    "clone", "array", "polar_array", "path_array", "point_array",
+                                    "shape_string", "text"
                                 ]
                             },
                             "object_name": {"type": "string", "description": "Object to operate on"},
                             "count": {"type": "integer", "description": "Array count"},
                             "spacing": {"type": "number", "description": "Array spacing"},
-                            "angle": {"type": "number", "description": "Polar array angle"}
+                            "angle": {"type": "number", "description": "Polar array angle"},
+                            "string": {"type": "string", "description": "Text string for shape_string"},
+                            "text": {"description": "Text content for text annotation (string or list of strings)", "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
+                            "font_file": {"type": "string", "description": "Path to .ttf font file (optional, auto-discovered if omitted)"},
+                            "size": {"type": "number", "description": "Text size in mm", "default": 10},
+                            "tracking": {"type": "number", "description": "Character spacing in mm", "default": 0},
+                            "x": {"type": "number", "description": "X position", "default": 0},
+                            "y": {"type": "number", "description": "Y position", "default": 0},
+                            "z": {"type": "number", "description": "Z position", "default": 0},
+                            "name": {"type": "string", "description": "Label for created object"}
                         },
                         "required": ["operation"]
                     }

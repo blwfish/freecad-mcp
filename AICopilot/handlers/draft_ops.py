@@ -224,7 +224,11 @@ class DraftOpsHandler(BaseHandler):
                     "/System/Library/Fonts/Supplemental/Arial.ttf"
                 )
 
-            ss = Draft.make_shape_string(String=string, FontFile=font, Size=size, Tracking=tracking)
+            # API name varies by FreeCAD version
+            make_ss = getattr(Draft, 'make_shapestring', None) or getattr(Draft, 'make_shape_string', None) or getattr(Draft, 'makeShapeString', None)
+            if not make_ss:
+                return "Error: Draft ShapeString API not found in this FreeCAD version"
+            ss = make_ss(String=string, FontFile=font, Size=size, Tracking=tracking)
             ss.Placement.Base = FreeCAD.Vector(x, y, z)
             if name:
                 ss.Label = name
