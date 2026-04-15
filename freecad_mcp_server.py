@@ -581,7 +581,9 @@ async def main():
                                     # Transform operations (4)
                                     "move", "rotate", "scale", "mirror",
                                     # Advanced creation (4)
-                                    "loft", "sweep", "extrude", "revolve"
+                                    "loft", "sweep", "extrude", "revolve",
+                                    # Text / geometry utilities
+                                    "shape_string", "compound", "check_geometry"
                                 ]
                             },
                             # Primitive parameters
@@ -608,6 +610,11 @@ async def main():
                             "sketches": {"type": "array", "items": {"type": "string"}, "description": "Sketches for loft"},
                             "profile_sketch": {"type": "string", "description": "Profile sketch for sweep"},
                             "path_sketch": {"type": "string", "description": "Path sketch for sweep"},
+                            # ShapeString parameters
+                            "string": {"type": "string", "description": "Text string for shape_string"},
+                            "font_file": {"type": "string", "description": "Path to .ttf font (auto-discovered if omitted)"},
+                            "size": {"type": "number", "description": "Text size in mm", "default": 10},
+                            "tracking": {"type": "number", "description": "Character spacing in mm", "default": 0},
                             # Naming
                             "name": {"type": "string", "description": "Name for result object"}
                         },

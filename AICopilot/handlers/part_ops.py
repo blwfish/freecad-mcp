@@ -353,6 +353,64 @@ class PartOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating compound: {e}"
 
+    def shape_string(self, args: Dict[str, Any]) -> str:
+        """Create a Part ShapeString — parametric text as a wire compound.
+
+        Uses Part.makeWireString() to produce a compound of closed wires from
+        a font and string. The result is a static Part::Feature (not parametric
+        after creation), but the wires are clean and ready for Pad / Pocket.
+
+        For a Draft-managed ShapeString use draft_operations shape_string instead.
+        """
+        try:
+            string = args.get('string', 'Text')
+            font_file = args.get('font_file', '')
+            size = float(args.get('size', 10.0))
+            tracking = float(args.get('tracking', 0.0))
+            x = float(args.get('x', 0))
+            y = float(args.get('y', 0))
+            z = float(args.get('z', 0))
+            name = args.get('name', 'ShapeString')
+
+            doc = self.get_document()
+            if not doc:
+                return "No active document"
+
+            font = self.find_font(font_file)
+            if not font:
+                return (
+                    "Error: no font file found. "
+                    "Specify font_file with a path to a .ttf font, e.g. "
+                    "/System/Library/Fonts/Supplemental/Arial.ttf"
+                )
+
+            import Part
+
+            # makeWireString returns [[Wire, ...], ...] — one list of wires per character
+            char_wires = Part.makeWireString(string, font, size, tracking)
+            flat = [w for char in char_wires for w in char]
+            if not flat:
+                return f"Error: no wires generated for string '{string}' — check font path and string content"
+
+            compound = Part.makeCompound(flat)
+            ss_obj = doc.addObject("Part::Feature", name)
+            ss_obj.Label = name
+            ss_obj.Shape = compound
+            ss_obj.Placement.Base = FreeCAD.Vector(x, y, z)
+
+            self.recompute(doc)
+
+            import os
+            return (
+                f"Created Part ShapeString '{string}' ({ss_obj.Name}) at ({x},{y},{z}), "
+                f"size={size}mm, font={os.path.basename(font)}, "
+                f"chars={len(char_wires)}, wires={len(flat)}. "
+                f"Ready to Pad or use as Pocket profile."
+            )
+
+        except Exception as e:
+            return f"Error creating Part ShapeString: {e}"
+
     def check_geometry(self, args: Dict[str, Any]) -> str:
         """Check geometry validity of an object (BRep check)."""
         try:

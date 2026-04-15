@@ -1,5 +1,6 @@
 # Base handler class for FreeCAD MCP operations
 
+import os
 import FreeCAD
 import time
 from typing import Dict, Any, Optional, Callable
@@ -153,6 +154,35 @@ class BaseHandler:
             doc = FreeCAD.ActiveDocument
         if doc:
             doc.recompute()
+
+    def find_font(self, font_file: str = '') -> str:
+        """Find a usable .ttf font file, trying the given path then common system locations.
+
+        Returns the resolved path, or '' if nothing is found.
+        """
+        if font_file and os.path.exists(font_file):
+            return font_file
+        # FreeCAD bundles fonts in its resource directory
+        try:
+            fc_fonts = os.path.join(FreeCAD.getResourceDir(), 'fonts')
+            for name in ('LiberationSans-Regular.ttf', 'DejaVuSans.ttf'):
+                path = os.path.join(fc_fonts, name)
+                if os.path.exists(path):
+                    return path
+        except Exception:
+            pass
+        candidates = [
+            '/System/Library/Fonts/Supplemental/Arial.ttf',  # macOS
+            '/Library/Fonts/Arial.ttf',
+            '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',  # Linux
+            '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+            '/usr/share/fonts/TTF/DejaVuSans.ttf',
+            'C:/Windows/Fonts/arial.ttf',  # Windows
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                return path
+        return ''
 
     def save_before_risky_op(self, doc: FreeCAD.Document = None):
         """Auto-save document before a potentially crashy operation.

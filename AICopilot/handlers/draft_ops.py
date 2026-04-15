@@ -1,6 +1,5 @@
 # Draft workbench operation handlers for FreeCAD MCP
 
-import os
 import FreeCAD
 from typing import Dict, Any
 from .base import BaseHandler
@@ -161,37 +160,6 @@ class DraftOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating path array: {e}"
 
-    def _find_font(self, font_file: str = '') -> str:
-        """Find a usable .ttf font, trying the given path then common system locations."""
-        if font_file and os.path.exists(font_file):
-            return font_file
-
-        # FreeCAD bundles fonts in its resource directory
-        try:
-            fc_fonts = os.path.join(FreeCAD.getResourceDir(), 'fonts')
-            for name in ('LiberationSans-Regular.ttf', 'DejaVuSans.ttf'):
-                path = os.path.join(fc_fonts, name)
-                if os.path.exists(path):
-                    return path
-        except Exception:
-            pass
-
-        candidates = [
-            # macOS
-            '/System/Library/Fonts/Supplemental/Arial.ttf',
-            '/Library/Fonts/Arial.ttf',
-            # Linux
-            '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
-            '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-            '/usr/share/fonts/TTF/DejaVuSans.ttf',
-            # Windows
-            'C:/Windows/Fonts/arial.ttf',
-        ]
-        for path in candidates:
-            if os.path.exists(path):
-                return path
-        return ''
-
     def shape_string(self, args: Dict[str, Any]) -> str:
         """Create a Draft ShapeString — text as extrudable wire profiles.
 
@@ -216,7 +184,7 @@ class DraftOpsHandler(BaseHandler):
 
             import Draft
 
-            font = self._find_font(font_file)
+            font = self.find_font(font_file)
             if not font:
                 return (
                     "Error: no font file found. "

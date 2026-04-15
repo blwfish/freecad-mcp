@@ -1105,6 +1105,8 @@ class FreeCADSocketServer:
             method = self.part_ops.compound
         elif operation == "check_geometry":
             method = self.part_ops.check_geometry
+        elif operation == "shape_string":
+            method = self.part_ops.shape_string
 
         if not method:
             return json.dumps({"error": f"Unknown Part operation: {operation}"})
