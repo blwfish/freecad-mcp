@@ -1,7 +1,7 @@
 """Verify bridge tool count stays consistent with documentation.
 
 If this test fails, you added or removed a tool in freecad_mcp_server.py.
-Update the count here AND in README.md and CLAUDE.md.
+Update the count here AND in README.md and TOOLS.md.
 """
 
 import os
@@ -22,7 +22,7 @@ def test_bridge_tool_count():
     actual = content.count("types.Tool(")
     assert actual == EXPECTED_TOOL_COUNT, (
         f"Expected {EXPECTED_TOOL_COUNT} tools in freecad_mcp_server.py, "
-        f"found {actual}. Update this test, README.md, and CLAUDE.md."
+        f"found {actual}. Update this test, README.md, and TOOLS.md."
     )
 
 
@@ -39,14 +39,14 @@ def test_readme_tool_count():
     )
 
 
-def test_claude_md_tool_count():
-    """CLAUDE.md tool count should match the bridge."""
-    claude_path = os.path.join(os.path.dirname(BRIDGE_PATH), "CLAUDE.md")
-    with open(claude_path) as f:
+def test_tools_md_tool_count():
+    """TOOLS.md tool count should match the bridge."""
+    tools_path = os.path.join(os.path.dirname(BRIDGE_PATH), "TOOLS.md")
+    with open(tools_path) as f:
         content = f.read()
     m = re.search(r"(\d+) MCP tools", content)
-    assert m, "CLAUDE.md should contain '<N> MCP tools' pattern"
-    claude_count = int(m.group(1))
-    assert claude_count == EXPECTED_TOOL_COUNT, (
-        f"CLAUDE.md says {claude_count} tools but expected {EXPECTED_TOOL_COUNT}"
+    assert m, "TOOLS.md should contain '<N> MCP tools' pattern"
+    tools_count = int(m.group(1))
+    assert tools_count == EXPECTED_TOOL_COUNT, (
+        f"TOOLS.md says {tools_count} tools but expected {EXPECTED_TOOL_COUNT}"
     )

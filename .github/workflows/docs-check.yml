@@ -14,7 +14,7 @@ jobs:
         with:
           fetch-depth: 2  # Need parent commit for diff
 
-      - name: Check if tool files changed without CLAUDE.md update
+      - name: Check if tool files changed without TOOLS.md update
         run: |
           # Get changed files vs parent commit
           CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
@@ -26,13 +26,13 @@ jobs:
             echo "Tool files changed:"
             echo "$TOOL_CHANGES"
 
-            # Check if CLAUDE.md was also updated
-            CLAUDE_CHANGED=$(echo "$CHANGED" | grep '^CLAUDE.md$' || true)
+            # Check if TOOLS.md was also updated
+            TOOLS_CHANGED=$(echo "$CHANGED" | grep '^TOOLS.md$' || true)
             README_CHANGED=$(echo "$CHANGED" | grep '^README.md$' || true)
 
-            if [ -z "$CLAUDE_CHANGED" ] && [ -z "$README_CHANGED" ]; then
+            if [ -z "$TOOLS_CHANGED" ] && [ -z "$README_CHANGED" ]; then
               echo ""
-              echo "::warning::Tool files changed but neither CLAUDE.md nor README.md were updated. If you added, removed, or renamed tools, please update the docs."
+              echo "::warning::Tool files changed but neither TOOLS.md nor README.md were updated. If you added, removed, or renamed tools, please update the docs."
             fi
           else
             echo "No tool file changes detected."
@@ -48,9 +48,9 @@ jobs:
           README_COUNT=$(grep -oP '(\d+) tools' README.md | grep -oP '^\d+' | head -1)
           echo "README.md says $README_COUNT tools"
 
-          # Check CLAUDE.md
-          CLAUDE_COUNT=$(grep -oP '(\d+) MCP tools' CLAUDE.md | grep -oP '^\d+' | head -1)
-          echo "CLAUDE.md says $CLAUDE_COUNT tools"
+          # Check TOOLS.md
+          TOOLS_COUNT=$(grep -oP '(\d+) MCP tools' TOOLS.md | grep -oP '^\d+' | head -1)
+          echo "TOOLS.md says $TOOLS_COUNT tools"
 
           # Compare
           MISMATCH=0
@@ -58,8 +58,8 @@ jobs:
             echo "::error::Tool count mismatch: bridge has $ACTUAL but README.md says $README_COUNT"
             MISMATCH=1
           fi
-          if [ "$ACTUAL" != "$CLAUDE_COUNT" ]; then
-            echo "::error::Tool count mismatch: bridge has $ACTUAL but CLAUDE.md says $CLAUDE_COUNT"
+          if [ "$ACTUAL" != "$TOOLS_COUNT" ]; then
+            echo "::error::Tool count mismatch: bridge has $ACTUAL but TOOLS.md says $TOOLS_COUNT"
             MISMATCH=1
           fi
 
