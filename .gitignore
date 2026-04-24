@@ -59,4 +59,8 @@ claude_desktop_config.json.local
 tmp/
 temp/
 .tmp/neka_freecad_mcp/
+
+# Local scaffolding (not tracked in repo)
+CLAUDE.md
 .claude/
+.claude.json
