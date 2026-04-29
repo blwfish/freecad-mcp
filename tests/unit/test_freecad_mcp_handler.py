@@ -34,6 +34,7 @@ def mock_handlers(monkeypatch):
         "DraftOpsHandler", "ViewOpsHandler", "DocumentOpsHandler",
         "MeasurementOpsHandler", "SpreadsheetOpsHandler", "MeshOpsHandler",
         "SpatialOpsHandler", "InspectorOpsHandler",
+        "MacroOpsHandler", "IntrospectionOpsHandler",
     ]
 
     handlers_mod = types.ModuleType("handlers")
