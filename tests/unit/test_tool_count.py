@@ -12,7 +12,7 @@ BRIDGE_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "freecad_mcp_server.py"
 )
 
-EXPECTED_TOOL_COUNT = 30
+EXPECTED_TOOL_COUNT = 32
 
 
 def test_bridge_tool_count():

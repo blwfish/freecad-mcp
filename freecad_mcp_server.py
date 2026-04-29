@@ -986,6 +986,81 @@ async def main():
                     }
                 ),
                 types.Tool(
+                    name="macro_operations",
+                    description="Discover, read, and run FreeCAD macros from the user's macro directory "
+                                "(App.getUserMacroDir(), typically ~/.FreeCAD/Macro/). Use this to leverage "
+                                "the user's existing library of automation macros instead of regenerating "
+                                "common operations from scratch via execute_python. Always 'list' first to "
+                                "see what's available; 'read' a macro before 'run' if its purpose isn't obvious.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "description": "Macro action: 'list' enumerates the macro directory, "
+                                               "'read' returns a macro's source, 'run' executes it.",
+                                "enum": ["list", "read", "run"],
+                            },
+                            "name": {
+                                "type": "string",
+                                "description": "Macro filename (e.g. 'foo.FCMacro' or bare 'foo'). "
+                                               "Required for 'read' and 'run'.",
+                            },
+                            "include_hidden": {
+                                "type": "boolean",
+                                "description": "List action: include dotfiles (default false).",
+                                "default": False,
+                            },
+                        },
+                        "required": ["operation"],
+                    },
+                ),
+                types.Tool(
+                    name="api_introspection",
+                    description="Live introspection of FreeCAD's running Python API. Use this BEFORE writing "
+                                "execute_python code that calls unfamiliar methods — it eliminates the "
+                                "wrong-signature / AttributeError class of failures. "
+                                "'inspect' returns the signature + docstring for a dotted path "
+                                "(e.g. 'Part.makeBox', 'Sketcher.SketchObject'). "
+                                "'search' fuzzy-matches a query across FreeCAD's modules and workbenches. "
+                                "Search ranking improves over time: call 'record_useful' after a successful "
+                                "search → inspect → execute_python sequence to bias future searches toward "
+                                "the path that actually worked.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "description": "Introspection action.",
+                                "enum": ["inspect", "search", "record_useful"],
+                            },
+                            "path": {
+                                "type": "string",
+                                "description": "Dotted path for 'inspect' or 'record_useful' "
+                                               "(e.g. 'Part.makeBox', 'FreeCAD.Vector').",
+                            },
+                            "query": {
+                                "type": "string",
+                                "description": "Search string for 'search' or 'record_useful' "
+                                               "(e.g. 'make box', 'fillet edge').",
+                            },
+                            "modules": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Search action: optional list of module names to scan "
+                                               "(defaults to FreeCAD core + common workbenches). Use this "
+                                               "to extend coverage to a specific addon workbench.",
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Search action: max results to return (default 30, cap 100).",
+                                "default": 30,
+                            },
+                        },
+                        "required": ["operation"],
+                    },
+                ),
+                types.Tool(
                     name="get_debug_logs",
                     description="Retrieve recent debug logs for troubleshooting and analysis",
                     inputSchema={
@@ -1382,6 +1457,7 @@ async def main():
                       "cam_machines", "mesh_operations", "measurement_operations",
                       "spatial_query",
                       "spreadsheet_operations", "draft_operations", "get_debug_logs",
+                      "macro_operations", "api_introspection",
                       "execute_python_async", "poll_job", "list_jobs",
                       "cancel_operation", "cancel_job"]:
             args = arguments or {}

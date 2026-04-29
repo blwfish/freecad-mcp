@@ -6,7 +6,7 @@ This tool enables your AI agent to use [FreeCAD](https://www.freecad.org/) — t
 
 ## What This Does
 
-You describe what you need — "design a mounting bracket with these dimensions" or "generate G-code for this part" — and your AI agent does the rest: creating parametric sketches, padding and pocketing features, adding fillets, setting up CAM jobs, and exporting files. All using the same FreeCAD that engineers and makers use, with 30 tools covering parametric design, CNC toolpath generation, and mesh operations.
+You describe what you need — "design a mounting bracket with these dimensions" or "generate G-code for this part" — and your AI agent does the rest: creating parametric sketches, padding and pocketing features, adding fillets, setting up CAM jobs, and exporting files. All using the same FreeCAD that engineers and makers use, with 32 tools covering parametric design, CNC toolpath generation, and mesh operations.
 
 You don't need to know FreeCAD. You don't need to know what parametric CAD means. You just need an AI agent (like [Claude](https://claude.ai/)).
 
@@ -60,6 +60,8 @@ The project includes debugging infrastructure that you will want to know about i
 - **Crash watcher** — writes the current operation to `/tmp/freecad_mcp_last_op.json` before each dispatch. If FreeCAD crashes mid-operation, this file survives and the bridge reports what was running when it died.
 - **Health monitor** — tracks operation timing, error rates, and crash history. Detects patterns like "this operation crashes every time" before you waste an afternoon on it.
 - **`run_inspector`** — runs design-rule checks against the live document (via the FC-tools sibling repo).
+- **`macro_operations`** — list, read, and run macros from the user's FreeCAD macro directory (`App.getUserMacroDir()`). Lets the agent leverage an existing library of automation scripts instead of regenerating common operations from scratch.
+- **`api_introspection`** — live signature/docstring lookup against FreeCAD's running module tree, plus fuzzy search across FreeCAD core + workbenches. Eliminates the wrong-signature class of `execute_python` failures. Search ranking improves over time as the agent records which results led to successful API calls (`record_useful` action; feedback persisted to `~/.freecad-mcp/introspection_feedback.json`).
 
 These tools exist because FreeCAD's error reporting is often cryptic and OCCT kernel crashes leave no trace. When something goes wrong, the agent can pull debug logs, read the report view, and check crash history — usually enough to diagnose the problem without manual investigation.
 
