@@ -114,8 +114,21 @@ def _spawn_headless(timeout: float = 30.0) -> tuple[subprocess.Popen, str]:
 
     # Pass socket path via env var only — some FreeCADCmd builds (e.g. AppImage)
     # reject unknown CLI flags before the script can parse them.
+    #
+    # When the user has an installed AICopilot addon (e.g. local dev
+    # workstation), FreeCAD's addon loader puts that copy on sys.path before
+    # our --module-path arg can take effect, and `from freecad_mcp_handler
+    # import ...` inside the script ends up with the installed code rather
+    # than the worktree's. Disabling the installed addon and explicitly
+    # adding the worktree's AICopilot via -M keeps the wiring honest. The
+    # script also self-installs at sys.path[0] as a belt-and-braces measure.
+    aicopilot_dir = os.path.dirname(os.path.abspath(headless_script))
+    extra_flags = ["--disable-addon", "AICopilot", "-M", aicopilot_dir]
+
+    cmd = [freecadcmd, *extra_flags, headless_script]
+
     proc = subprocess.Popen(
-        [freecadcmd, headless_script],
+        cmd,
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -130,7 +143,7 @@ def _spawn_headless(timeout: float = 30.0) -> tuple[subprocess.Popen, str]:
             stderr = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
             raise RuntimeError(
                 f"FreeCADCmd exited prematurely with code {proc.returncode}\n"
-                f"  cmd: {[freecadcmd, headless_script]}\n"
+                f"  cmd: {cmd}\n"
                 f"  socket: {sock_path}\n"
                 f"  stdout: {stdout[:500]}\n"
                 f"  stderr: {stderr[:500]}"

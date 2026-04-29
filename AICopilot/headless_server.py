@@ -20,6 +20,35 @@ import time
 import threading
 
 # ---------------------------------------------------------------------------
+# Ensure THIS script's directory is first on sys.path so we import the handler
+# module from the same checkout. Without this we depend on FreeCAD's addon
+# discovery happening to put the matching AICopilot dir first — which fails
+# when running an out-of-tree worktree (e.g. integration tests).
+#
+# Also evict any pre-imported `freecad_mcp_handler` / `handlers` / `handlers.*`
+# that FreeCAD's Init.py chain may have cached from the installed-addon path.
+# Without eviction, our `from freecad_mcp_handler import ...` is a cache hit
+# and silently uses the wrong copy.
+# ---------------------------------------------------------------------------
+_self_dir = os.path.dirname(os.path.abspath(__file__))
+if sys.path and sys.path[0] != _self_dir:
+    if _self_dir in sys.path:
+        sys.path.remove(_self_dir)
+    sys.path.insert(0, _self_dir)
+
+# Evict any pre-imported `freecad_mcp_handler` / `handlers` that FreeCAD's
+# Init.py chain may have cached from an installed-addon path. Without
+# eviction, our `from freecad_mcp_handler import ...` is a cache hit and
+# silently uses the wrong copy.
+for _stale in [
+    name for name in list(sys.modules)
+    if name == "freecad_mcp_handler"
+    or name == "handlers"
+    or name.startswith("handlers.")
+]:
+    del sys.modules[_stale]
+
+# ---------------------------------------------------------------------------
 # Parse --socket-path early, before anything else touches sys.argv
 # ---------------------------------------------------------------------------
 def _parse_socket_path():
