@@ -1,63 +1,51 @@
 # Deferred Integration Tests — feature/macro-and-introspection
 
-These integration tests would require a live FreeCAD instance with the
-`AICopilot` workbench loaded, and were not added in the initial pass for
-this branch. They are listed here so they can be picked up later.
+The integration suite added under this branch (`tests/integration/test_macro_ops.py`,
+`tests/integration/test_introspection_ops.py`) covers the major bindings to
+real FreeCAD: list / read / run macros against a live instance, inspect /
+search / record_useful against real `Part`, `FreeCAD`, and the default
+module list, and feedback ranking influence on real searches. They run
+headless via `FreeCADCmd` and pass on macOS (FC-clone) and in CI (Linux
+AppImage).
+
+The tests below were considered and intentionally not included in this
+pass; document each one's rationale so it can be picked up later if value
+emerges.
 
 ## macro_operations
 
-- **End-to-end via the bridge:** issue `macro_operations(operation="list")`
-  through the MCP bridge against a live FreeCAD; verify the response shape
-  and that the macro directory matches `App.getUserMacroDir()` as observed
-  inside FreeCAD.
-  *Rationale:* the unit tests use a temp dir and a mocked
-  `FreeCAD.getUserMacroDir`. Worth verifying the live path is what the unit
-  tests assume.
+- **GUI-mode `Gui.runCommand` macros.** All current run-tests use macros
+  that touch only the App layer (`FreeCAD.newDocument`, `Part`, prints).
+  Macros that exercise the GUI layer (`Gui.runCommand("Std_New")`,
+  `Gui.activateWorkbench("PartDesignWorkbench")`) need a real Qt event
+  loop, which `FreeCADCmd` does not have. Adding these requires the
+  GUI-mode integration runner — out of scope for this branch.
+  *Action:* defer until a GUI-runner CI job is added; the headless tests
+  cover the dispatch + namespace + error-path logic regardless.
 
-- **Run a macro that mutates the active document:** create a small macro
-  that creates a new document and adds an object, run it via
-  `macro_operations(operation="run")`, then verify via `view_control`
-  /`document_ops` that the document and object exist.
-  *Rationale:* the unit-tested execution path uses an empty namespace; the
-  integration version exercises the GUI-thread wrapping that handlers go
-  through in production.
-
-- **Macro that calls `FreeCADGui`:** confirm `Gui` is in scope and a macro
-  can drive the GUI when FreeCAD is launched with a display. Important
-  because many user macros use `Gui.runCommand(...)`.
+- **Real `App.getUserMacroDir()` resolution.** The integration tests
+  monkeypatch `getUserMacroDir` to a per-test tempdir to keep the user's
+  real macro library untouched. Whether the *production* lookup path
+  (FreeCAD preference → `~/.FreeCAD/Macro/` etc.) returns the right
+  directory is not asserted.
+  *Action:* skip — the lookup is a one-line FreeCAD call; the risk lives
+  in our enumeration / path-resolution / exec logic, all of which is
+  exercised against a real directory.
 
 ## api_introspection
 
-- **`inspect` against real FreeCAD modules:** call
-  `api_introspection(operation="inspect", path="Part.makeBox")` against a
-  live FreeCAD; confirm the signature and docstring come back populated.
-  *Rationale:* unit tests use a synthetic `fakecad` module. The actual
-  FreeCAD modules are largely Boost-Python-bound and may behave differently
-  under `inspect.signature` / `inspect.getdoc` (some return empty strings,
-  some raise).
+- **Workbench discovery via the `modules` arg.** Tests confirm that
+  unknown modules surface in `missing_modules` and that `Part`/`FreeCAD`
+  are scannable. Not tested: actually loading a non-default workbench
+  (e.g. Fasteners, A2plus) and confirming search returns results from it.
+  *Action:* defer — adding workbench-specific dependencies to the
+  integration-test environment is heavyweight; the behavior is exercised
+  by the happy-path "modules arg accepted, missing modules logged" tests.
 
-- **`search` against real FreeCAD modules with the default module list:**
-  confirm a query like `"makeBox"` returns `Part.makeBox` near the top.
-  *Rationale:* this verifies `_collect_names` handles real Boost-Python
-  classes without infinite recursion or `dir()` quirks. The default module
-  list in production is much larger than the test stub.
-
-- **Workbench extension via `modules` param:** with a non-default workbench
-  loaded (e.g. Fasteners), call
-  `api_introspection(operation="search", query="screw",
-  modules=["FreeCAD","Fasteners"])` and confirm Fasteners content is in the
-  results.
-
-- **Feedback persists in `~/.freecad-mcp/introspection_feedback.json`:** in
-  the live setup, confirm `record_useful` writes to the real default path
-  (the unit tests redirect via `FREECAD_MCP_FEEDBACK_FILE`).
-
-## Why these are deferred
-
-All deferred tests need a live FreeCAD AppImage in CI (the
-`integration-tests.yml` workflow already provides this). They were left out
-of the first pass to keep the initial PR scoped to handler logic + unit
-coverage. The feedback ranking logic, fuzzy scoring, recency decay, and
-all error paths are exercised by the unit tests against a stand-in module,
-so the deferred tests are about confirming the bindings to real FreeCAD,
-not the algorithms.
+- **Recursion safety against pathological module graphs.** The walker has
+  depth and visited-id guards, exercised by unit tests against synthetic
+  modules. Not tested: the walker's behavior against the full real
+  `Part`/`Sketcher` Boost-Python class hierarchy at the larger scale.
+  *Action:* skip — the search tests already walk these modules and
+  return in bounded time; if a regression appears, a unit test against a
+  minimal repro is more useful than an integration test.
