@@ -135,6 +135,19 @@ class _Vec:
     def Length(self):
         return (self.x ** 2 + self.y ** 2 + self.z ** 2) ** 0.5
 
+    def add(self, other):
+        """FreeCAD Vector.add(other) — same as __add__ but explicit method."""
+        return _Vec(self.x + other.x, self.y + other.y, self.z + other.z)
+
+    def sub(self, other):
+        return _Vec(self.x - other.x, self.y - other.y, self.z - other.z)
+
+    def multiply(self, scalar):
+        return _Vec(self.x * scalar, self.y * scalar, self.z * scalar)
+
+    def distanceToPoint(self, other):
+        return (self - other).Length
+
 
 class _Rotation:
     def __init__(self, axis=None, angle=0):
@@ -403,7 +416,13 @@ def make_sketch(name="Sketch", has_wires=True, has_faces=False,
 
 
 def make_body(name="Body", tip=None, group=None):
-    """Mock PartDesign::Body."""
+    """Mock PartDesign::Body.
+
+    body.newObject returns a stable MagicMock via return_value so callers
+    can inspect ``body.newObject.return_value.Length`` etc. The mock has
+    sensible defaults (Name, Label, TypeId, Placement, Shape, State=[])
+    so handler-side patterns like ``getattr(feat, 'State', [])`` work.
+    """
     obj = MagicMock()
     obj.Name = name
     obj.Label = name
@@ -412,20 +431,16 @@ def make_body(name="Body", tip=None, group=None):
     obj.Tip = tip
     obj.Group = list(group) if group else []
     obj.Shape = _make_shape()
-    obj.newObject = MagicMock(side_effect=lambda type_id, n: _body_add_feature(obj, type_id, n))
-    return obj
 
-
-def _body_add_feature(body, type_id, name):
-    """Helper: simulate Body.newObject() returning a feature attached to the body."""
     feat = MagicMock()
-    feat.Name = name
-    feat.Label = name
-    feat.TypeId = type_id
+    feat.Name = "AutoFeature"
+    feat.Label = "AutoFeature"
+    feat.TypeId = "PartDesign::Feature"
+    feat.Placement = _Placement()
     feat.Shape = _make_shape()
-    body.Group.append(feat)
-    body.Tip = feat
-    return feat
+    feat.State = []
+    obj.newObject = MagicMock(return_value=feat)
+    return obj
 
 
 # ---------------------------------------------------------------------------
@@ -436,13 +451,22 @@ def make_handler(handler_cls, server=None):
     """Instantiate a handler with mocked server and logging.
 
     The server mock has a .selector for selection-flow tests, and a
-    _run_on_gui_thread that just runs the task inline.
+    _run_on_gui_thread that just runs the task inline. The selector's
+    request_selection returns a canonical awaiting_selection payload by
+    default — tests that need a different operation_id can patch it.
     """
     if server is None:
         server = MagicMock()
         server.selector = MagicMock()
-        server.selector.start_selection = MagicMock(return_value="op_test_001")
+        server.selector.request_selection = MagicMock(return_value={
+            "status": "awaiting_selection",
+            "operation_id": "op_test_001",
+            "tool_name": "test",
+            "selection_type": "edges",
+            "message": "Please select edges in FreeCAD",
+        })
         server.selector.complete_selection = MagicMock(return_value=None)
+        server.selector.cancel_selection = MagicMock()
         server._run_on_gui_thread = MagicMock(side_effect=lambda fn, timeout=30.0: fn())
     log_op = MagicMock()
     capture = MagicMock(return_value={})

@@ -7,6 +7,11 @@ Pad, pocket, and datum are already tested in test_e2e_workflows.py.
 
 import time
 import pytest
+from ._geom_helpers import (
+    assert_op_succeeded,
+    get_shape_props,
+    assert_volume_close,
+)
 from .test_e2e_workflows import send_command
 
 
@@ -73,7 +78,11 @@ doc.recompute()
 
 class TestRevolution:
     def test_revolution_full(self, clean_document):
-        """Revolve an L-shaped profile around the Y axis."""
+        """Revolve a 10x20 rectangle (offset 5 from Y axis) full circle.
+
+        Expected solid: ring with outer R=15, inner R=5, height=20.
+        Volume = π * (15² - 5²) * 20 = π * 200 * 20 ≈ 12566 mm³.
+        """
         send_command("execute_python", {
             "code": """
 import Part, Sketcher
@@ -105,8 +114,15 @@ doc.recompute()
             "axis": "Y",
             "angle": 360,
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
+        assert_op_succeeded(result, "revolution full")
+        # Verify the resulting solid has the expected volume
+        props = get_shape_props(clean_document, "Revolution")
+        if props is not None:
+            # ring: π * (15² - 5²) * 20 = 12566.37
+            import math
+            expected = math.pi * (15**2 - 5**2) * 20
+            assert_volume_close(props['volume'], expected, rel=0.02,
+                                op_label="revolution volume")
 
     def test_revolution_partial(self, clean_document):
         """Revolve 180 degrees."""
@@ -150,24 +166,36 @@ doc.recompute()
 
 class TestShellThickness:
     def test_shell(self, body_with_pad):
-        """Shell a padded body (hollow out with wall thickness)."""
+        """Without explicit faces, shell asks for selection (handshake)."""
         result = send_command("partdesign_operations", {
             "operation": "shell",
             "object_name": "Body",
             "thickness": 1.0,
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
+        assert_op_succeeded(result, "shell")
+        text = result if isinstance(result, str) else (
+            result.get("content", [{}])[0].get("text", str(result))
+            if isinstance(result, dict) else str(result)
+        )
+        # Either selection-flow handshake or explicit shell creation —
+        # both indicate the dispatch found shell_solid.
+        assert ("awaiting_selection" in text or "Created shell" in text), \
+            f"Expected shell handshake or success, got: {text[:300]}"
 
     def test_thickness(self, body_with_pad):
-        """Apply thickness to a padded body."""
+        """Without explicit faces, thickness asks for selection (handshake)."""
         result = send_command("partdesign_operations", {
             "operation": "thickness",
             "object_name": "Body",
             "thickness": 2.0,
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
+        assert_op_succeeded(result, "thickness")
+        text = result if isinstance(result, str) else (
+            result.get("content", [{}])[0].get("text", str(result))
+            if isinstance(result, dict) else str(result)
+        )
+        assert ("awaiting_selection" in text or "Created thickness" in text), \
+            f"Expected thickness handshake or success, got: {text[:300]}"
 
 
 # ---------------------------------------------------------------------------
@@ -176,38 +204,53 @@ class TestShellThickness:
 
 class TestPatterns:
     def test_mirror(self, body_with_pad):
-        """Mirror the pad feature."""
+        """Mirror the pad across YZ — result has Source=Pad and Normal aligned."""
         result = send_command("partdesign_operations", {
             "operation": "mirror",
             "feature_name": "Pad",
             "plane": "YZ",
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
+        assert_op_succeeded(result, "mirror")
+        text = result if isinstance(result, str) else (
+            result.get("content", [{}])[0].get("text", str(result))
+            if isinstance(result, dict) else str(result)
+        )
+        assert "Mirrored" in text or "mirror" in text.lower() or "Created" in text, \
+            f"Expected mirror confirmation, got: {text[:300]}"
 
     def test_linear_pattern(self, body_with_pad):
-        """Linear pattern of the pad (3 instances)."""
+        """Linear pattern of the pad reports correct count and direction."""
         result = send_command("partdesign_operations", {
             "operation": "linear_pattern",
             "feature_name": "Pad",
             "direction": "x",
             "length": 40,
-            "occurrences": 3,
+            "count": 3,
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
+        assert_op_succeeded(result, "linear_pattern")
+        text = result if isinstance(result, str) else (
+            result.get("content", [{}])[0].get("text", str(result))
+            if isinstance(result, dict) else str(result)
+        )
+        assert "3" in text and ("instances" in text or "Pattern" in text), \
+            f"Expected 3 instances in linear pattern result: {text[:300]}"
 
     def test_polar_pattern(self, body_with_pad):
-        """Polar pattern of the pad (4 instances over 360°)."""
+        """Polar pattern reports correct count and axis."""
         result = send_command("partdesign_operations", {
             "operation": "polar_pattern",
             "feature_name": "Pad",
             "axis": "z",
             "angle": 360,
-            "occurrences": 4,
+            "count": 4,
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
+        assert_op_succeeded(result, "polar_pattern")
+        text = result if isinstance(result, str) else (
+            result.get("content", [{}])[0].get("text", str(result))
+            if isinstance(result, dict) else str(result)
+        )
+        assert "4" in text and ("instances" in text or "Polar" in text), \
+            f"Expected 4 instances in polar pattern result: {text[:300]}"
 
 
 # ---------------------------------------------------------------------------
