@@ -1,8 +1,9 @@
 """Unit tests for DraftOpsHandler.
 
 Covers clone, array (rectangular/ortho), polar_array, path_array,
-point_array, and text. KNOWN_ISSUES.md self-flagged this handler as
-needing comprehensive tests; previously had 5% statement coverage.
+point_array, text, and shape_string. KNOWN_ISSUES.md self-flagged this
+handler as needing comprehensive tests; previously had 5% statement
+coverage.
 
 The array operations are the silent-regression risk — wrong axis or
 off-by-one count produces a valid but incorrect layout. Tests verify
@@ -10,10 +11,6 @@ the Draft API is called with the right factor counts, axes, and
 parameters.
 
 Not covered here:
-  * shape_string — has a real NameError bug in production code
-    (os.path.basename used without ``import os`` at the top of
-    draft_ops.py). Documented for follow-up rather than tested
-    against broken behavior.
   * Draft module ImportError fallback — every method has the same
     wrapper, single test in TestImportError covers the pattern.
 """
@@ -306,6 +303,60 @@ class TestText(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # ImportError fallback (Draft module unavailable)
 # ---------------------------------------------------------------------------
+
+class TestShapeString(unittest.TestCase):
+    """shape_string was previously broken — referenced os.path.basename
+    without importing os. Regression test for that fix."""
+
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(DraftOpsHandler)
+
+    def test_no_font_returns_helpful_error(self):
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+        with patch.object(self.handler, 'find_font', return_value=''):
+            result = self.handler.shape_string({'string': 'Hi'})
+        assert_error_contains(self, result, "no font", ".ttf")
+
+    def test_creates_shapestring_via_make_shapestring(self):
+        """Happy path: find_font returns a path, Draft.make_shapestring
+        produces an object, handler labels it and returns success.
+
+        Regression: before the os import was added, this path raised
+        NameError on os.path.basename(font) inside the success-message
+        f-string."""
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+
+        ss = MagicMock()
+        ss.Name = "ShapeString001"
+        ss.Placement = MagicMock(Base=MagicMock())
+        mock_Draft.make_shapestring = MagicMock(return_value=ss)
+        # Make sure the alternate names aren't picked up via the getattr
+        # chain so we know which API we exercised.
+        if hasattr(mock_Draft, 'make_shape_string'):
+            del mock_Draft.make_shape_string
+        if hasattr(mock_Draft, 'makeShapeString'):
+            del mock_Draft.makeShapeString
+
+        with patch.object(self.handler, 'find_font',
+                          return_value='/fonts/Arial.ttf'):
+            result = self.handler.shape_string({
+                'string': 'Hello', 'size': 12, 'name': 'Logo',
+                'x': 5, 'y': 10, 'z': 0,
+            })
+
+        # Success message uses os.path.basename — would have crashed
+        # with NameError without the import fix.
+        assert_success_contains(self, result, "Hello", "Arial.ttf",
+                                "(5.0,10.0,0.0)", "size=12")
+        # Custom Label was applied
+        self.assertEqual(ss.Label, 'Logo')
+        # Placement was set to the requested coordinates
+        self.assertEqual(ss.Placement.Base.x, 5)
+        self.assertEqual(ss.Placement.Base.y, 10)
+
 
 class TestImportErrorFallback(unittest.TestCase):
     """Verify the ``except ImportError`` branch surfaces a helpful message.

@@ -1,5 +1,6 @@
 # Draft workbench operation handlers for FreeCAD MCP
 
+import os
 import FreeCAD
 from typing import Dict, Any
 from .base import BaseHandler
