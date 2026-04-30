@@ -118,12 +118,14 @@ class TestCheckpointRollback:
         assert "removed 2 objects" in text, \
             f"Expected 2 objects removed in: {text[:300]}"
 
-        # Verify the document state — only Persistent remains
+        # Verify the document state — only Persistent remains.
+        # Use print() to bypass the execute_python repr() wrap on
+        # last-expression return values.
         check = send_command("execute_python", {
             "code": (
                 "import json\n"
                 f"doc = FreeCAD.getDocument('{clean_document}')\n"
-                "json.dumps(sorted(o.Name for o in doc.Objects))"
+                "print(json.dumps(sorted(o.Name for o in doc.Objects)))"
             ),
         })
         check_text = _text(check).strip()
@@ -165,16 +167,17 @@ class TestInsertShape:
         assert "30.0" in text and "20.0" in text and "10.0" in text, \
             f"Expected box dims in message: {text[:300]}"
 
-        # Verify the shape was actually copied into the destination doc
+        # Verify the shape was actually copied into the destination doc.
+        # Use print() to bypass the execute_python repr() wrap.
         check = send_command("execute_python", {
             "code": (
                 "import json\n"
                 f"doc = FreeCAD.getDocument('{dst}')\n"
                 "obj = doc.getObject('ImportedBox')\n"
-                "json.dumps({"
+                "print(json.dumps({"
                 "  'has_shape': hasattr(obj, 'Shape'),"
                 "  'volume': float(obj.Shape.Volume) if hasattr(obj, 'Shape') else 0,"
-                "})"
+                "}))"
             ),
         })
         check_text = _text(check).strip()

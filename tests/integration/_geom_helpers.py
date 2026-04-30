@@ -55,6 +55,12 @@ def get_shape_props(doc_name: str, obj_name: str) -> dict:
 
     Returns dict with keys: volume, face_count, edge_count, vertex_count,
     bbox (xlen, ylen, zlen), is_valid. None if the object lacks a Shape.
+
+    Implementation note: emits the JSON via ``print(...)`` rather than
+    leaving it as the last expression. The execute_python handler
+    applies ``repr()`` to last-expression values, which wraps strings
+    in outer quotes and breaks ``json.loads`` on the receiving end.
+    Stdout output bypasses that wrap.
     """
     code = f"""
 import json
@@ -68,10 +74,10 @@ if obj is None:
 if obj is None:
     raise RuntimeError('object {obj_name!r} not found in {doc_name!r}')
 if not hasattr(obj, 'Shape') or obj.Shape is None:
-    json.dumps(None)
+    print('null')
 else:
     s = obj.Shape
-    json.dumps({{
+    print(json.dumps({{
         'volume': float(s.Volume) if hasattr(s, 'Volume') else 0.0,
         'face_count': len(s.Faces),
         'edge_count': len(s.Edges),
@@ -80,18 +86,15 @@ else:
         'wire_count': len(s.Wires),
         'bbox': [s.BoundBox.XLength, s.BoundBox.YLength, s.BoundBox.ZLength],
         'is_valid': bool(s.isValid()),
-    }})
+    }}))
 """
     raw = send_command("execute_python", {"code": code})
     text = _result_text(raw)
     text = text.strip()
-    if text in ("None", "null"):
+    if text in ("None", "null", "'null'", '"null"'):
         return None
-    # execute_python wraps the value as the last expression. Strip any
-    # leading "Result: " or similar prefix bridge might add.
     if text.startswith("Result: "):
-        text = text[len("Result: "):]
-    text = text.strip()
+        text = text[len("Result: "):].strip()
     try:
         return json.loads(text)
     except (json.JSONDecodeError, ValueError) as e:
@@ -106,10 +109,10 @@ def get_object_count(doc_name: str, type_filter: Optional[str] = None) -> int:
     if type_filter:
         code = (
             f"doc = FreeCAD.getDocument('{doc_name}')\n"
-            f"len([o for o in doc.Objects if o.TypeId == {type_filter!r}])"
+            f"print(len([o for o in doc.Objects if o.TypeId == {type_filter!r}]))"
         )
     else:
-        code = f"len(FreeCAD.getDocument('{doc_name}').Objects)"
+        code = f"print(len(FreeCAD.getDocument('{doc_name}').Objects))"
     raw = send_command("execute_python", {"code": code})
     text = _result_text(raw).strip()
     if text.startswith("Result: "):

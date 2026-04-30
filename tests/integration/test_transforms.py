@@ -12,7 +12,12 @@ from .test_e2e_workflows import send_command
 
 
 def _placement_base(doc_name: str, obj_name: str) -> tuple:
-    """Return (x, y, z) of the object's Placement.Base via execute_python."""
+    """Return (x, y, z) of the object's Placement.Base via execute_python.
+
+    Uses ``print(json.dumps(...))`` rather than a last expression — the
+    execute_python handler applies repr() to last-expression values,
+    breaking json.loads with outer quotes.
+    """
     code = (
         f"import json\n"
         f"obj = FreeCAD.getDocument('{doc_name}').getObject('{obj_name}')\n"
@@ -20,7 +25,7 @@ def _placement_base(doc_name: str, obj_name: str) -> tuple:
         f"    found = FreeCAD.getDocument('{doc_name}').getObjectsByLabel('{obj_name}')\n"
         f"    obj = found[0] if found else None\n"
         f"p = obj.Placement.Base\n"
-        f"json.dumps([float(p.x), float(p.y), float(p.z)])\n"
+        f"print(json.dumps([float(p.x), float(p.y), float(p.z)]))\n"
     )
     raw = send_command("execute_python", {"code": code})
     text = _result_text(raw).strip()
