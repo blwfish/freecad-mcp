@@ -618,11 +618,6 @@ class PartDesignOpsHandler(BaseHandler):
             revolution = doc.addObject("Part::Revolution", name)
             revolution.Source = sketch
             revolution.Angle = angle
-            # Default to solid output. Without this, Part::Revolution
-            # produces an open shell (zero volume), which is almost never
-            # what users want for a parametric workflow. Pass solid=False
-            # explicitly to opt out for an open surface.
-            revolution.Solid = bool(args.get('solid', True))
 
             if axis.lower() == 'x':
                 revolution.Axis = (1, 0, 0)
