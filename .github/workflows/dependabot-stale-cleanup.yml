@@ -1,0 +1,52 @@
+name: Dependabot stale-PR cleanup
+
+# Runs daily. Finds open Dependabot PRs that haven't been touched in
+# >24h and posts `@dependabot rebase` to nudge a fresh rebase against
+# current main. The rebase causes a synchronize event, which fires the
+# auto-merge workflow.
+#
+# This is the "predictable cadence" piece of the dependabot strategy —
+# it ensures stuck PRs eventually clear without needing to remember to
+# poke them by hand.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # Daily 06:00 UTC (≈ 02:00 Eastern)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Nudge stale Dependabot PRs to rebase
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh pr list --repo "${{ github.repository }}" \
+            --author "app/dependabot" \
+            --state open \
+            --json number,updatedAt,title \
+            > prs.json
+
+          stale_threshold=$(date -u -d '24 hours ago' +%s)
+
+          jq -c '.[]' prs.json | while read -r pr; do
+            num=$(echo "$pr" | jq -r .number)
+            updated=$(echo "$pr" | jq -r .updatedAt)
+            title=$(echo "$pr" | jq -r .title)
+            updated_ts=$(date -u -d "$updated" +%s)
+
+            if [ "$updated_ts" -lt "$stale_threshold" ]; then
+              echo "PR #$num is stale (last updated $updated): $title"
+              echo "Triggering rebase…"
+              gh pr comment "$num" --repo "${{ github.repository }}" \
+                --body "@dependabot rebase"
+            else
+              echo "PR #$num is fresh (last updated $updated)"
+            fi
+          done

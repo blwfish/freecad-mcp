@@ -1,0 +1,61 @@
+name: Dependabot auto-merge
+
+# Per-PR workflow that decides whether to enable auto-merge based on
+# severity (for security PRs) or bump type (for version PRs).
+#
+# Safety belts:
+#   1. Auto-merge only fires when ALL CI checks pass (tests.yml etc.).
+#   2. Branch protection rule "Require branches to be up to date"
+#      forces a rebase if main moved between CI pass and merge.
+#   3. Stale-cleanup workflow nudges Dependabot to rebase PRs that
+#      go untouched for >24h.
+#
+# Filter logic:
+#   * Security PR (any severity)            → auto-merge enabled
+#   * version-update:semver-patch           → auto-merge enabled
+#   * version-update:semver-minor or -major → labeled for manual review
+#   * Anything else                          → no action
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Auto-merge security updates
+        # alert-state is set only on security PRs (regardless of severity).
+        # Security fixes auto-merge whenever CI passes — we want them in fast.
+        if: steps.meta.outputs.alert-state != ''
+        run: gh pr merge --auto --merge "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Auto-merge patch version updates
+        if: steps.meta.outputs.update-type == 'version-update:semver-patch'
+        run: gh pr merge --auto --merge "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Label minor/major bumps for manual review
+        if: |
+          steps.meta.outputs.update-type == 'version-update:semver-minor' ||
+          steps.meta.outputs.update-type == 'version-update:semver-major'
+        run: gh pr edit "$PR_NUMBER" --add-label "dependabot-needs-review"
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
