@@ -59,3 +59,34 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Fallback for "update X requirement from A to B" PRs (constraint
+      # bumps in pyproject.toml/requirements.txt). For these, Dependabot
+      # leaves update-type empty because no specific version is being
+      # pinned. Parse the title's "from … to …" text to detect patch
+      # bumps (same major.minor); label everything else for review.
+      - name: Classify constraint-update PRs by title
+        if: steps.meta.outputs.update-type == '' || steps.meta.outputs.update-type == null
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Extract "from <prev>" and "to <new>" version triples (X.Y.Z).
+          prev=$(printf '%s\n' "$TITLE" | sed -nE 's/.*from [^0-9]*([0-9]+\.[0-9]+\.[0-9]+).*/\1/p')
+          new=$(printf '%s\n' "$TITLE" | sed -nE 's/.*to [^0-9]*([0-9]+\.[0-9]+\.[0-9]+).*/\1/p')
+
+          if [ -n "$prev" ] && [ -n "$new" ]; then
+            prev_mm=$(echo "$prev" | cut -d. -f1,2)
+            new_mm=$(echo "$new" | cut -d. -f1,2)
+            if [ "$prev_mm" = "$new_mm" ] && [ "$prev" != "$new" ]; then
+              echo "Patch-only constraint bump: $prev → $new — enabling auto-merge"
+              gh pr merge --auto --merge "$PR_URL"
+              exit 0
+            fi
+          fi
+
+          echo "Not a patch-only bump (prev='$prev' new='$new') — labeling for review"
+          gh pr edit "$PR_NUMBER" --add-label "dependabot-needs-review"
