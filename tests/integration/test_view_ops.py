@@ -119,13 +119,14 @@ class TestCheckpointRollback:
             f"Expected 2 objects removed in: {text[:300]}"
 
         # Verify the document state — only Persistent remains.
-        # Use print() to bypass the execute_python repr() wrap on
-        # last-expression return values.
+        # Use print() to bypass the execute_python repr() wrap; the
+        # trailing result=None clears any stale namespace value.
         check = send_command("execute_python", {
             "code": (
                 "import json\n"
                 f"doc = FreeCAD.getDocument('{clean_document}')\n"
-                "print(json.dumps(sorted(o.Name for o in doc.Objects)))"
+                "print(json.dumps(sorted(o.Name for o in doc.Objects)))\n"
+                "result = None\n"
             ),
         })
         check_text = _text(check).strip()
@@ -168,7 +169,8 @@ class TestInsertShape:
             f"Expected box dims in message: {text[:300]}"
 
         # Verify the shape was actually copied into the destination doc.
-        # Use print() to bypass the execute_python repr() wrap.
+        # Use print() to bypass the execute_python repr() wrap; the
+        # trailing result=None clears any stale namespace value.
         check = send_command("execute_python", {
             "code": (
                 "import json\n"
@@ -177,7 +179,8 @@ class TestInsertShape:
                 "print(json.dumps({"
                 "  'has_shape': hasattr(obj, 'Shape'),"
                 "  'volume': float(obj.Shape.Volume) if hasattr(obj, 'Shape') else 0,"
-                "}))"
+                "}))\n"
+                "result = None\n"
             ),
         })
         check_text = _text(check).strip()

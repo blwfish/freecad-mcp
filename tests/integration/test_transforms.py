@@ -18,6 +18,9 @@ def _placement_base(doc_name: str, obj_name: str) -> tuple:
     execute_python handler applies repr() to last-expression values,
     breaking json.loads with outer quotes.
     """
+    # Trailing ``result = None`` clears any leftover value in the
+    # execute_python persistent namespace; otherwise its repr() lands
+    # on a second line and breaks json.loads here.
     code = (
         f"import json\n"
         f"obj = FreeCAD.getDocument('{doc_name}').getObject('{obj_name}')\n"
@@ -26,6 +29,7 @@ def _placement_base(doc_name: str, obj_name: str) -> tuple:
         f"    obj = found[0] if found else None\n"
         f"p = obj.Placement.Base\n"
         f"print(json.dumps([float(p.x), float(p.y), float(p.z)]))\n"
+        f"result = None\n"
     )
     raw = send_command("execute_python", {"code": code})
     text = _result_text(raw).strip()

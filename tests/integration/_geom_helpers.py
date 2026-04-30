@@ -62,6 +62,12 @@ def get_shape_props(doc_name: str, obj_name: str) -> dict:
     in outer quotes and breaks ``json.loads`` on the receiving end.
     Stdout output bypasses that wrap.
     """
+    # ``result = None`` at the end clears a stale value from the
+    # execute_python persistent namespace. Without it, a previously-set
+    # ``result`` variable (e.g. 'restored' from FreeCAD's startup logic
+    # or a prior test) gets picked up by the handler's else-branch
+    # (handlers/freecad_mcp_handler.py:1265-1266) and its repr() lands
+    # on a second line of output, breaking json.loads.
     code = f"""
 import json
 doc = FreeCAD.getDocument({doc_name!r})
@@ -87,6 +93,7 @@ else:
         "bbox": [s.BoundBox.XLength, s.BoundBox.YLength, s.BoundBox.ZLength],
         "is_valid": bool(s.isValid()),
     }}))
+result = None
 """
     raw = send_command("execute_python", {"code": code})
     # If the bridge surfaced an error (object not found, doc not open, etc.)
