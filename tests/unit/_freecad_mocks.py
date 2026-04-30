@@ -66,6 +66,27 @@ mock_PartDesign = _adopt_or_create('PartDesign')
 mock_Mesh = _adopt_or_create('Mesh')
 mock_MeshPart = _adopt_or_create('MeshPart')
 
+# CAM workbench imports — handlers do `from Path.Tool.Bit import ToolBit`,
+# `from Path.Tool.Controller import Create`, `from Path.Post.Processor
+# import PostProcessorFactory` etc. inside method bodies. Pre-populate
+# the module hierarchy so those imports succeed.
+mock_Path = _adopt_or_create('Path')
+mock_Path_Main = _adopt_or_create('Path.Main')
+mock_Path_Main_Job = _adopt_or_create('Path.Main.Job')
+mock_Path_Main_Stock = _adopt_or_create('Path.Main.Stock')
+mock_Path_Main_Gui = _adopt_or_create('Path.Main.Gui')
+mock_Path_Main_Gui_Job = _adopt_or_create('Path.Main.Gui.Job')
+mock_Path_Tool = _adopt_or_create('Path.Tool')
+mock_Path_Tool_Bit = _adopt_or_create('Path.Tool.Bit')
+mock_Path_Tool_Controller = _adopt_or_create('Path.Tool.Controller')
+mock_Path_Op = _adopt_or_create('Path.Op')
+mock_Path_Op_Profile = _adopt_or_create('Path.Op.Profile')
+mock_Path_Op_Pocket = _adopt_or_create('Path.Op.Pocket')
+mock_Path_Op_Drilling = _adopt_or_create('Path.Op.Drilling')
+mock_Path_Op_Adaptive = _adopt_or_create('Path.Op.Adaptive')
+mock_Path_Post = _adopt_or_create('Path.Post')
+mock_Path_Post_Processor = _adopt_or_create('Path.Post.Processor')
+
 # Make handler imports resolvable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'AICopilot'))
 
@@ -98,6 +119,22 @@ def reset_mocks():
     sys.modules['PartDesign'] = mock_PartDesign
     sys.modules['Mesh'] = mock_Mesh
     sys.modules['MeshPart'] = mock_MeshPart
+    sys.modules['Path'] = mock_Path
+    sys.modules['Path.Main'] = mock_Path_Main
+    sys.modules['Path.Main.Job'] = mock_Path_Main_Job
+    sys.modules['Path.Main.Stock'] = mock_Path_Main_Stock
+    sys.modules['Path.Main.Gui'] = mock_Path_Main_Gui
+    sys.modules['Path.Main.Gui.Job'] = mock_Path_Main_Gui_Job
+    sys.modules['Path.Tool'] = mock_Path_Tool
+    sys.modules['Path.Tool.Bit'] = mock_Path_Tool_Bit
+    sys.modules['Path.Tool.Controller'] = mock_Path_Tool_Controller
+    sys.modules['Path.Op'] = mock_Path_Op
+    sys.modules['Path.Op.Profile'] = mock_Path_Op_Profile
+    sys.modules['Path.Op.Pocket'] = mock_Path_Op_Pocket
+    sys.modules['Path.Op.Drilling'] = mock_Path_Op_Drilling
+    sys.modules['Path.Op.Adaptive'] = mock_Path_Op_Adaptive
+    sys.modules['Path.Post'] = mock_Path_Post
+    sys.modules['Path.Post.Processor'] = mock_Path_Post_Processor
 
     mock_FreeCAD.GuiUp = False
     mock_FreeCAD.Console = MagicMock()
