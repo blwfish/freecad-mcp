@@ -1,14 +1,9 @@
 """Unit tests for MeasurementOpsHandler.
 
 Focus: list_faces, get_volume, get_surface_area, get_center_of_mass,
-count_elements, measure_distance, get_mass_properties. The list_faces
-op is the load-bearing one — PartDesign tests rely on its face indices
-and normals being correct.
-
-Known bug not fixed here: get_bounding_box is defined twice in
-measurement_ops.py — the second definition (line 232) shadows the
-first and actually implements check_solid. Tests here document the
-shadowing rather than the lost operation. Flag this for follow-up.
+count_elements, measure_distance, get_mass_properties, get_bounding_box,
+check_solid. The list_faces op is the load-bearing one — PartDesign
+tests rely on its face indices and normals being correct.
 
 Run with: python3 -m pytest tests/unit/test_measurement_ops.py -v
 """
@@ -275,6 +270,56 @@ class TestGetCenterOfMass(unittest.TestCase):
         mock_FreeCAD.ActiveDocument = doc
         result = self.handler.get_center_of_mass({'object_name': 'X'})
         assert_success_contains(self, result, "5.00", "10.00", "15.00")
+
+
+class TestGetBoundingBox(unittest.TestCase):
+    """Regression test for the duplicate-method bug: get_bounding_box must
+    return real bounding box info, not the shadowed check_solid output."""
+
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(MeasurementOpsHandler)
+
+    def test_returns_bounding_box_dimensions(self):
+        """A 10x10x10 box reports XLength/YLength/ZLength = 10."""
+        box = make_box_object("Box1", 10.0, 10.0, 10.0)
+        doc = make_mock_doc([box])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.get_bounding_box({'object_name': 'Box1'})
+
+        assert_success_contains(self, result, "Bounding box", "Box1",
+                                "length: 10", "width: 10", "height: 10")
+
+
+class TestCheckSolid(unittest.TestCase):
+    """check_solid was previously hidden behind the duplicate get_bounding_box
+    name. Since the rename, it must dispatch as a real op."""
+
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(MeasurementOpsHandler)
+
+    def test_valid_closed_solid(self):
+        box = make_box_object("Box1")
+        # _make_shape default: isValid=True, isClosed=True, 1 solid
+        doc = make_mock_doc([box])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.check_solid({'object_name': 'Box1'})
+
+        assert_success_contains(self, result, "Solid check", "Box1",
+                                "Is a closed solid", "Shape is valid")
+
+    def test_open_shape_reports_not_closed(self):
+        box = make_box_object("Box1")
+        box.Shape.isClosed = MagicMock(return_value=False)
+        doc = make_mock_doc([box])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.check_solid({'object_name': 'Box1'})
+
+        assert_success_contains(self, result, "Not a closed solid")
 
 
 class TestGetMassProperties(unittest.TestCase):

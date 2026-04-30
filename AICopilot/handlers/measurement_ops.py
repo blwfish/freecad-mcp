@@ -229,8 +229,8 @@ class MeasurementOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error listing faces: {e}"
 
-    def get_bounding_box(self, args: Dict[str, Any]) -> str:
-        """Check if object is a valid solid."""
+    def check_solid(self, args: Dict[str, Any]) -> str:
+        """Check if object is a valid closed solid."""
         try:
             object_name = args.get('object_name', '')
 

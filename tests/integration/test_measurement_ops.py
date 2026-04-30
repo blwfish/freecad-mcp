@@ -1,15 +1,9 @@
 """
 Measurement operations integration tests — list_faces, get_bounding_box,
 get_volume, get_surface_area, get_center_of_mass, get_mass_properties,
-count_elements, check_solid (via get_bounding_box shadowed method),
-measure_distance.
+count_elements, check_solid, measure_distance.
 
 Uses generic dispatcher — operation names must match method names.
-
-NOTE: There is a known bug where get_bounding_box is defined twice in
-measurement_ops.py. The second definition (line 232) shadows the first
-and actually implements a "check_solid" operation. Tests document this
-current behavior.
 """
 
 import time
@@ -165,18 +159,35 @@ class TestCountElements:
         assert "Solids: 1" in text, f"Expected 1 solid: {text[:300]}"
 
 
-class TestBoundingBoxAndSolidCheck:
-    def test_get_bounding_box_is_actually_solid_check(self, known_box):
-        """Due to duplicate method name bug, get_bounding_box actually does solid check."""
+class TestBoundingBox:
+    def test_get_bounding_box_returns_dimensions(self, known_box):
+        """Bounding box of 20x15x10 box reports X/Y/Z extents and lengths."""
         result = send_command("measurement_operations", {
             "operation": "get_bounding_box",
             "object_name": "MeasBox",
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
-        # The shadowed method returns solid check info, not bounding box
-        # Accept either behavior — test dispatches correctly
-        assert "solid" in result_str.lower() or "bounding" in result_str.lower()
+        assert_op_succeeded(result, "get_bounding_box")
+        text = _text(result)
+        assert "Bounding box" in text, \
+            f"Expected bounding box header: {text[:300]}"
+        assert "length: 20" in text, f"Expected XLength 20: {text[:300]}"
+        assert "width: 15" in text, f"Expected YLength 15: {text[:300]}"
+        assert "height: 10" in text, f"Expected ZLength 10: {text[:300]}"
+
+
+class TestCheckSolid:
+    def test_check_solid_on_valid_box(self, known_box):
+        """A standard 20x15x10 box is a closed, valid solid."""
+        result = send_command("measurement_operations", {
+            "operation": "check_solid",
+            "object_name": "MeasBox",
+        })
+        assert_op_succeeded(result, "check_solid")
+        text = _text(result)
+        assert "Is a closed solid" in text, \
+            f"Expected closed-solid status: {text[:300]}"
+        assert "Shape is valid" in text, \
+            f"Expected valid status: {text[:300]}"
 
 
 class TestMeasureDistance:
