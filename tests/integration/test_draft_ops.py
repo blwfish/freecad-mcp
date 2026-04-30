@@ -8,7 +8,18 @@ names must match method names exactly.
 
 import time
 import pytest
+from ._geom_helpers import assert_op_succeeded
 from .test_e2e_workflows import send_command
+
+
+def _text(result):
+    if isinstance(result, dict):
+        content = result.get("content")
+        if isinstance(content, list) and content:
+            first = content[0]
+            if isinstance(first, dict) and "text" in first:
+                return first["text"]
+    return str(result)
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +98,12 @@ class TestDraftClone:
 
 class TestDraftArrays:
     def test_ortho_array(self, box_in_document):
-        """2x3 rectangular array."""
+        """2x3 rectangular array reports correct total instance count.
+
+        Silent-regression case: an off-by-one in count_x or count_y or a
+        wrong axis would still produce a valid Draft array, but with the
+        wrong layout. Assert the reported count matches 2*3=6.
+        """
         result = send_command("draft_operations", {
             "operation": "array",
             "object_name": "DBox",
@@ -96,12 +112,14 @@ class TestDraftArrays:
             "interval_x": 15,
             "interval_y": 15,
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
-        assert "error" not in result_str.lower() or "array" in result_str.lower()
+        assert_op_succeeded(result, "ortho array")
+        text = _text(result)
+        assert "6 instances" in text, \
+            f"Expected 6 instances (2x3) in: {text[:300]}"
+        assert "2x3x1" in text, f"Expected 2x3x1 layout: {text[:300]}"
 
     def test_polar_array(self, box_in_document):
-        """6-element polar array around origin."""
+        """6-element polar array reports correct count and angle."""
         result = send_command("draft_operations", {
             "operation": "polar_array",
             "object_name": "DBox",
@@ -109,9 +127,11 @@ class TestDraftArrays:
             "angle": 360,
             "center_x": 0, "center_y": 0, "center_z": 0,
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
-        assert "error" not in result_str.lower() or "polar" in result_str.lower()
+        assert_op_succeeded(result, "polar array")
+        text = _text(result)
+        assert "6 instances" in text, \
+            f"Expected 6 instances in: {text[:300]}"
+        assert "360" in text, f"Expected 360° in: {text[:300]}"
 
     def test_path_array(self, box_in_document):
         """Array along a wire path."""
