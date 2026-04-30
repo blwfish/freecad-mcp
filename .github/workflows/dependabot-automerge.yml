@@ -29,6 +29,18 @@ jobs:
     runs-on: ubuntu-latest
     if: github.actor == 'dependabot[bot]'
     steps:
+      - name: Ensure dependabot-needs-review label exists
+        # gh pr edit --add-label fails if the label doesn't exist.
+        # Create it once (idempotent — || true swallows the "already exists" error).
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create dependabot-needs-review \
+            --repo "${{ github.repository }}" \
+            --color FBCA04 \
+            --description "Dependabot PR needs human review (minor/major bump)" \
+            2>/dev/null || true
+
       - name: Fetch Dependabot metadata
         id: meta
         uses: dependabot/fetch-metadata@v2
