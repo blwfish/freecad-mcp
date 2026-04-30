@@ -79,35 +79,35 @@ doc.recompute()
 
 class TestRevolution:
     def test_revolution_full(self, clean_document):
-        """Revolve a 10x20 rectangle (offset 5 from Y axis) full circle.
+        """Revolve a 10x20 rectangular face (offset 5 from Y axis) full circle.
 
         Expected solid: ring with outer R=15, inner R=5, height=20.
         Volume = π * (15² - 5²) * 20 = π * 200 * 20 ≈ 12566 mm³.
 
-        Requires the handler to set Solid=True on Part::Revolution
-        (pre-existing concern fixed in the same commit as this
-        assertion tightening).
+        Setup uses a Part::Feature with an explicit Face shape rather
+        than a raw Sketcher::SketchObject. ``Part::Revolution.Solid =
+        True`` only produces a closed solid when the source provides a
+        face (which a raw sketch with line segments does not — the GUI
+        normally auto-promotes the closed wire to a face, but headless
+        FreeCAD does not).
         """
         send_command("execute_python", {
             "code": """
-import Part, Sketcher
+import Part
 doc = FreeCAD.ActiveDocument
-body = doc.addObject('PartDesign::Body', 'Body')
 
-sketch = doc.addObject('Sketcher::SketchObject', 'RevSketch')
-body.addObject(sketch)
-sketch.AttachmentSupport = [(doc.getObject('XZ_Plane'), '')]
-sketch.MapMode = 'FlatFace'
-
-# L-shaped profile offset from Y axis (must not cross the revolution axis)
-sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(5,0,0), FreeCAD.Vector(15,0,0)))
-sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(15,0,0), FreeCAD.Vector(15,20,0)))
-sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(15,20,0), FreeCAD.Vector(5,20,0)))
-sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(5,20,0), FreeCAD.Vector(5,0,0)))
-sketch.addConstraint(Sketcher.Constraint('Coincident', 0, 2, 1, 1))
-sketch.addConstraint(Sketcher.Constraint('Coincident', 1, 2, 2, 1))
-sketch.addConstraint(Sketcher.Constraint('Coincident', 2, 2, 3, 1))
-sketch.addConstraint(Sketcher.Constraint('Coincident', 3, 2, 0, 1))
+# Build the rectangular profile as a Part::Feature with a Face shape.
+points = [
+    FreeCAD.Vector(5,  0, 0),
+    FreeCAD.Vector(15, 0, 0),
+    FreeCAD.Vector(15, 0, 20),
+    FreeCAD.Vector(5,  0, 20),
+    FreeCAD.Vector(5,  0, 0),
+]
+wire = Part.makePolygon(points)
+face = Part.Face(wire)
+profile = doc.addObject('Part::Feature', 'RevProfile')
+profile.Shape = face
 
 doc.recompute()
 result = None
@@ -115,7 +115,7 @@ result = None
         })
         result = send_command("partdesign_operations", {
             "operation": "revolution",
-            "sketch_name": "RevSketch",
+            "sketch_name": "RevProfile",
             "axis": "Y",
             "angle": 360,
         })
