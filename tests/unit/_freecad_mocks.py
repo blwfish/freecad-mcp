@@ -25,31 +25,46 @@ from unittest.mock import MagicMock
 
 # ---------------------------------------------------------------------------
 # Module-level mock installation. Runs once on import.
+#
+# IMPORTANT: must be idempotent and tolerant of other unit-test files
+# that pre-mock with their own MagicMock at module level
+# (test_mesh_ops.py, test_spatial_ops.py, test_open_wire_diagnosis.py
+# all do this). Whichever file loads first wins sys.modules['FreeCAD'];
+# handlers close over that same object via ``import FreeCAD`` and never
+# re-resolve. If we install a *fresh* mock here, our handler tests
+# break the others (they set state on a different object than the
+# handler reads from).
+#
+# Strategy: adopt whatever is already in sys.modules if it's a Mock,
+# otherwise install ours. End state — every test file that uses module-
+# level pre-mocking ends up sharing the same mock object as long as at
+# least one of them is idempotent.
 # ---------------------------------------------------------------------------
 
-mock_FreeCAD = MagicMock()
+def _adopt_or_create(name: str) -> MagicMock:
+    existing = sys.modules.get(name)
+    if isinstance(existing, MagicMock):
+        return existing
+    fresh = MagicMock()
+    sys.modules[name] = fresh
+    return fresh
+
+
+mock_FreeCAD = _adopt_or_create('FreeCAD')
 mock_FreeCAD.GuiUp = False
-mock_FreeCAD.Console = MagicMock()
-mock_FreeCAD.ActiveDocument = None
+if not isinstance(getattr(mock_FreeCAD, 'Console', None), MagicMock):
+    mock_FreeCAD.Console = MagicMock()
+if not hasattr(mock_FreeCAD, 'ActiveDocument'):
+    mock_FreeCAD.ActiveDocument = None
 
-mock_FreeCADGui = MagicMock()
-mock_Part = MagicMock()
-mock_Sketcher = MagicMock()
-mock_Draft = MagicMock()
-mock_Spreadsheet = MagicMock()
-mock_PartDesign = MagicMock()
-mock_Mesh = MagicMock()
-mock_MeshPart = MagicMock()
-
-sys.modules['FreeCAD'] = mock_FreeCAD
-sys.modules['FreeCADGui'] = mock_FreeCADGui
-sys.modules['Part'] = mock_Part
-sys.modules['Sketcher'] = mock_Sketcher
-sys.modules['Draft'] = mock_Draft
-sys.modules['Spreadsheet'] = mock_Spreadsheet
-sys.modules['PartDesign'] = mock_PartDesign
-sys.modules['Mesh'] = mock_Mesh
-sys.modules['MeshPart'] = mock_MeshPart
+mock_FreeCADGui = _adopt_or_create('FreeCADGui')
+mock_Part = _adopt_or_create('Part')
+mock_Sketcher = _adopt_or_create('Sketcher')
+mock_Draft = _adopt_or_create('Draft')
+mock_Spreadsheet = _adopt_or_create('Spreadsheet')
+mock_PartDesign = _adopt_or_create('PartDesign')
+mock_Mesh = _adopt_or_create('Mesh')
+mock_MeshPart = _adopt_or_create('MeshPart')
 
 # Make handler imports resolvable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'AICopilot'))

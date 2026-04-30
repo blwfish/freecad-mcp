@@ -14,7 +14,19 @@ current behavior.
 
 import time
 import pytest
+from ._geom_helpers import assert_op_succeeded
 from .test_e2e_workflows import send_command
+
+
+def _text(result):
+    """Pull the text body from a send_command response."""
+    if isinstance(result, dict):
+        content = result.get("content")
+        if isinstance(content, list) and content:
+            first = content[0]
+            if isinstance(first, dict) and "text" in first:
+                return first["text"]
+    return str(result)
 
 
 @pytest.fixture
@@ -46,22 +58,39 @@ def known_box(clean_document):
 
 class TestListFaces:
     def test_list_faces_box(self, known_box):
-        """A box should have 6 faces."""
+        """A 20x15x10 box has 6 faces with axis-aligned normals."""
         result = send_command("measurement_operations", {
             "operation": "list_faces",
             "object_name": "MeasBox",
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
-        assert "6" in result_str  # 6 faces
+        assert_op_succeeded(result, "list_faces")
+        text = _text(result)
+        # Header reports total face count
+        assert "6 total" in text, f"Missing face count: {text[:300]}"
+        # 1-based face indexing — Face1..Face6
+        for i in range(1, 7):
+            assert f"Face{i}:" in text, f"Missing Face{i} in: {text[:400]}"
+        # Axis-aligned normals (handler emits '+.2f' format)
+        for normal in ("(+1.00, +0.00, +0.00)",
+                       "(-1.00, +0.00, +0.00)",
+                       "(+0.00, +1.00, +0.00)",
+                       "(+0.00, -1.00, +0.00)",
+                       "(+0.00, +0.00, +1.00)",
+                       "(+0.00, +0.00, -1.00)"):
+            assert normal in text, \
+                f"Missing axis-aligned normal {normal} in: {text[:400]}"
+        # Face areas: 20×15 = 300 (top/bot), 20×10 = 200 (front/back),
+        # 15×10 = 150 (left/right) — each appears at least once
+        for area in ("300.00", "200.00", "150.00"):
+            assert area in text, f"Missing face area {area} in: {text[:400]}"
 
     def test_list_faces_missing_object(self, clean_document):
         result = send_command("measurement_operations", {
             "operation": "list_faces",
             "object_name": "Ghost",
         })
-        result_str = str(result)
-        assert "not found" in result_str.lower() or "error" in result_str.lower()
+        text = _text(result)
+        assert "not found" in text.lower() or "error" in text.lower()
 
 
 class TestVolume:
@@ -71,9 +100,10 @@ class TestVolume:
             "operation": "get_volume",
             "object_name": "MeasBox",
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
-        assert "3000" in result_str
+        assert_op_succeeded(result, "get_volume")
+        text = _text(result)
+        assert "3000" in text, f"Expected volume 3000 in: {text[:200]}"
+        assert "mm" in text, f"Expected unit 'mm' in: {text[:200]}"
 
 
 class TestSurfaceArea:
@@ -83,46 +113,56 @@ class TestSurfaceArea:
             "operation": "get_surface_area",
             "object_name": "MeasBox",
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
-        assert "1300" in result_str
+        assert_op_succeeded(result, "get_surface_area")
+        text = _text(result)
+        assert "1300" in text, f"Expected area 1300 in: {text[:200]}"
 
 
 class TestCenterOfMass:
     def test_get_center_of_mass(self, known_box):
+        """Center of 20x15x10 box at origin = (10.00, 7.50, 5.00)."""
         result = send_command("measurement_operations", {
             "operation": "get_center_of_mass",
             "object_name": "MeasBox",
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
-        # Center should be at (10, 7.5, 5) for a box at origin
-        assert "10" in result_str
+        assert_op_succeeded(result, "get_center_of_mass")
+        text = _text(result)
+        assert "10.00" in text, f"Expected x-component 10.00 in: {text[:200]}"
+        assert "7.50" in text, f"Expected y-component 7.50 in: {text[:200]}"
+        assert "5.00" in text, f"Expected z-component 5.00 in: {text[:200]}"
 
 
 class TestMassProperties:
     def test_get_mass_properties(self, known_box):
+        """Reports volume, surface area, and center of mass for 20x15x10 box."""
         result = send_command("measurement_operations", {
             "operation": "get_mass_properties",
             "object_name": "MeasBox",
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
+        assert_op_succeeded(result, "get_mass_properties")
+        text = _text(result)
+        assert "Volume:" in text and "3000" in text, \
+            f"Expected volume 3000 in: {text[:300]}"
+        assert "Surface Area:" in text and "1300" in text, \
+            f"Expected surface area 1300 in: {text[:300]}"
+        assert "Center of Mass:" in text and "10.00" in text, \
+            f"Expected COM x=10.00 in: {text[:300]}"
 
 
 class TestCountElements:
     def test_count_elements_box(self, known_box):
-        """Box: 6 faces, 12 edges, 8 vertices."""
+        """Box: 6 faces, 12 edges, 8 vertices, 1 solid."""
         result = send_command("measurement_operations", {
             "operation": "count_elements",
             "object_name": "MeasBox",
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
-        # Should contain face/edge/vertex counts
-        assert "6" in result_str   # faces
-        assert "12" in result_str  # edges
-        assert "8" in result_str   # vertices
+        assert_op_succeeded(result, "count_elements")
+        text = _text(result)
+        # Use labeled counts so a stray "6" elsewhere won't count
+        assert "Faces: 6" in text, f"Expected 6 faces: {text[:300]}"
+        assert "Edges: 12" in text, f"Expected 12 edges: {text[:300]}"
+        assert "Vertices: 8" in text, f"Expected 8 vertices: {text[:300]}"
+        assert "Solids: 1" in text, f"Expected 1 solid: {text[:300]}"
 
 
 class TestBoundingBoxAndSolidCheck:
@@ -141,7 +181,10 @@ class TestBoundingBoxAndSolidCheck:
 
 class TestMeasureDistance:
     def test_measure_distance_two_boxes(self, clean_document):
-        """Measure distance between two separated boxes."""
+        """Center-to-center distance between two 10mm boxes 30mm apart = 30.00 mm.
+
+        Box A center = (5, 5, 5); Box B center = (35, 5, 5); distance = 30.
+        """
         send_command("part_operations", {
             "operation": "box",
             "length": 10, "width": 10, "height": 10,
@@ -157,7 +200,8 @@ class TestMeasureDistance:
             "object1": "DistA",
             "object2": "DistB",
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
-        # Distance depends on implementation (min distance vs center-to-center)
-        assert "Distance" in result_str or "distance" in result_str
+        assert_op_succeeded(result, "measure_distance")
+        text = _text(result)
+        assert "Distance" in text or "distance" in text
+        # Center-to-center: (5,5,5) → (35,5,5) = 30 mm
+        assert "30.00" in text, f"Expected distance 30.00 in: {text[:300]}"

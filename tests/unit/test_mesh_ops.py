@@ -13,22 +13,32 @@ from unittest.mock import Mock, MagicMock, patch, PropertyMock
 
 # ---------------------------------------------------------------------------
 # Mock FreeCAD modules before any handler imports
+#
+# Idempotent: adopt mocks already in sys.modules (e.g. installed by
+# test_spatial_ops, test_open_wire_diagnosis, or _freecad_mocks) so that
+# every test file in the suite ends up sharing the same mock objects.
+# Handlers close over sys.modules['FreeCAD'] at first import — if a
+# different file installed a different mock first, the cached handler
+# reads from theirs and our state writes go to ours, breaking tests.
 # ---------------------------------------------------------------------------
 
-# Create mock FreeCAD module hierarchy
-mock_FreeCAD = MagicMock()
-mock_FreeCAD.GuiUp = False
-mock_FreeCAD.Console = MagicMock()
-mock_FreeCADGui = MagicMock()
-mock_Part = MagicMock()
-mock_Mesh = MagicMock()
-mock_MeshPart = MagicMock()
+def _adopt_or_create_mock(name):
+    existing = sys.modules.get(name)
+    if isinstance(existing, MagicMock):
+        return existing
+    fresh = MagicMock()
+    sys.modules[name] = fresh
+    return fresh
 
-sys.modules['FreeCAD'] = mock_FreeCAD
-sys.modules['FreeCADGui'] = mock_FreeCADGui
-sys.modules['Part'] = mock_Part
-sys.modules['Mesh'] = mock_Mesh
-sys.modules['MeshPart'] = mock_MeshPart
+
+mock_FreeCAD = _adopt_or_create_mock('FreeCAD')
+mock_FreeCAD.GuiUp = False
+if not isinstance(getattr(mock_FreeCAD, 'Console', None), MagicMock):
+    mock_FreeCAD.Console = MagicMock()
+mock_FreeCADGui = _adopt_or_create_mock('FreeCADGui')
+mock_Part = _adopt_or_create_mock('Part')
+mock_Mesh = _adopt_or_create_mock('Mesh')
+mock_MeshPart = _adopt_or_create_mock('MeshPart')
 
 # Now we can import the handler
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'AICopilot'))
