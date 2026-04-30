@@ -415,6 +415,46 @@ def make_sketch(name="Sketch", has_wires=True, has_faces=False,
     return obj
 
 
+def make_spreadsheet(name="Spreadsheet"):
+    """Mock Spreadsheet::Sheet with set/get/setAlias/getAlias/clear methods."""
+    obj = MagicMock()
+    obj.Name = name
+    obj.Label = name
+    obj.TypeId = "Spreadsheet::Sheet"
+    obj.Placement = _Placement()
+    # In-memory cell store
+    cells_data = {}
+    aliases = {}
+
+    def _set(cell, value):
+        cells_data[cell.upper()] = value
+
+    def _get(cell):
+        return cells_data.get(cell.upper(), '')
+
+    def _set_alias(cell, alias):
+        aliases[cell.upper()] = alias
+
+    def _get_alias(cell):
+        return aliases.get(cell.upper(), None)
+
+    def _clear(cell):
+        cells_data.pop(cell.upper(), None)
+
+    obj.set = MagicMock(side_effect=_set)
+    obj.get = MagicMock(side_effect=_get)
+    obj.setAlias = MagicMock(side_effect=_set_alias)
+    obj.getAlias = MagicMock(side_effect=_get_alias)
+    obj.clear = MagicMock(side_effect=_clear)
+    obj._cells_data = cells_data
+    obj._aliases = aliases
+
+    cells = MagicMock()
+    cells.Content = '<cells></cells>'
+    obj.cells = cells
+    return obj
+
+
 def make_body(name="Body", tip=None, group=None):
     """Mock PartDesign::Body.
 
