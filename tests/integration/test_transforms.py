@@ -4,9 +4,33 @@ Transform integration tests — move, rotate, copy, array.
 All operations route through part_operations dispatcher.
 """
 
+import json
 import time
 import pytest
+from ._geom_helpers import assert_op_succeeded
 from .test_e2e_workflows import send_command
+
+
+def _placement_base(doc_name: str, obj_name: str) -> tuple:
+    """Return (x, y, z) of the object's Placement.Base via execute_python."""
+    code = (
+        f"import json\n"
+        f"obj = FreeCAD.getDocument('{doc_name}').getObject('{obj_name}')\n"
+        f"if obj is None:\n"
+        f"    found = FreeCAD.getDocument('{doc_name}').getObjectsByLabel('{obj_name}')\n"
+        f"    obj = found[0] if found else None\n"
+        f"p = obj.Placement.Base\n"
+        f"json.dumps([float(p.x), float(p.y), float(p.z)])\n"
+    )
+    raw = send_command("execute_python", {"code": code})
+    text = raw if isinstance(raw, str) else (
+        raw.get("content", [{}])[0].get("text", str(raw))
+        if isinstance(raw, dict) else str(raw)
+    )
+    text = text.strip()
+    if text.startswith("Result: "):
+        text = text[len("Result: "):]
+    return tuple(json.loads(text))
 
 
 @pytest.fixture
@@ -38,24 +62,30 @@ def box_in_document(clean_document):
 
 class TestMove:
     def test_move_relative(self, box_in_document):
+        """Default relative move adds offset to current Placement.Base."""
         result = send_command("part_operations", {
             "operation": "move",
             "object_name": "TBox",
             "x": 10, "y": 5, "z": 0,
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
-        assert "error" not in result_str.lower() or "Moved" in result_str
+        assert_op_succeeded(result, "move relative")
+        # Box was at (0,0,0) initially; relative move puts it at (10,5,0)
+        x, y, z = _placement_base(box_in_document, "TBox")
+        assert (x, y, z) == (10.0, 5.0, 0.0), \
+            f"Expected (10,5,0), got ({x},{y},{z})"
 
     def test_move_absolute(self, box_in_document):
+        """relative=False sets Placement.Base directly (commit 4247599)."""
         result = send_command("part_operations", {
             "operation": "move",
             "object_name": "TBox",
             "x": 50, "y": 50, "z": 50,
             "relative": False,
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
+        assert_op_succeeded(result, "move absolute")
+        x, y, z = _placement_base(box_in_document, "TBox")
+        assert (x, y, z) == (50.0, 50.0, 50.0), \
+            f"Expected (50,50,50), got ({x},{y},{z})"
 
     def test_move_missing_object(self, clean_document):
         result = send_command("part_operations", {

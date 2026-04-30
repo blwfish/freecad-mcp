@@ -75,15 +75,34 @@ def reset_mocks():
 
     Resets call records, return values, and side effects, then re-installs
     the small handful of attributes our tests rely on.
+
+    Also re-asserts our mocks into sys.modules — the unit conftest has an
+    autouse mock_freecad fixture that replaces sys.modules['Part'] (and
+    others) with a bare types.ModuleType per test, which would break
+    handler methods that do ``import Part`` and call ``Part.Face``,
+    ``Part.makeCompound``, etc. at call-time. test_mesh_ops works around
+    this in its own setUp; doing it once here means downstream tests
+    inherit the workaround for free.
     """
     for m in (mock_FreeCAD, mock_FreeCADGui, mock_Part, mock_Sketcher,
               mock_Draft, mock_Spreadsheet, mock_PartDesign,
               mock_Mesh, mock_MeshPart):
         m.reset_mock(return_value=True, side_effect=True)
 
+    sys.modules['FreeCAD'] = mock_FreeCAD
+    sys.modules['FreeCADGui'] = mock_FreeCADGui
+    sys.modules['Part'] = mock_Part
+    sys.modules['Sketcher'] = mock_Sketcher
+    sys.modules['Draft'] = mock_Draft
+    sys.modules['Spreadsheet'] = mock_Spreadsheet
+    sys.modules['PartDesign'] = mock_PartDesign
+    sys.modules['Mesh'] = mock_Mesh
+    sys.modules['MeshPart'] = mock_MeshPart
+
     mock_FreeCAD.GuiUp = False
     mock_FreeCAD.Console = MagicMock()
     mock_FreeCAD.ActiveDocument = None
+    install_freecad_value_types()
 
 
 # ---------------------------------------------------------------------------
@@ -254,30 +273,81 @@ def make_part_object(name="Part", **shape_kwargs):
     return obj
 
 
+_PARAMETRIC_QUANTITY_NAMES = frozenset({
+    'Length', 'Width', 'Height', 'Radius', 'Radius1', 'Radius2', 'Angle',
+})
+
+
+class _Quantity:
+    """Stand-in for a FreeCAD Quantity. Holds .Value, supports float()."""
+
+    __slots__ = ('Value',)
+
+    def __init__(self, value):
+        self.Value = float(value)
+
+    def __float__(self):
+        return self.Value
+
+    def __repr__(self):
+        return f"_Quantity({self.Value})"
+
+
+def _attach_parametric_setter(obj):
+    """Make assignments to Length/Radius/etc. auto-rehydrate as _Quantity.
+
+    FreeCAD's parametric primitive properties act like Quantity descriptors:
+    ``obj.Length = 20.0`` stores a Quantity, so subsequent ``obj.Length.Value``
+    still works. A plain MagicMock attribute would just become 20.0 and lose
+    .Value. This setter intercepts assignments to known parametric names and
+    wraps numeric values in our _Quantity stub.
+    """
+    original_setattr = type(obj).__setattr__
+
+    def _setattr(self, name, value):
+        if name in _PARAMETRIC_QUANTITY_NAMES and isinstance(value, (int, float)):
+            value = _Quantity(value)
+        original_setattr(self, name, value)
+
+    # Per-instance __setattr__ override — type-level binding so the lookup hits
+    type(obj).__setattr__ = _setattr
+
+
 def make_box_object(name="Box", length=10.0, width=10.0, height=10.0,
                     placement=None):
     """Mock Part::Box (parametric primitive with Length/Width/Height)."""
     obj = make_part_object(name, volume=length * width * height,
                            bbox=(length, width, height))
     obj.TypeId = "Part::Box"
-    # Parametric box exposes Length/Width/Height as Quantity-like objects
-    obj.Length = MagicMock(Value=length)
-    obj.Length.__float__ = lambda s: length
-    obj.Width = MagicMock(Value=width)
-    obj.Height = MagicMock(Value=height)
+    obj.Length = _Quantity(length)
+    obj.Width = _Quantity(width)
+    obj.Height = _Quantity(height)
+    _attach_parametric_setter(obj)
     if placement is not None:
         obj.Placement = placement
     return obj
 
 
 def make_cylinder_object(name="Cylinder", radius=5.0, height=10.0):
-    """Mock Part::Cylinder (parametric)."""
+    """Mock Part::Cylinder (parametric).
+
+    MagicMock auto-creates any attribute on access, so the part_ops
+    scale_object branches (which use ``hasattr``) would all match. Delete
+    Length/Width/Radius2 so the cylinder branch wins over the box branch.
+    """
     import math
     obj = make_part_object(name, volume=math.pi * radius * radius * height,
                            bbox=(2 * radius, 2 * radius, height))
     obj.TypeId = "Part::Cylinder"
-    obj.Radius = MagicMock(Value=radius)
-    obj.Height = MagicMock(Value=height)
+    if hasattr(obj, 'Length'):
+        del obj.Length
+    if hasattr(obj, 'Width'):
+        del obj.Width
+    if hasattr(obj, 'Radius2'):
+        del obj.Radius2
+    obj.Radius = _Quantity(radius)
+    obj.Height = _Quantity(height)
+    _attach_parametric_setter(obj)
     return obj
 
 
@@ -287,13 +357,14 @@ def make_sphere_object(name="Sphere", radius=5.0):
     obj = make_part_object(name, volume=(4.0 / 3.0) * math.pi * radius ** 3,
                            bbox=(2 * radius, 2 * radius, 2 * radius))
     obj.TypeId = "Part::Sphere"
-    obj.Radius = MagicMock(Value=radius)
+    obj.Radius = _Quantity(radius)
     if hasattr(obj, 'Height'):
         del obj.Height
     if hasattr(obj, 'Length'):
         del obj.Length
     if hasattr(obj, 'Width'):
         del obj.Width
+    _attach_parametric_setter(obj)
     return obj
 
 

@@ -7,6 +7,11 @@ All operations route through part_operations dispatcher.
 
 import time
 import pytest
+from ._geom_helpers import (
+    assert_op_succeeded,
+    get_shape_props,
+    assert_volume_close,
+)
 from .test_e2e_workflows import send_command
 
 
@@ -114,7 +119,7 @@ class TestPartRevolve:
 
 class TestPartMirrorScaleSection:
     def test_mirror_box(self, clean_document):
-        """Mirror a box across a plane."""
+        """Mirroring preserves volume — 10mm box mirrored across YZ has V=1000."""
         send_command("part_operations", {
             "operation": "box",
             "length": 10, "width": 10, "height": 10,
@@ -125,8 +130,11 @@ class TestPartMirrorScaleSection:
             "object_name": "MirrorBox",
             "plane": "YZ",
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
+        assert_op_succeeded(result, "mirror")
+        props = get_shape_props(clean_document, "MirrorBox_mirrored")
+        assert props is not None, "Mirror produced no shape"
+        assert_volume_close(props['volume'], 1000.0, rel=0.01,
+                            op_label="mirror volume")
 
     def test_scale_box(self, clean_document):
         """Scale a box by a factor."""
@@ -227,7 +235,7 @@ doc.recompute()
 
 class TestPartCompoundAndCheck:
     def test_compound_two_boxes(self, clean_document):
-        """Create a compound of two boxes."""
+        """Compound of two 10mm boxes has 2 solids and combined volume = 2000."""
         send_command("part_operations", {
             "operation": "box",
             "length": 10, "width": 10, "height": 10,
@@ -241,12 +249,18 @@ class TestPartCompoundAndCheck:
         result = send_command("part_operations", {
             "operation": "compound",
             "objects": ["CBox1", "CBox2"],
+            "name": "TwoBoxes",
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
+        assert_op_succeeded(result, "compound")
+        props = get_shape_props(clean_document, "TwoBoxes")
+        assert props is not None, "Compound has no Shape"
+        assert props['solid_count'] == 2, \
+            f"Compound should hold 2 solids, got {props['solid_count']}"
+        assert_volume_close(props['volume'], 2000.0, rel=0.01,
+                            op_label="compound volume")
 
     def test_check_geometry(self, clean_document):
-        """Check geometry of a box (should be valid)."""
+        """check_geometry on a 10mm box: Valid=True, 1 solid, 6 faces."""
         send_command("part_operations", {
             "operation": "box",
             "length": 10, "width": 10, "height": 10,
@@ -256,5 +270,14 @@ class TestPartCompoundAndCheck:
             "operation": "check_geometry",
             "object_name": "CheckBox",
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
+        assert_op_succeeded(result, "check_geometry")
+        # Result body contains specific assertions about the geometry
+        text = result if isinstance(result, str) else (
+            result.get("content", [{}])[0].get("text", str(result))
+            if isinstance(result, dict) else str(result)
+        )
+        assert "Valid: True" in text, f"Expected Valid: True in: {text[:300]}"
+        assert "Solids: 1" in text, f"Expected Solids: 1 in: {text[:300]}"
+        assert "Faces: 6" in text, f"Expected Faces: 6 in: {text[:300]}"
+        assert "Edges: 12" in text, f"Expected Edges: 12 in: {text[:300]}"
+        assert "Volume: 1000" in text, f"Expected Volume: 1000 in: {text[:300]}"
