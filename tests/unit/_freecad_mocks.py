@@ -187,9 +187,26 @@ class _Vec:
 
 
 class _Rotation:
-    def __init__(self, axis=None, angle=0):
-        self.axis = axis or _Vec(0, 0, 1)
-        self.angle = angle
+    """Stand-in for FreeCAD.Rotation. Accepts (), (axis, angle), or (q1,q2,q3,q4).
+
+    FreeCAD's real Rotation has many overloads; we only need
+    enough to survive being constructed and to support .multiply.
+    """
+
+    def __init__(self, *args):
+        if len(args) == 0:
+            self.axis = _Vec(0, 0, 1)
+            self.angle = 0
+        elif len(args) == 2:
+            self.axis = args[0] if args[0] is not None else _Vec(0, 0, 1)
+            self.angle = args[1]
+        elif len(args) == 4:
+            # Quaternion form (q1, q2, q3, q4)
+            self.axis = _Vec(args[0], args[1], args[2])
+            self.angle = args[3]
+        else:
+            self.axis = _Vec(0, 0, 1)
+            self.angle = 0
 
     def multiply(self, other):
         return _Rotation(self.axis, self.angle + other.angle)

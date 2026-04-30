@@ -8,7 +8,18 @@ are already tested in test_e2e_workflows.py.
 
 import time
 import pytest
+from ._geom_helpers import assert_op_succeeded
 from .test_e2e_workflows import send_command
+
+
+def _text(result):
+    if isinstance(result, dict):
+        content = result.get("content")
+        if isinstance(content, list) and content:
+            first = content[0]
+            if isinstance(first, dict) and "text" in first:
+                return first["text"]
+    return str(result)
 
 
 @pytest.fixture
@@ -40,14 +51,18 @@ def empty_sketch(clean_document):
 
 class TestAddLine:
     def test_add_line(self, empty_sketch):
+        """add_line reports the assigned geo_id — confirms geometry was added."""
         result = send_command("sketch_operations", {
             "operation": "add_line",
             "sketch_name": "TestSketch",
             "x1": 0, "y1": 0, "x2": 20, "y2": 0,
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
-        assert "error" not in result_str.lower() or "line" in result_str.lower()
+        assert_op_succeeded(result, "add_line")
+        text = _text(result)
+        assert "geo_id=" in text, \
+            f"Expected geo_id in line result: {text[:300]}"
+        assert "(0,0)" in text and "(20,0)" in text, \
+            f"Expected line coords: {text[:300]}"
 
     def test_add_line_missing_sketch(self, clean_document):
         result = send_command("sketch_operations", {
@@ -55,25 +70,29 @@ class TestAddLine:
             "sketch_name": "NoSketch",
             "x1": 0, "y1": 0, "x2": 10, "y2": 0,
         })
-        result_str = str(result)
-        assert "not found" in result_str.lower() or "error" in result_str.lower()
+        text = _text(result)
+        assert "not found" in text.lower() or "error" in text.lower()
 
 
 class TestAddCircle:
     def test_add_circle(self, empty_sketch):
+        """add_circle reports the assigned geo_id and adds 3 constraints."""
         result = send_command("sketch_operations", {
             "operation": "add_circle",
             "sketch_name": "TestSketch",
-            "center_x": 10, "center_y": 10,
+            "x": 10, "y": 10,
             "radius": 5,
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
-        assert "error" not in result_str.lower() or "circle" in result_str.lower()
+        assert_op_succeeded(result, "add_circle")
+        text = _text(result)
+        assert "geo_id=" in text, f"Expected geo_id: {text[:300]}"
+        assert "radius 5" in text, f"Expected radius 5: {text[:300]}"
+        assert "(10,10)" in text, f"Expected center (10,10): {text[:300]}"
 
 
 class TestAddArc:
     def test_add_arc(self, empty_sketch):
+        """add_arc reports geo_id, radius, and angles in degrees."""
         result = send_command("sketch_operations", {
             "operation": "add_arc",
             "sketch_name": "TestSketch",
@@ -81,9 +100,12 @@ class TestAddArc:
             "radius": 8,
             "start_angle": 0, "end_angle": 90,
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
-        assert "error" not in result_str.lower() or "arc" in result_str.lower()
+        assert_op_succeeded(result, "add_arc")
+        text = _text(result)
+        assert "geo_id=" in text, f"Expected geo_id: {text[:300]}"
+        assert "0°" in text and "90°" in text, \
+            f"Expected angles in degrees: {text[:300]}"
+        assert "R8" in text, f"Expected R8 in: {text[:300]}"
 
 
 class TestAddSlot:
