@@ -6,21 +6,11 @@ count_elements, check_solid, measure_distance.
 Uses generic dispatcher — operation names must match method names.
 """
 
+import re
 import time
 import pytest
-from ._geom_helpers import assert_op_succeeded
+from ._geom_helpers import assert_op_succeeded, _result_text as _text
 from .test_e2e_workflows import send_command
-
-
-def _text(result):
-    """Pull the text body from a send_command response."""
-    if isinstance(result, dict):
-        content = result.get("content")
-        if isinstance(content, list) and content:
-            first = content[0]
-            if isinstance(first, dict) and "text" in first:
-                return first["text"]
-    return str(result)
 
 
 @pytest.fixture
@@ -52,7 +42,13 @@ def known_box(clean_document):
 
 class TestListFaces:
     def test_list_faces_box(self, known_box):
-        """A 20x15x10 box has 6 faces with axis-aligned normals."""
+        """A 20x15x10 box has 6 faces with axis-aligned normals.
+
+        Real FreeCAD output uses '%+.2f' format which yields '-0.00' for
+        floating-point-near-zero components. Match each of the six
+        axis-aligned faces tolerantly: one component is ±1, the other
+        two are ±0.
+        """
         result = send_command("measurement_operations", {
             "operation": "list_faces",
             "object_name": "MeasBox",
@@ -64,15 +60,19 @@ class TestListFaces:
         # 1-based face indexing — Face1..Face6
         for i in range(1, 7):
             assert f"Face{i}:" in text, f"Missing Face{i} in: {text[:400]}"
-        # Axis-aligned normals (handler emits '+.2f' format)
-        for normal in ("(+1.00, +0.00, +0.00)",
-                       "(-1.00, +0.00, +0.00)",
-                       "(+0.00, +1.00, +0.00)",
-                       "(+0.00, -1.00, +0.00)",
-                       "(+0.00, +0.00, +1.00)",
-                       "(+0.00, +0.00, -1.00)"):
-            assert normal in text, \
-                f"Missing axis-aligned normal {normal} in: {text[:400]}"
+        # Six axis-aligned face normals, with tolerance for ±0 zeros.
+        # Each pattern: one ±1.00 component, two ±0.00 components.
+        pm0 = r"[+-]0\.00"
+        for direction, regex in (
+            ("+X", rf"\(\+1\.00, {pm0}, {pm0}\)"),
+            ("-X", rf"\(-1\.00, {pm0}, {pm0}\)"),
+            ("+Y", rf"\({pm0}, \+1\.00, {pm0}\)"),
+            ("-Y", rf"\({pm0}, -1\.00, {pm0}\)"),
+            ("+Z", rf"\({pm0}, {pm0}, \+1\.00\)"),
+            ("-Z", rf"\({pm0}, {pm0}, -1\.00\)"),
+        ):
+            assert re.search(regex, text), \
+                f"Missing {direction} face normal (regex {regex}) in: {text[:400]}"
         # Face areas: 20×15 = 300 (top/bot), 20×10 = 200 (front/back),
         # 15×10 = 150 (left/right) — each appears at least once
         for area in ("300.00", "200.00", "150.00"):

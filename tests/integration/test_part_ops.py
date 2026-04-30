@@ -11,6 +11,7 @@ from ._geom_helpers import (
     assert_op_succeeded,
     get_shape_props,
     assert_volume_close,
+    _result_text as _text,
 )
 from .test_e2e_workflows import send_command
 
@@ -272,10 +273,7 @@ class TestPartCompoundAndCheck:
         })
         assert_op_succeeded(result, "check_geometry")
         # Result body contains specific assertions about the geometry
-        text = result if isinstance(result, str) else (
-            result.get("content", [{}])[0].get("text", str(result))
-            if isinstance(result, dict) else str(result)
-        )
+        text = _text(result)
         assert "Valid: True" in text, f"Expected Valid: True in: {text[:300]}"
         assert "Solids: 1" in text, f"Expected Solids: 1 in: {text[:300]}"
         assert "Faces: 6" in text, f"Expected Faces: 6 in: {text[:300]}"

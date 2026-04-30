@@ -8,18 +8,8 @@ names must match method names exactly.
 
 import time
 import pytest
-from ._geom_helpers import assert_op_succeeded
+from ._geom_helpers import assert_op_succeeded, _result_text as _text
 from .test_e2e_workflows import send_command
-
-
-def _text(result):
-    if isinstance(result, dict):
-        content = result.get("content")
-        if isinstance(content, list) and content:
-            first = content[0]
-            if isinstance(first, dict) and "text" in first:
-                return first["text"]
-    return str(result)
 
 
 # ---------------------------------------------------------------------------

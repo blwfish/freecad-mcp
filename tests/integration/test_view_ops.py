@@ -20,18 +20,8 @@ import json
 import time
 import pytest
 
-from ._geom_helpers import assert_op_succeeded
+from ._geom_helpers import assert_op_succeeded, _result_text as _text
 from .test_e2e_workflows import send_command
-
-
-def _text(result):
-    if isinstance(result, dict):
-        content = result.get("content")
-        if isinstance(content, list) and content:
-            first = content[0]
-            if isinstance(first, dict) and "text" in first:
-                return first["text"]
-    return str(result)
 
 
 @pytest.fixture
@@ -138,7 +128,7 @@ class TestCheckpointRollback:
         })
         check_text = _text(check).strip()
         if check_text.startswith("Result: "):
-            check_text = check_text[len("Result: "):]
+            check_text = check_text[len("Result: "):].strip()
         names = json.loads(check_text)
         assert "Persistent" in names, f"Persistent should remain: {names}"
         assert "Temp1" not in names, f"Temp1 should be gone: {names}"
@@ -189,7 +179,7 @@ class TestInsertShape:
         })
         check_text = _text(check).strip()
         if check_text.startswith("Result: "):
-            check_text = check_text[len("Result: "):]
+            check_text = check_text[len("Result: "):].strip()
         payload = json.loads(check_text)
         assert payload['has_shape'], "ImportedBox missing Shape"
         # 30 * 20 * 10 = 6000

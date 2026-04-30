@@ -9,7 +9,7 @@ response is a job acknowledgment.
 
 import time
 import pytest
-from ._geom_helpers import assert_op_succeeded
+from ._geom_helpers import assert_op_succeeded, _result_text as _text
 from .test_e2e_workflows import send_command
 
 
@@ -59,10 +59,7 @@ class TestCommon:
             "objects": ["BoolA", "BoolB"],
         })
         assert_op_succeeded(result, "common")
-        text = result if isinstance(result, str) else (
-            result.get("content", [{}])[0].get("text", str(result))
-            if isinstance(result, dict) else str(result)
-        )
+        text = _text(result)
         # Async boolean returns a job_id payload
         assert "job_id" in text or "submitted" in text or "Created" in text, \
             f"Expected async job acknowledgment, got: {text[:300]}"
@@ -78,10 +75,7 @@ class TestCommon:
             "operation": "common",
             "objects": ["OnlyBox", "GhostBox"],
         })
-        text = result if isinstance(result, str) else (
-            result.get("content", [{}])[0].get("text", str(result))
-            if isinstance(result, dict) else str(result)
-        )
+        text = _text(result)
         # Error must surface — either at dispatch (sync) or after the job runs.
         # Don't gate on dispatch: allow either error-now or job-submitted (which
         # would later surface the error via poll_job).

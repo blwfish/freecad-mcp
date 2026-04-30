@@ -7,7 +7,7 @@ All operations route through part_operations dispatcher.
 import json
 import time
 import pytest
-from ._geom_helpers import assert_op_succeeded
+from ._geom_helpers import assert_op_succeeded, _result_text
 from .test_e2e_workflows import send_command
 
 
@@ -23,13 +23,9 @@ def _placement_base(doc_name: str, obj_name: str) -> tuple:
         f"json.dumps([float(p.x), float(p.y), float(p.z)])\n"
     )
     raw = send_command("execute_python", {"code": code})
-    text = raw if isinstance(raw, str) else (
-        raw.get("content", [{}])[0].get("text", str(raw))
-        if isinstance(raw, dict) else str(raw)
-    )
-    text = text.strip()
+    text = _result_text(raw).strip()
     if text.startswith("Result: "):
-        text = text[len("Result: "):]
+        text = text[len("Result: "):].strip()
     return tuple(json.loads(text))
 
 

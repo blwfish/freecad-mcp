@@ -12,12 +12,22 @@ from .test_e2e_workflows import send_command
 
 
 def _result_text(result) -> str:
-    """Extract the text body from a send_command response."""
+    """Extract the text body from a send_command response.
+
+    Handles three wrapper shapes seen in CI vs. local runs:
+      * Bare string: returned as-is.
+      * MCP-style dict: ``{"content": [{"type": "text", "text": ...}]}``.
+      * Bridge-wrapped dict: ``{"result": "..."}`` — what the headless
+        bridge returns. If "result" is itself a dict, recurse one level.
+    """
     if isinstance(result, str):
         return result
     if isinstance(result, dict):
-        # Bridge wraps text responses as {"content": [{"type": "text", "text": ...}]}
-        # or sometimes returns plain dicts; handle both.
+        if "result" in result:
+            inner = result["result"]
+            if isinstance(inner, (str, dict)):
+                return _result_text(inner)
+            return str(inner)
         content = result.get("content")
         if isinstance(content, list) and content:
             first = content[0]
@@ -81,6 +91,7 @@ else:
     # leading "Result: " or similar prefix bridge might add.
     if text.startswith("Result: "):
         text = text[len("Result: "):]
+    text = text.strip()
     try:
         return json.loads(text)
     except (json.JSONDecodeError, ValueError) as e:
@@ -103,7 +114,7 @@ def get_object_count(doc_name: str, type_filter: Optional[str] = None) -> int:
     text = _result_text(raw).strip()
     if text.startswith("Result: "):
         text = text[len("Result: "):]
-    return int(text)
+    return int(text.strip())
 
 
 def assert_volume_close(actual: float, expected: float, rel: float = 0.01,
