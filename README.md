@@ -35,6 +35,8 @@ I built this for myself and use it daily for real work — designing parts, gene
 
 I use Claude Code on a Mac. Other platforms *should* work — the code handles macOS, Windows, and Linux — but are less tested. PRs for other agents and platforms will be considered.
 
+If you hit a bug, [open an issue](https://github.com/blwfish/freecad-mcp/issues/new) — silent failures don't help anyone. Agents won't tell you when something's wrong; they'll just fail their task and you'll blame Claude.
+
 ### For Developers
 
 ```bash
