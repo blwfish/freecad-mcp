@@ -89,6 +89,14 @@ else:
     }}))
 """
     raw = send_command("execute_python", {"code": code})
+    # If the bridge surfaced an error (object not found, doc not open, etc.)
+    # the raw response is {"error": "..."}; raise so the test sees the real
+    # cause rather than a downstream KeyError on props['volume'].
+    if isinstance(raw, dict) and 'error' in raw and 'result' not in raw:
+        raise AssertionError(
+            f"get_shape_props({doc_name!r}, {obj_name!r}) errored — "
+            f"{raw['error']}"
+        )
     text = _result_text(raw)
     text = text.strip()
     if text in ("None", "null", "'null'", '"null"'):
@@ -96,12 +104,19 @@ else:
     if text.startswith("Result: "):
         text = text[len("Result: "):].strip()
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
     except (json.JSONDecodeError, ValueError) as e:
         raise AssertionError(
-            f"get_shape_props: could not parse execute_python response — {e}\n"
-            f"raw: {text[:400]}"
+            f"get_shape_props({doc_name!r}, {obj_name!r}): could not parse "
+            f"execute_python response — {e}\nraw: {text[:400]}"
         )
+    # Detect dict-shaped error responses that survived parsing.
+    if isinstance(parsed, dict) and 'error' in parsed and 'volume' not in parsed:
+        raise AssertionError(
+            f"get_shape_props({doc_name!r}, {obj_name!r}) errored — "
+            f"{parsed['error']}"
+        )
+    return parsed
 
 
 def get_object_count(doc_name: str, type_filter: Optional[str] = None) -> int:
