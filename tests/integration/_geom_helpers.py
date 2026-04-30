@@ -64,28 +64,28 @@ def get_shape_props(doc_name: str, obj_name: str) -> dict:
     """
     code = f"""
 import json
-doc = FreeCAD.getDocument('{doc_name}')
+doc = FreeCAD.getDocument({doc_name!r})
 if doc is None:
-    raise RuntimeError('document {doc_name!r} not found')
-obj = doc.getObject('{obj_name}')
+    raise RuntimeError("document not found: " + {doc_name!r})
+obj = doc.getObject({obj_name!r})
 if obj is None:
-    found = doc.getObjectsByLabel('{obj_name}')
+    found = doc.getObjectsByLabel({obj_name!r})
     obj = found[0] if found else None
 if obj is None:
-    raise RuntimeError('object {obj_name!r} not found in {doc_name!r}')
+    raise RuntimeError("object not found: " + {obj_name!r})
 if not hasattr(obj, 'Shape') or obj.Shape is None:
-    print('null')
+    print("null")
 else:
     s = obj.Shape
     print(json.dumps({{
-        'volume': float(s.Volume) if hasattr(s, 'Volume') else 0.0,
-        'face_count': len(s.Faces),
-        'edge_count': len(s.Edges),
-        'vertex_count': len(s.Vertexes),
-        'solid_count': len(s.Solids),
-        'wire_count': len(s.Wires),
-        'bbox': [s.BoundBox.XLength, s.BoundBox.YLength, s.BoundBox.ZLength],
-        'is_valid': bool(s.isValid()),
+        "volume": float(s.Volume) if hasattr(s, "Volume") else 0.0,
+        "face_count": len(s.Faces),
+        "edge_count": len(s.Edges),
+        "vertex_count": len(s.Vertexes),
+        "solid_count": len(s.Solids),
+        "wire_count": len(s.Wires),
+        "bbox": [s.BoundBox.XLength, s.BoundBox.YLength, s.BoundBox.ZLength],
+        "is_valid": bool(s.isValid()),
     }}))
 """
     raw = send_command("execute_python", {"code": code})
