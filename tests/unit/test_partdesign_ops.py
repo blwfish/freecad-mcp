@@ -437,6 +437,9 @@ class TestRevolution(unittest.TestCase):
         self.assertEqual(rev.Source, sketch)
         self.assertEqual(rev.Angle, 360)
         self.assertEqual(rev.Axis, (0, 0, 1))
+        # Solid=True by default — without this, Part::Revolution
+        # produces an open shell with zero volume.
+        self.assertTrue(rev.Solid)
         assert_success_contains(self, result, "S", "360", "Z")
 
     def test_partial_revolution_around_x(self):
@@ -451,6 +454,19 @@ class TestRevolution(unittest.TestCase):
         rev = doc.Objects[-1]
         self.assertEqual(rev.Angle, 90)
         self.assertEqual(rev.Axis, (1, 0, 0))
+
+    def test_solid_can_be_disabled(self):
+        """``solid=False`` opts out of the closed-volume output."""
+        sketch = make_sketch("S")
+        doc = make_mock_doc([sketch])
+        mock_FreeCAD.ActiveDocument = doc
+
+        self.handler.revolution({
+            'sketch_name': 'S', 'angle': 360, 'solid': False,
+        })
+
+        rev = doc.Objects[-1]
+        self.assertFalse(rev.Solid)
 
 
 class TestGroove(unittest.TestCase):
