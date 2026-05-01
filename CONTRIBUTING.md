@@ -40,7 +40,7 @@ Welcome, but a couple of preflight things:
 3. **Match the commit style.** `git log --oneline` shows it. Conventional commits: lowercase prefix (`fix:`, `feat:`, `test:`, `docs:`), short imperative summary, body explains the *why*.
 4. **One concern per PR.** Bug fix and unrelated cleanup go in separate PRs.
 
-PRs should include tests. For changes to platforms or FreeCAD versions covered by CI, tests are expected. For Windows, tests aren't just good practice — they're the minimum bar for the PR to be reviewable at all, since I have no other way to verify the fix holds or doesn't regress.
+PRs should include tests. For changes to platforms or FreeCAD versions covered by CI, tests are expected. For Windows, tests aren't just good practice — they're the minimum bar for the PR to be reviewable at all, since I have no other way to verify the fix holds or doesn't regress. If you're using this project, you already have a capable test-writer at hand.
 
 PRs most likely to be accepted:
 
