@@ -49,7 +49,7 @@ jobs:
           echo "README.md says $README_COUNT tools"
 
           # Check TOOLS.md
-          TOOLS_COUNT=$(grep -oP '(\d+) MCP tools' TOOLS.md | grep -oP '^\d+' | head -1)
+          TOOLS_COUNT=$(grep -oP '(\d+) tools' TOOLS.md | grep -oP '^\d+' | head -1)
           echo "TOOLS.md says $TOOLS_COUNT tools"
 
           # Compare
