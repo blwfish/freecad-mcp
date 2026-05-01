@@ -1,5 +1,9 @@
 # freecad-mcp
 
+[![Unit Tests](https://github.com/blwfish/freecad-mcp/actions/workflows/tests.yml/badge.svg)](https://github.com/blwfish/freecad-mcp/actions/workflows/tests.yml)
+[![Integration Tests](https://github.com/blwfish/freecad-mcp/actions/workflows/integration-tests.yml/badge.svg)](https://github.com/blwfish/freecad-mcp/actions/workflows/integration-tests.yml)
+[![License: LGPL v2.1](https://img.shields.io/badge/License-LGPL_v2.1-blue.svg)](LICENSE)
+
 This tool enables your AI agent to use [FreeCAD](https://www.freecad.org/) — the open-source parametric 3D CAD modeler — to design parts, generate CNC toolpaths, and produce manufacturing-ready files for you.
 
 > **FreeCAD 1.2-dev only.** This project tracks the CAM workbench, which has undergone extensive breaking changes in 1.2-dev. It will not work correctly on FreeCAD 1.0, 1.1, or any stable release. You must be running a 1.2-dev build.
