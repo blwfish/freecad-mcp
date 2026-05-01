@@ -6,13 +6,25 @@ on:
   pull_request:
     branches: [main]
 
-env:
-  # Pin to a specific weekly build for reproducibility
-  FREECAD_WEEKLY: "weekly-2026.04.01"
-
 jobs:
   integration:
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - slot: "1.1-stable"
+            tag: "1.1.1"
+            appimage: "FreeCAD_1.1.1-Linux-x86_64-py311.AppImage"
+            pytest_args: "-m 'not cam'"
+          - slot: "1.2-dev"
+            tag: "weekly-2026.04.01"
+            appimage: ""  # resolved by glob below
+            pytest_args: ""
+
+    name: "FreeCAD ${{ matrix.slot }}"
+
     steps:
       - uses: actions/checkout@v4
 
@@ -29,7 +41,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/freecad-appimage
-          key: freecad-${{ env.FREECAD_WEEKLY }}-x86_64
+          key: freecad-${{ matrix.tag }}-x86_64
 
       - name: Download FreeCAD AppImage
         if: steps.cache-freecad.outputs.cache-hit != 'true'
@@ -37,18 +49,25 @@ jobs:
           mkdir -p ~/freecad-appimage
           cd ~/freecad-appimage
 
-          # Download the weekly AppImage + checksum from FreeCAD GitHub releases
-          gh release download "$FREECAD_WEEKLY" \
-            --repo FreeCAD/FreeCAD \
-            --pattern '*Linux-x86_64.AppImage' \
-            --pattern '*Linux-x86_64.AppImage-SHA256.txt' \
-            --dir .
+          if [ -n "${{ matrix.appimage }}" ]; then
+            # Stable release — exact filename known
+            gh release download "${{ matrix.tag }}" \
+              --repo FreeCAD/FreeCAD \
+              --pattern "${{ matrix.appimage }}" \
+              --dir .
+            APPIMAGE="${{ matrix.appimage }}"
+          else
+            # Weekly build — glob + checksum
+            gh release download "${{ matrix.tag }}" \
+              --repo FreeCAD/FreeCAD \
+              --pattern '*Linux-x86_64.AppImage' \
+              --pattern '*Linux-x86_64.AppImage-SHA256.txt' \
+              --dir .
+            APPIMAGE=$(ls *Linux-x86_64.AppImage | head -1)
+            sha256sum -c "${APPIMAGE}-SHA256.txt"
+          fi
 
-          APPIMAGE=$(ls *Linux-x86_64.AppImage | head -1)
-          sha256sum -c "${APPIMAGE}-SHA256.txt"
           chmod +x "$APPIMAGE"
-
-          # Extract — AppImage requires FUSE which isn't available in CI
           "./$APPIMAGE" --appimage-extract
           rm "$APPIMAGE"
         env:
@@ -58,19 +77,15 @@ jobs:
         run: |
           SQUASHFS="$HOME/freecad-appimage/squashfs-root"
 
-          # AppRun sets up PYTHONHOME, PATH_TO_FREECAD_LIBDIR, etc.
-          # Create a wrapper so the test conftest can call freecadcmd like a normal binary.
           printf '#!/bin/bash\nexec "%s/AppRun" freecadcmd "$@"\n' "$SQUASHFS" \
             > ~/freecad-appimage/freecadcmd-wrapper.sh
           chmod +x ~/freecad-appimage/freecadcmd-wrapper.sh
 
-          # Install AICopilot module into AppImage's FreeCAD Mod directory
-          # so FreeCAD's Init.py adds it to sys.path automatically.
           ln -sfn "${{ github.workspace }}/AICopilot" "$SQUASHFS/usr/Mod/AICopilot"
 
           echo "FREECAD_MCP_FREECAD_BIN=$HOME/freecad-appimage/freecadcmd-wrapper.sh" >> "$GITHUB_ENV"
           echo "FREECAD_MCP_MODULE_DIR=${{ github.workspace }}/AICopilot" >> "$GITHUB_ENV"
 
       - name: Run integration tests
-        run: python -m pytest tests/integration/ -v -rs --timeout=120
+        run: python -m pytest tests/integration/ -v -rs --timeout=120 ${{ matrix.pytest_args }}
         timeout-minutes: 5

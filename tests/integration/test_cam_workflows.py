@@ -19,6 +19,8 @@ import pytest
 
 from .test_e2e_workflows import send_command
 
+pytestmark = pytest.mark.cam
+
 
 # ---------------------------------------------------------------------------
 # Module-level guard: skip all CAM tests if the CAM workbench isn't available

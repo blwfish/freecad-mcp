@@ -9,3 +9,6 @@ test = ["pytest>=9.0.3", "pip-audit>=2.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
+markers = [
+    "cam: requires FreeCAD 1.2-dev (CAM/Path workbench)",
+]
