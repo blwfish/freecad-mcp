@@ -6,7 +6,7 @@
 
 This tool enables your AI agent to use [FreeCAD](https://www.freecad.org/) — the open-source parametric 3D CAD modeler — to design parts, generate CNC toolpaths, and produce manufacturing-ready files for you.
 
-> **FreeCAD 1.2-dev only.** This project tracks the CAM workbench, which has undergone extensive breaking changes in 1.2-dev. It will not work correctly on FreeCAD 1.0, 1.1, or any stable release. You must be running a 1.2-dev build.
+> **FreeCAD version support:** All tools except CAM are supported on FreeCAD 1.1.x (current stable). CAM toolpath generation requires FreeCAD 1.2-dev — the Path workbench API changed incompatibly between 1.1 and 1.2. This project tracks 1.2-dev.
 
 ## What This Does
 

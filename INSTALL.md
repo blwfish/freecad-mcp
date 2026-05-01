@@ -3,7 +3,7 @@
 Control FreeCAD with Claude AI through the Model Context Protocol (MCP).
 
 **Requirements:**
-- FreeCAD 1.0+ (1.2-dev recommended, download from [freecad.org](https://freecad.org/downloads.php))
+- FreeCAD 1.1.x or 1.2-dev ([freecad.org](https://freecad.org/downloads.php)) — CAM requires 1.2-dev
 - Python 3.10+
 - Claude Desktop or Claude Code
 
@@ -138,7 +138,7 @@ Or manually replace the `AICopilot` folder and the files in `~/.freecad-mcp/` wi
 
 ### "FreeCAD workbench not loading"
 - Ensure `AICopilot` folder is in the correct Mod directory
-- Check FreeCAD version is 1.0 or higher
+- Check FreeCAD version is 1.1 or higher
 - Look at FreeCAD console for import errors
 
 ### Windows-specific issues
