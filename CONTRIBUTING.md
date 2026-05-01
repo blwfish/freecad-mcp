@@ -21,7 +21,7 @@ Don't worry about being exhaustive. *"Tried to pad a sketch and got a wire diagn
 
 **Linux** is covered by CI — the integration test suite runs against both FreeCAD 1.1-stable and 1.2-dev on Ubuntu on every push. Bugs that only reproduce on Linux are real bugs.
 
-**Windows** has no coverage. The code has conditional handling for Windows paths and sockets, but it is untested. Windows PRs will be considered, but held to a higher bar than macOS/Linux ones: the fix must be clearly scoped, not break anything on tested platforms, and come with an explanation of how it was validated. I can't reproduce Windows issues myself or maintain Windows-specific behaviour over time, so a PR that introduces Windows complexity without strong justification is likely to be declined.
+**Windows** has no coverage. The code has conditional handling for Windows paths and sockets, but it is untested. Windows PRs will be considered, but held to a higher bar than macOS/Linux ones: the fix must be clearly scoped and must not break anything on tested platforms. I can't reproduce Windows issues myself or maintain Windows-specific behaviour over time, so a PR that introduces Windows complexity without strong justification is likely to be declined.
 
 **FreeCAD 1.1.x** (current stable) is supported for all tools except CAM. **FreeCAD 1.2-dev** is required for CAM toolpath generation — the Path workbench API changed incompatibly between 1.1 and 1.2. This is a hard line, not a gap waiting to be filled. Please don't send PRs that backport CAM support to 1.1.
 
@@ -40,14 +40,15 @@ Welcome, but a couple of preflight things:
 3. **Match the commit style.** `git log --oneline` shows it. Conventional commits: lowercase prefix (`fix:`, `feat:`, `test:`, `docs:`), short imperative summary, body explains the *why*.
 4. **One concern per PR.** Bug fix and unrelated cleanup go in separate PRs.
 
+PRs should include tests. For changes to platforms or FreeCAD versions covered by CI, tests are expected. For Windows, tests aren't just good practice — they're the minimum bar for the PR to be reviewable at all, since I have no other way to verify the fix holds or doesn't regress.
+
 PRs most likely to be accepted:
 
 - Bug fixes reproducible on macOS or Linux
 - Compatibility fixes for FreeCAD 1.1.x (non-CAM tools)
 - CAM improvements for FreeCAD 1.2-dev that track upstream
 - New tools that fit the stated workflow scope (see below)
-- Test coverage for existing behaviour
-- Windows fixes that are clearly scoped and come with validation details
+- Windows fixes that are clearly scoped, don't affect tested platforms, and include tests
 
 PRs that will be declined:
 
