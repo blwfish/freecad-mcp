@@ -21,9 +21,11 @@ Don't worry about being exhaustive. *"Tried to pad a sketch and got a wire diagn
 
 **Linux** is covered by CI — the integration test suite runs against both FreeCAD 1.1-stable and 1.2-dev on Ubuntu on every push. Bugs that only reproduce on Linux are real bugs.
 
-**Windows** has no coverage. The code has conditional handling for Windows paths and sockets, but it is untested. PRs that fix genuine Windows breakage are welcome in principle, but I can't validate them before merging and I can't maintain them. Be aware of that going in.
+**Windows** has no coverage. The code has conditional handling for Windows paths and sockets, but it is untested. Windows PRs will be considered, but held to a higher bar than macOS/Linux ones: the fix must be clearly scoped, not break anything on tested platforms, and come with an explanation of how it was validated. I can't reproduce Windows issues myself or maintain Windows-specific behaviour over time, so a PR that introduces Windows complexity without strong justification is likely to be declined.
 
 **FreeCAD 1.1.x** (current stable) is supported for all tools except CAM. **FreeCAD 1.2-dev** is required for CAM toolpath generation — the Path workbench API changed incompatibly between 1.1 and 1.2. This is a hard line, not a gap waiting to be filled. Please don't send PRs that backport CAM support to 1.1.
+
+CAM improvements for 1.2-dev are welcome, as long as they track FreeCAD upstream — meaning they work with the current Path API as it evolves, not around it.
 
 ## Sending a PR
 
@@ -42,13 +44,14 @@ PRs most likely to be accepted:
 
 - Bug fixes reproducible on macOS or Linux
 - Compatibility fixes for FreeCAD 1.1.x (non-CAM tools)
+- CAM improvements for FreeCAD 1.2-dev that track upstream
 - New tools that fit the stated workflow scope (see below)
 - Test coverage for existing behaviour
+- Windows fixes that are clearly scoped and come with validation details
 
-PRs unlikely to be accepted:
+PRs that will be declined:
 
 - CAM support for FreeCAD 1.1.x — won't happen by design
-- Windows-only fixes — can't validate or maintain
 - Features outside the project scope — consider a fork instead
 
 ## Will feature requests be accepted?
