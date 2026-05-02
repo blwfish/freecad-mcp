@@ -1173,6 +1173,61 @@ async def main():
                     }
                 ),
                 # ------------------------------------------------------------------
+                # SketchBuilder — pre-validated parametric sketch emission
+                # ------------------------------------------------------------------
+                types.Tool(
+                    name="build_sketch",
+                    description=(
+                        "Validate and emit a parametric FreeCAD sketch from a JSON layout "
+                        "descriptor. Uses python-solvespace to pre-validate constraints before "
+                        "touching the document — no trial-and-error in FreeCAD. Returns DOF, "
+                        "geometry count, and constraint count on success, or conflict details "
+                        "on failure.\n\n"
+                        "Supported element types:\n"
+                        "  envelope   — outer bounding rectangle (width, height)\n"
+                        "  hline      — horizontal reference line at y (name)\n"
+                        "  arch       — single arched window/opening (cx, sill, spring, radius, name)\n"
+                        "  arch_array — N evenly-spaced arches; use {i} in cx expression (count, cx, sill, spring, radius, name)\n"
+                        "  door       — door opening tied to a floor hline (left_x, spring, width, floor_ref, name)\n"
+                        "  monitor    — clerestory monitor (width, height, cx, base_y, name)\n\n"
+                        "All dimension values are spreadsheet alias names (strings), not numbers."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "layout": {
+                                "type": "object",
+                                "description": "Sketch layout descriptor with an 'elements' array",
+                                "properties": {
+                                    "elements": {
+                                        "type": "array",
+                                        "description": "Ordered list of sketch elements to add",
+                                        "items": {"type": "object"}
+                                    }
+                                },
+                                "required": ["elements"]
+                            },
+                            "sketch_name": {
+                                "type": "string",
+                                "description": "Name for the FreeCAD sketch object (default 'Master XZ')",
+                                "default": "Master XZ"
+                            },
+                            "placement": {
+                                "type": "string",
+                                "enum": ["XY", "XZ", "YZ"],
+                                "description": "Sketch plane (default 'XZ')",
+                                "default": "XZ"
+                            },
+                            "spreadsheet": {
+                                "type": "string",
+                                "description": "FreeCAD object name of the parameter spreadsheet (default 'Spreadsheet')",
+                                "default": "Spreadsheet"
+                            }
+                        },
+                        "required": ["layout"]
+                    }
+                ),
+                # ------------------------------------------------------------------
                 # Instance management tools
                 # ------------------------------------------------------------------
                 types.Tool(
@@ -1387,6 +1442,11 @@ async def main():
                 text=response
             )]
             
+        # build_sketch: route directly to FreeCAD handler
+        elif name == "build_sketch":
+            result = await send_to_freecad("build_sketch", arguments or {})
+            return [types.TextContent(type="text", text=result)]
+
         # execute_python: submit as async job, poll with timeout
         elif name == "execute_python":
             args = arguments or {}

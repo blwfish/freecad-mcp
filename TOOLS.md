@@ -1,6 +1,6 @@
 # Tool Reference
 
-This MCP server exposes 32 MCP tools for controlling FreeCAD. They are grouped below by function.
+This MCP server exposes 33 MCP tools for controlling FreeCAD. They are grouped below by function.
 
 ---
 
@@ -74,6 +74,7 @@ This MCP server exposes 32 MCP tools for controlling FreeCAD. They are grouped b
 
 | Tool | Description |
 |---|---|
+| `build_sketch` | Validate and emit a parametric FreeCAD sketch from a JSON layout descriptor. Uses python-solvespace to pre-validate constraints before touching the document. Supports envelope, hline, arch, arch_array, door, and monitor element types. |
 | `continue_selection` | Continue an interactive selection workflow after the user has selected edges or faces in FreeCAD's 3D view. Required after fillet, chamfer, hole, and similar operations. |
 | `macro_operations` | List, read, and run macros from the user's FreeCAD macro directory. Lets the agent reuse existing automation scripts. |
 | `api_introspection` | Live signature and docstring lookup against FreeCAD's running module tree, with fuzzy search across core and workbenches. Use before `execute_python` to avoid wrong-signature errors. |
