@@ -157,6 +157,7 @@ try:
         InspectorOpsHandler,
         MacroOpsHandler,
         IntrospectionOpsHandler,
+        SketchBuilderOpsHandler,
     )
     FreeCAD.Console.PrintMessage("Modular handlers loaded successfully\n")
 except ImportError as e:
@@ -283,6 +284,7 @@ class FreeCADSocketServer:
         self.inspector_ops = InspectorOpsHandler(self, _log_operation, _capture_state)
         self.macro_ops = MacroOpsHandler(self, _log_operation, _capture_state)
         self.introspection_ops = IntrospectionOpsHandler(self, _log_operation, _capture_state)
+        self.sketch_builder_ops = SketchBuilderOpsHandler(self, _log_operation, _capture_state)
         # GUI-sensitive handlers get the task queues for thread safety
         self.view_ops = ViewOpsHandler(
             self, self._gui_task_queue, self._gui_response_queue, _log_operation, _capture_state
@@ -928,6 +930,10 @@ class FreeCADSocketServer:
         if tool_name == "run_inspector":
             return self._call_on_gui_thread(self.inspector_ops.run, args, "run_inspector")
 
+        # build_sketch: validate + emit a parametric sketch via SketchBuilder
+        if tool_name == "build_sketch":
+            return self._call_on_gui_thread(self.sketch_builder_ops.build_sketch, args, "build_sketch")
+
         if tool_name in generic_dispatch_map:
             return self._dispatch_to_handler(generic_dispatch_map[tool_name], args, tool_name)
 
@@ -1364,6 +1370,7 @@ class FreeCADSocketServer:
                 'handlers.inspector_ops',
                 'handlers.macro_ops',
                 'handlers.introspection_ops',
+                'handlers.sketch_builder_ops',
             ]
             for mod_name in handler_modules:
                 mod = sys.modules.get(mod_name)
@@ -1396,6 +1403,7 @@ class FreeCADSocketServer:
                 InspectorOpsHandler,
                 MacroOpsHandler,
                 IntrospectionOpsHandler,
+                SketchBuilderOpsHandler,
             )
 
             # Re-create handler instances
@@ -1416,6 +1424,7 @@ class FreeCADSocketServer:
             self.inspector_ops = InspectorOpsHandler(self, _log_operation, _capture_state)
             self.macro_ops = MacroOpsHandler(self, _log_operation, _capture_state)
             self.introspection_ops = IntrospectionOpsHandler(self, _log_operation, _capture_state)
+            self.sketch_builder_ops = SketchBuilderOpsHandler(self, _log_operation, _capture_state)
             self.view_ops = ViewOpsHandler(
                 self, self._gui_task_queue, self._gui_response_queue,
                 _log_operation, _capture_state

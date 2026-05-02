@@ -21,6 +21,7 @@ from .spatial_ops import SpatialOpsHandler
 from .inspector_ops import InspectorOpsHandler
 from .macro_ops import MacroOpsHandler
 from .introspection_ops import IntrospectionOpsHandler
+from .sketch_builder_ops import SketchBuilderOpsHandler
 
 __all__ = [
     'BaseHandler',
@@ -43,4 +44,5 @@ __all__ = [
     'InspectorOpsHandler',
     'MacroOpsHandler',
     'IntrospectionOpsHandler',
+    'SketchBuilderOpsHandler',
 ]
