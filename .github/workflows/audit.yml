@@ -20,5 +20,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt pip-audit
 
+      - name: Upgrade pip
+        run: pip install --upgrade pip
+
       - name: Run audit
         run: pip-audit --desc
