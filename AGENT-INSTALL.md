@@ -197,6 +197,37 @@ See `KNOWN_ISSUES.md` in the repo for full details:
 - **Large documents** — `list_objects` paginates at 100 objects (max 500). Use filters for DXF imports with 1000+ objects.
 - **Fillet/chamfer requires GUI** — Edge selection for dress-up operations needs the FreeCAD GUI running (not headless).
 
+## Building Extensions: Prompt Caching and Direct API Calls
+
+If you are a developer extending this MCP server or building agent applications that make direct calls to the Claude API (via the Anthropic SDK), you need to understand **prompt caching**.
+
+### How Caching Works in Claude Code
+
+Claude Code's desktop app, web interface, and CLI tools silently optimize repeated interactions by caching large context — file contents, tool definitions, system prompts — so subsequent requests reuse cached tokens instead of re-transmitting them. This optimization is transparent to users and built into the platform.
+
+### If You Make Direct API Calls
+
+When you call the Claude API directly (not through Claude Code or another platform), **caching is not automatic**. You must:
+
+1. **Read the [Anthropic SDK documentation](https://docs.anthropic.com/en/docs/build-a-system-with-claude/prompt-caching)** on prompt caching before deploying any integration
+2. **Understand the implications:**
+   - Cache keys depend on model, system prompt, and exact token boundaries (small formatting changes bust the cache)
+   - Cached tokens cost 20% of uncached tokens; cache lifetime is typically 5 minutes
+   - Caching is worthwhile only if you're making repeated requests over the same context (e.g., refining a multi-turn conversation, running analysis on the same document)
+   - Cache misses on every request waste compute for no benefit
+3. **Test cache behavior** in your integration — verify that your assumptions about cache hits are correct before production
+
+### Third-Party Integrations and Other Agents
+
+If you're integrating other MCP servers or building agents that call external APIs:
+
+- **Check their documentation** for caching behavior, rate limits, async job handling, and token limits
+- Don't assume they work like Claude Code — each agent and service has different optimization strategies
+- Some may buffer requests, some may require explicit polling, some may have quotas or cost implications
+- Ask yourself: does this service cache? Does it support streaming? What happens on timeout?
+
+If documentation is missing or unclear, read the source code or ask the maintainer.
+
 ## Contributing
 
 ### Filing Issues

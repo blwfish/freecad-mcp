@@ -54,6 +54,23 @@ python3 -m pytest tests/integration/
 python3 -m pytest --cov=AICopilot
 ```
 
+#### Prompt Caching and Direct Claude API Calls
+
+**For Claude users: the easiest and cheapest approach is to use Claude Code, the web interface, or the CLI tool directly.** These platforms automatically handle prompt caching and cost optimization — you don't need to think about it. If you're just using this MCP to design parts in FreeCAD, use Claude Code. Stop reading this section.
+
+If you're building applications or integrations that make direct calls to the Claude API (using the Anthropic SDK), **you must understand prompt caching**. The Claude desktop app, web interface, and CLI tools automatically handle caching of file context and tool references — you don't see this optimization, but it reduces latency and cost for repeated queries over the same context.
+
+When you make direct API calls, caching must be managed explicitly. The MCP server itself doesn't make API calls, but if you build integrations or extensions that do:
+
+- **Read the Anthropic SDK documentation** on prompt caching before deploying
+- Understand cache TTL (typically 5 minutes) and cost implications (20% of input tokens)
+- Be aware that cache keys include model, system prompt, and exact token boundaries — small variations bust the cache
+- Consider cache-busting risks if your context is frequently updated (like document state snapshots)
+
+Similarly, if you integrate other MCP servers or agents into your workflow, they may have analogous considerations that are not documented in their README. Check their documentation or source for caching behavior, async job handling, and token limits — don't assume they work like Claude Code.
+
+
+
 The test suite covers the handler dispatch layer, base infrastructure, and document operations via unit tests, plus end-to-end coverage of Part, PartDesign, Sketch, Draft, Boolean, Transform, Measurement, and CAM workflows via integration tests against a live FreeCAD instance. CI runs both suites on every push.
 
 #### Built-in Diagnostics
