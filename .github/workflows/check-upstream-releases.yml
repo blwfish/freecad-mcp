@@ -1,0 +1,102 @@
+name: Check Upstream Releases
+
+on:
+  schedule:
+    # Every Monday at 9 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  check-releases:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check FreeCAD releases
+        id: freecad
+        run: |
+          # Get latest 1.1.x stable release
+          LATEST_1_1=$(curl -s https://api.github.com/repos/FreeCAD/FreeCAD/releases | jq -r '.[] | select(.tag_name | test("^1\\.1\\.[0-9]+$")) | .tag_name' | head -1 | sed 's/^v//')
+          CURRENT_1_1="1.1.0"
+
+          # Get latest 1.2 pre-release
+          LATEST_1_2=$(curl -s https://api.github.com/repos/FreeCAD/FreeCAD/releases | jq -r '.[] | select(.prerelease) | select(.tag_name | test("^1\\.2")) | .tag_name' | head -1 | sed 's/^v//')
+
+          echo "latest_1_1=$LATEST_1_1" >> $GITHUB_OUTPUT
+          echo "current_1_1=$CURRENT_1_1" >> $GITHUB_OUTPUT
+          echo "latest_1_2=$LATEST_1_2" >> $GITHUB_OUTPUT
+
+          if [ "$LATEST_1_1" != "$CURRENT_1_1" ] || [ -n "$LATEST_1_2" ]; then
+            echo "update_available=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check Python dependencies
+        id: python_deps
+        run: |
+          python3 -m pip install -e . > /dev/null 2>&1
+          OUTDATED=$(python3 -m pip list --outdated --format=json | jq -r '.[] | "\(.name)==\(.latest_version)"' 2>/dev/null || echo "")
+          if [ -n "$OUTDATED" ]; then
+            echo "outdated<<EOF" >> $GITHUB_OUTPUT
+            echo "$OUTDATED" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "update_available=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create issue if updates available
+        if: |
+          steps.freecad.outputs.update_available == 'true' ||
+          steps.python_deps.outputs.update_available == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const freecad_1_1_current = '${{ steps.freecad.outputs.current_1_1 }}';
+            const freecad_1_1_latest = '${{ steps.freecad.outputs.latest_1_1 }}';
+            const freecad_1_2_latest = '${{ steps.freecad.outputs.latest_1_2 }}';
+            const python_deps = `${{ steps.python_deps.outputs.outdated }}`;
+
+            let body = '# Upstream Dependency Updates Available\n\n';
+
+            if ('${{ steps.freecad.outputs.update_available }}' === 'true') {
+              body += '## FreeCAD\n';
+              if (freecad_1_1_current !== freecad_1_1_latest) {
+                body += `### Stable (1.1.x)\n- Current: v${freecad_1_1_current}\n- Latest: v${freecad_1_1_latest}\n- Download: https://www.freecad.org/downloads.php\n\n`;
+              }
+              if (freecad_1_2_latest) {
+                body += `### Development (1.2-dev)\n- Latest pre-release: v${freecad_1_2_latest}\n- Download: https://www.freecad.org/downloads.php\n- **Note:** CAM tools require 1.2-dev; other tools work with 1.1.x\n\n`;
+              }
+            }
+
+            if (python_deps.trim()) {
+              body += `## Python Dependencies\n\`\`\`\n${python_deps}\n\`\`\`\n\n`;
+            }
+
+            body += '**Note:** Review and test before upgrading. FreeCAD API may change between versions.';
+
+            // Check if an issue already exists from this week
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'dependencies',
+              sort: 'created',
+              direction: 'desc'
+            });
+
+            const recentIssue = issues.data.find(issue =>
+              issue.title.includes('Upstream Dependency Updates') &&
+              new Date(issue.created_at) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+            );
+
+            if (!recentIssue) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Upstream Dependency Updates Available',
+                body: body,
+                labels: ['dependencies']
+              });
+            }
