@@ -4,6 +4,50 @@ This file is for you, the AI agent. When something goes wrong with a FreeCAD MCP
 operation, follow the relevant section below. Don't guess — the diagnostic tools
 exist precisely so you don't have to.
 
+## Your Debugging Toolkit
+
+This MCP exposes diagnostic infrastructure that most FreeCAD users don't know exists
+and that most other MCPs don't provide. Use these tools first, before trying to reason
+about what might have gone wrong.
+
+**`get_debug_logs()`**
+Reads the structured operation log at `~/.freecad-mcp/logs/`. Every tool call is
+recorded — tool name, arguments, duration, success/failure, and a snapshot of the
+result. When something goes wrong, this tells you the exact sequence of operations
+that led there, not just the one that failed.
+
+**`view_control(operation="get_report_view", tail=N, filter="...")`**
+Reads FreeCAD's Report View — the panel where FreeCAD logs recompute warnings, OCCT
+messages, link restore failures, and workbench output. This is often where the real
+error is, even when the tool call error message is vague or missing. Use
+`filter="error"` to show only error lines, or `filter="warning"` for warnings.
+Use `clear=True` before retrying an operation so you see only fresh output.
+
+**`manage_connection(action="status")`**
+Runs on the bridge side — works even when FreeCAD is down. Reports connection state,
+socket health, whether the crash watcher left a last-op file, and whether corrupt
+`.FCStd` recovery files are present. This is the first tool to call when FreeCAD
+crashes or won't connect.
+
+**`manage_connection(action="clear_recovery")`**
+Removes corrupt FreeCAD recovery files. FreeCAD writes recovery files continuously
+during a session; if it crashes mid-write, the recovery file is corrupt. On next
+launch, FreeCAD tries to restore it, crashes again, and you're in a crash loop.
+This clears the loop.
+
+**`manage_connection(action="validate_fcstd", filename="...")`**
+Checks a `.FCStd` file's ZIP integrity before opening it. If a save was interrupted
+mid-write, the file may be structurally intact but contain bad data. This tells you
+before FreeCAD tries to open it.
+
+**Crash watcher — `/tmp/freecad_mcp_last_op.json`**
+Written by the AICopilot workbench *inside* FreeCAD before every operation, cleared
+on success. If FreeCAD crashes, this file survives and records exactly what was in
+flight — tool name, arguments, timestamp, PID. `manage_connection(action="status")`
+reads and reports it automatically.
+
+---
+
 **Always check connection first:**
 ```
 check_freecad_connection()
