@@ -8,6 +8,12 @@ This tool enables your AI agent to use [FreeCAD](https://www.freecad.org/) — t
 
 > **FreeCAD version support:** All tools except CAM are supported on FreeCAD 1.1.x (current stable). CAM toolpath generation requires FreeCAD 1.2-dev — the Path workbench API changed incompatibly between 1.1 and 1.2. This project tracks 1.2-dev.
 
+## What This Does
+
+You describe what you need — "design a mounting bracket with these dimensions" or "generate G-code for this part" — and your AI agent does the rest: creating parametric sketches, padding and pocketing features, adding fillets, setting up CAM jobs, and exporting files. All using the same FreeCAD that engineers and makers use, with 33 tools covering parametric design, CNC toolpath generation, and mesh operations. See [TOOLS.md](TOOLS.md) for the full tool reference.
+
+You don't need to know FreeCAD. You don't need to know what parametric CAD means. You just need an AI agent (like [Claude](https://claude.ai/)).
+
 ## See It In Action
 
 **Debugging a broken external reference** — a link FreeCAD can't restore, an error
@@ -29,11 +35,16 @@ parametric generator that tiles any roof surface from a spreadsheet of parameter
 
 ---
 
-## What This Does
+## What You Can Ask Your Agent To Do
 
-You describe what you need — "design a mounting bracket with these dimensions" or "generate G-code for this part" — and your AI agent does the rest: creating parametric sketches, padding and pocketing features, adding fillets, setting up CAM jobs, and exporting files. All using the same FreeCAD that engineers and makers use, with 33 tools covering parametric design, CNC toolpath generation, and mesh operations. See [TOOLS.md](TOOLS.md) for the full tool reference.
-
-You don't need to know FreeCAD. You don't need to know what parametric CAD means. You just need an AI agent (like [Claude](https://claude.ai/)).
+- **Design a 3D part** — "I need a mounting plate, 100x60mm, with four M3 mounting holes and rounded corners"
+- **Modify an existing design** — "Add a 2mm fillet to all the edges and make it 5mm thicker"
+- **Generate CNC toolpaths** — "Create a pocket operation for this part using a 6mm end mill"
+- **Export for manufacturing** — "Export this as STEP and generate the G-code for my CNC router"
+- **Work with meshes** — "Import this STL, convert it to a solid, and add mounting features"
+- **Diagnose problems** — "I just tried to pad this sketch and got a weird result, what went wrong?" The agent can inspect the model state, check sketch constraints, and explain what FreeCAD is telling you.
+- **Build automation** — "Write me a script that generates a parametric enclosure from a spreadsheet of dimensions" or "Create a macro that imports DXF profiles and extrudes them to different heights"
+- **Check your work** — "Does this model have any geometry errors?", "Will this part have thin walls that might fail in printing?", or "Are any of these parts interfering with each other?"
 
 ## Getting Started
 
@@ -55,17 +66,6 @@ A few things worth knowing about this output:
 - **Debug/crash infrastructure loaded** — active instrumentation is running. If something goes wrong mid-operation, logs and crash reports are captured automatically.
 - **Socket server started / Claude ready** — the bridge is listening. This is the line that means your AI agent can connect.
 - **Font alias warning** (in orange) — harmless Qt noise that appears on most macOS systems regardless of what you're doing. Not a problem.
-
-## What You Can Ask Your Agent To Do
-
-- **Design a 3D part** — "I need a mounting plate, 100x60mm, with four M3 mounting holes and rounded corners"
-- **Modify an existing design** — "Add a 2mm fillet to all the edges and make it 5mm thicker"
-- **Generate CNC toolpaths** — "Create a pocket operation for this part using a 6mm end mill"
-- **Export for manufacturing** — "Export this as STEP and generate the G-code for my CNC router"
-- **Work with meshes** — "Import this STL, convert it to a solid, and add mounting features"
-- **Diagnose problems** — "I just tried to pad this sketch and got a weird result, what went wrong?" The agent can inspect the model state, check sketch constraints, and explain what FreeCAD is telling you.
-- **Build automation** — "Write me a script that generates a parametric enclosure from a spreadsheet of dimensions" or "Create a macro that imports DXF profiles and extrudes them to different heights"
-- **Check your work** — "Does this model have any geometry errors?", "Will this part have thin walls that might fail in printing?", or "Are any of these parts interfering with each other?"
 
 ## Background
 
