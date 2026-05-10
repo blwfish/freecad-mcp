@@ -74,19 +74,23 @@ Use absolute paths. On Windows, use `python` instead of `python3`.
 claude mcp add freecad python3 ~/.freecad-mcp/freecad_mcp_server.py
 ```
 
-### Step 4: Start FreeCAD
+### Step 4: Connect to FreeCAD
 
-FreeCAD must be running with the AICopilot addon loaded. On first launch after installing the addon, FreeCAD detects it automatically. You should see `AI Socket Server started` in FreeCAD's Report View (menu: View → Panels → Report View).
+There are two ways to run FreeCAD with this MCP:
+
+**GUI mode (recommended for most users):** Launch FreeCAD normally. The AICopilot addon loads automatically and starts the socket server. You should see `AI Socket Server started` in FreeCAD's Report View (menu: View → Panels → Report View). Screenshots, interactive edge selection, and all GUI operations are available.
+
+**Headless mode:** Your agent can spawn a headless `FreeCADCmd` instance directly — no display required. This is useful for batch modeling, server environments, or when running multiple FreeCAD instances in parallel. Your agent calls `spawn_freecad_instance()` and the bridge starts FreeCADCmd automatically. Screenshot and interactive GUI operations (fillet/chamfer edge selection) are not available in headless mode.
 
 ---
 
 ## Verify Installation
 
-Once FreeCAD is running and your agent is configured, ask your agent:
+Once FreeCAD is running (or spawned headless) and your agent is configured, ask your agent:
 
 > Check if the FreeCAD MCP connection is working.
 
-Your agent will call `check_freecad_connection()`. If it succeeds, the full pipeline is working. If it fails, FreeCAD is either not running or the AICopilot addon didn't load — check the Report View for errors.
+Your agent will call `check_freecad_connection()`. If it succeeds, the full pipeline is working. If it fails, FreeCAD is either not running or the AICopilot addon didn't load — check the Report View for errors, or try `spawn_freecad_instance()` to let the bridge manage it.
 
 ---
 
@@ -107,7 +111,7 @@ Or give your agent the same installation prompt again — it will update in plac
 ## Troubleshooting
 
 ### "Cannot connect to FreeCAD"
-- FreeCAD must be running before your agent can connect
+- FreeCAD must be running before your agent can connect — or ask your agent to call `spawn_freecad_instance()` to start a headless instance
 - Check Report View for `AI Socket Server started` — if missing, the addon didn't load
 - Verify `AICopilot` is in the correct Mod directory
 
@@ -143,7 +147,7 @@ Then remove the `freecad` MCP server entry from your agent's config.
 AI Agent ──(MCP over stdio)── freecad_mcp_server.py ──(Unix socket)── FreeCAD + AICopilot addon
 ```
 
-Two components: the **AICopilot workbench** (a FreeCAD addon that runs a socket server inside FreeCAD) and the **MCP bridge** (a Python script that translates MCP tool calls into socket messages). Both must be installed. FreeCAD must be running with the addon loaded for any tools to work.
+Two components: the **AICopilot workbench** (a FreeCAD addon that runs a socket server inside FreeCAD) and the **MCP bridge** (a Python script that translates MCP tool calls into socket messages). Both must be installed. FreeCAD must be running — either as the GUI application, or as a headless `FreeCADCmd` instance spawned by the bridge via `spawn_freecad_instance()`.
 
 ---
 

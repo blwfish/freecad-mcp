@@ -189,6 +189,38 @@ The file `CLAUDE.md` in the repo root is your primary reference for **using** th
 | GIL deadlock on document creation | Create documents via `view_control(operation="create_document")` not via `execute_python` |
 | Large document slow | Use `offset`/`limit`/`type_filter` parameters when listing objects |
 
+## Headless Mode
+
+You can spawn and manage FreeCAD instances directly — no GUI required. The bridge launches `FreeCADCmd` (FreeCAD's console binary) with `headless_server.py` as its entry point, which starts the same socket server as the GUI workbench.
+
+### When to use it
+
+- No display available (server, CI environment)
+- Batch modeling work that doesn't need a 3D view
+- Running multiple FreeCAD instances in parallel for independent jobs
+
+### How to use it
+
+```
+spawn_freecad_instance()                      # start headless, auto-selects it
+spawn_freecad_instance(label="part-a")        # with a label for easy reference
+list_freecad_instances()                      # see all running instances
+select_freecad_instance(label="part-a")       # switch active target
+stop_freecad_instance(label="part-a")         # shut it down
+```
+
+After `spawn_freecad_instance()`, all subsequent tool calls route to the new instance until you switch. The bridge manages the process — you do not need to start FreeCAD manually.
+
+### Limitations
+
+- **No screenshots** — `view_control(operation="screenshot")` requires a display
+- **No interactive selection** — fillet, chamfer, and hole operations need the GUI for edge/face selection; the `continue_selection` workflow does not work headless
+- **No 3D view** — any operation that renders to the viewport (clip planes, view orientation) has no effect
+
+For work that needs screenshots or GUI selection, the user must have the FreeCAD GUI running. Both the GUI instance and any headless instances can run simultaneously; use `select_freecad_instance()` to switch between them.
+
+---
+
 ## Known Issues
 
 See `KNOWN_ISSUES.md` in the repo for full details:
