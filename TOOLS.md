@@ -1,6 +1,6 @@
 # Tool Reference
 
-This MCP server exposes 33 MCP tools for controlling FreeCAD. They are grouped below by function.
+MCP tools for controlling FreeCAD, grouped by function.
 
 ---
 

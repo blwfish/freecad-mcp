@@ -1,7 +1,8 @@
-"""Verify bridge tool count stays consistent with documentation.
+"""Verify bridge tool count stays in sync with TOOLS.md.
 
-If this test fails, you added or removed a tool in freecad_mcp_server.py.
-Update the count here AND in README.md and TOOLS.md.
+Adding a tool requires exactly two things: add it to freecad_mcp_server.py
+and add a row to TOOLS.md. This test catches you if you do one without
+the other. No hardcoded counts to maintain.
 """
 
 import os
@@ -12,41 +13,25 @@ BRIDGE_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "freecad_mcp_server.py"
 )
 
-EXPECTED_TOOL_COUNT = 33
 
-
-def test_bridge_tool_count():
-    """Bridge should define exactly the expected number of MCP tools."""
+def _bridge_tool_count():
     with open(BRIDGE_PATH) as f:
-        content = f.read()
-    actual = content.count("types.Tool(")
-    assert actual == EXPECTED_TOOL_COUNT, (
-        f"Expected {EXPECTED_TOOL_COUNT} tools in freecad_mcp_server.py, "
-        f"found {actual}. Update this test, README.md, and TOOLS.md."
-    )
+        return f.read().count("types.Tool(")
 
 
-def test_readme_tool_count():
-    """README.md tool count should match the bridge."""
-    readme_path = os.path.join(os.path.dirname(BRIDGE_PATH), "README.md")
-    with open(readme_path) as f:
-        content = f.read()
-    m = re.search(r"(\d+) tools (for|covering)", content)
-    assert m, "README.md should contain '<N> tools for' or '<N> tools covering' pattern"
-    readme_count = int(m.group(1))
-    assert readme_count == EXPECTED_TOOL_COUNT, (
-        f"README.md says {readme_count} tools but expected {EXPECTED_TOOL_COUNT}"
-    )
-
-
-def test_tools_md_tool_count():
-    """TOOLS.md tool count should match the bridge."""
+def _tools_md_row_count():
     tools_path = os.path.join(os.path.dirname(BRIDGE_PATH), "TOOLS.md")
     with open(tools_path) as f:
         content = f.read()
-    m = re.search(r"(\d+) MCP tools", content)
-    assert m, "TOOLS.md should contain '<N> MCP tools' pattern"
-    tools_count = int(m.group(1))
-    assert tools_count == EXPECTED_TOOL_COUNT, (
-        f"TOOLS.md says {tools_count} tools but expected {EXPECTED_TOOL_COUNT}"
+    # Count rows that start a tool entry: "| `toolname`"
+    return len(re.findall(r"^\| `\w+`", content, re.MULTILINE))
+
+
+def test_tools_md_matches_bridge():
+    """TOOLS.md must have one row per tool defined in the bridge."""
+    bridge = _bridge_tool_count()
+    docs = _tools_md_row_count()
+    assert bridge == docs, (
+        f"Bridge defines {bridge} tools but TOOLS.md has {docs} rows. "
+        f"Add a TOOLS.md entry for every new tool (or remove the stale row)."
     )
