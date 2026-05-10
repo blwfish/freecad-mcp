@@ -6,9 +6,22 @@
 
 ## What This Does
 
-A bridge between your AI agent and [FreeCAD](https://www.freecad.org/) — a thinking partner for parametric design, CNC toolpath generation, and mesh work. You bring the design intent and the domain judgment; the agent handles the FreeCAD mechanics. Together: moving faster, co-designing things that would take hours to build by hand, untangling the cryptic error messages that FreeCAD is so good at generating, and hunting down the subtle, knotty modeling problems that are nearly impossible to find alone. Built for personal daily use — designing parts, generating toolpaths, printing and cutting them — not a demo. See [TOOLS.md](TOOLS.md) for the full tool reference.
+This is a bridge between your AI agent and [FreeCAD](https://www.freecad.org/) — a thinking partner for parametric design, CNC toolpath generation, and mesh work. You bring the design intent and the domain judgment; the agent handles the FreeCAD mechanics. Together: moving faster, co-designing things that would take hours to build by hand, untangling the cryptic error messages that FreeCAD is so good at generating, and hunting down the subtle, knotty modeling problems that are nearly impossible to find alone. Built for personal daily use — designing parts, generating toolpaths, printing and cutting them — not a demo. See [TOOLS.md](TOOLS.md) for the full tool reference.
+
+## What You Can Ask Your Agent To Do
+
+- **Design a 3D part** — "I need a mounting plate, 100x60mm, with four M3 mounting holes and rounded corners"
+- **Modify an existing design** — "Add a 2mm fillet to all the edges and make it 5mm thicker"
+- **Generate CNC toolpaths** — "Create a pocket operation for this part using a 6mm end mill"
+- **Export for manufacturing** — "Export this as STEP and generate the G-code for my CNC router"
+- **Work with meshes** — "Import this STL, convert it to a solid, and add mounting features"
+- **Diagnose problems** — "I just tried to pad this sketch and got a weird result, what went wrong?" The agent can inspect the model state, check sketch constraints, and explain what FreeCAD is telling you.
+- **Build automation** — "Write me a script that generates a parametric enclosure from a spreadsheet of dimensions" or "Create a macro that imports DXF profiles and extrudes them to different heights"
+- **Check your work** — "Does this model have any geometry errors?", "Will this part have thin walls that might fail in printing?", or "Are any of these parts interfering with each other?"
 
 ## See It In Action
+
+These are a couple of examples of how I've used the MCP.
 
 **Debugging a broken external reference** — a link FreeCAD can't restore, an error
 message that seems to contradict what you know about your own model, and a one-line fix
@@ -28,17 +41,6 @@ parametric generator that tiles any roof surface from a spreadsheet of parameter
 [Full story →](docs/scenario-shingles.md)
 
 ---
-
-## What You Can Ask Your Agent To Do
-
-- **Design a 3D part** — "I need a mounting plate, 100x60mm, with four M3 mounting holes and rounded corners"
-- **Modify an existing design** — "Add a 2mm fillet to all the edges and make it 5mm thicker"
-- **Generate CNC toolpaths** — "Create a pocket operation for this part using a 6mm end mill"
-- **Export for manufacturing** — "Export this as STEP and generate the G-code for my CNC router"
-- **Work with meshes** — "Import this STL, convert it to a solid, and add mounting features"
-- **Diagnose problems** — "I just tried to pad this sketch and got a weird result, what went wrong?" The agent can inspect the model state, check sketch constraints, and explain what FreeCAD is telling you.
-- **Build automation** — "Write me a script that generates a parametric enclosure from a spreadsheet of dimensions" or "Create a macro that imports DXF profiles and extrudes them to different heights"
-- **Check your work** — "Does this model have any geometry errors?", "Will this part have thin walls that might fail in printing?", or "Are any of these parts interfering with each other?"
 
 ## Getting Started
 
