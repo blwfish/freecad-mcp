@@ -4,15 +4,13 @@
 [![Integration Tests](https://github.com/blwfish/freecad-mcp/actions/workflows/integration-tests.yml/badge.svg)](https://github.com/blwfish/freecad-mcp/actions/workflows/integration-tests.yml)
 [![License: LGPL v2.1](https://img.shields.io/badge/License-LGPL_v2.1-blue.svg)](LICENSE)
 
-This tool enables your AI agent to use [FreeCAD](https://www.freecad.org/) — the open-source parametric 3D CAD modeler — to design parts, generate CNC toolpaths, and produce manufacturing-ready files for you.
+A bridge between your AI agent and [FreeCAD](https://www.freecad.org/) — the open-source parametric 3D CAD modeler. Design parts together, generate CNC toolpaths, diagnose modeling problems, and produce manufacturing-ready files.
 
 > **FreeCAD version support:** All tools except CAM are supported on FreeCAD 1.1.x (current stable). CAM toolpath generation requires FreeCAD 1.2-dev — the Path workbench API changed incompatibly between 1.1 and 1.2. This project tracks 1.2-dev.
 
 ## What This Does
 
-You describe what you need — "design a mounting bracket with these dimensions" or "generate G-code for this part" — and your AI agent does the rest: creating parametric sketches, padding and pocketing features, adding fillets, setting up CAM jobs, and exporting files. All using the same FreeCAD that engineers and makers use, with 33 tools covering parametric design, CNC toolpath generation, and mesh operations. See [TOOLS.md](TOOLS.md) for the full tool reference.
-
-If you already use FreeCAD, this gives you a thinking partner — for working faster, for co-designing things that would take hours to build by hand, for untangling the cryptic error messages that FreeCAD is so good at generating, and for hunting down the subtle, knotty modeling problems that are nearly impossible to find alone.
+This is a thinking partner for FreeCAD work — for moving faster, for co-designing things that would take hours to build by hand, for untangling the cryptic error messages that FreeCAD is so good at generating, and for hunting down the subtle, knotty modeling problems that are nearly impossible to find alone. You bring the design intent and the domain judgment; the agent handles the FreeCAD mechanics. 33 tools cover parametric design, CNC toolpath generation, and mesh operations. See [TOOLS.md](TOOLS.md) for the full tool reference.
 
 I built this for myself and use it daily for real work — designing parts, generating toolpaths, and printing them on my 3D printers or cutting them on my CNC router. This is not a demo or a proof of concept. It's a production tool that I rely on.
 
