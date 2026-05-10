@@ -8,6 +8,27 @@ This tool enables your AI agent to use [FreeCAD](https://www.freecad.org/) — t
 
 > **FreeCAD version support:** All tools except CAM are supported on FreeCAD 1.1.x (current stable). CAM toolpath generation requires FreeCAD 1.2-dev — the Path workbench API changed incompatibly between 1.1 and 1.2. This project tracks 1.2-dev.
 
+## See It In Action
+
+**Debugging a broken external reference** — a link FreeCAD can't restore, an error
+message that seems to contradict what you know about your own model, and a one-line fix
+found by reading the file directly.
+
+[![Report View showing broken link error](docs/img/extref-02-error.png)](docs/scenario-external-refs.md)
+
+[Full story →](docs/scenario-external-refs.md)
+
+---
+
+**Designing a shingles generator** — several sessions of back-and-forth to design a
+parametric generator that tiles any roof surface from a spreadsheet of parameters.
+
+[![Shingles generated across a multi-plane roof](docs/img/shingles-result.png)](docs/scenario-shingles.md)
+
+[Full story →](docs/scenario-shingles.md)
+
+---
+
 ## What This Does
 
 You describe what you need — "design a mounting bracket with these dimensions" or "generate G-code for this part" — and your AI agent does the rest: creating parametric sketches, padding and pocketing features, adding fillets, setting up CAM jobs, and exporting files. All using the same FreeCAD that engineers and makers use, with 33 tools covering parametric design, CNC toolpath generation, and mesh operations. See [TOOLS.md](TOOLS.md) for the full tool reference.
