@@ -14,6 +14,12 @@ You describe what you need — "design a mounting bracket with these dimensions"
 
 If you already use FreeCAD, this gives you a thinking partner — for working faster, for co-designing things that would take hours to build by hand, for untangling the cryptic error messages that FreeCAD is so good at generating, and for hunting down the subtle, knotty modeling problems that are nearly impossible to find alone.
 
+I built this for myself and use it daily for real work — designing parts, generating toolpaths, and printing them on my 3D printers or cutting them on my CNC router. This is not a demo or a proof of concept. It's a production tool that I rely on.
+
+I use Claude Code on a Mac. Other platforms *should* work — the code handles macOS, Windows, and Linux — but are less tested. PRs for other agents and platforms will be considered.
+
+If you hit a bug, [open an issue](https://github.com/blwfish/freecad-mcp/issues/new) — silent failures don't help anyone. Agents won't tell you when something's wrong; they'll just fail their task and you'll blame Claude. (GitHub Discussions are intentionally off — issues are the single channel. See [CONTRIBUTING.md](CONTRIBUTING.md) for what makes a useful report.)
+
 ## See It In Action
 
 **Debugging a broken external reference** — a link FreeCAD can't restore, an error
@@ -66,14 +72,6 @@ A few things worth knowing about this output:
 - **Debug/crash infrastructure loaded** — active instrumentation is running. If something goes wrong mid-operation, logs and crash reports are captured automatically.
 - **Socket server started / Claude ready** — the bridge is listening. This is the line that means your AI agent can connect.
 - **Font alias warning** (in orange) — harmless Qt noise that appears on most macOS systems regardless of what you're doing. Not a problem.
-
-## Background
-
-I built this for myself and use it daily for real work — designing parts, generating toolpaths, and printing them on my 3D printers or cutting them on my CNC router. This is not a demo or a proof of concept. It's a production tool that I rely on.
-
-I use Claude Code on a Mac. Other platforms *should* work — the code handles macOS, Windows, and Linux — but are less tested. PRs for other agents and platforms will be considered.
-
-If you hit a bug, [open an issue](https://github.com/blwfish/freecad-mcp/issues/new) — silent failures don't help anyone. Agents won't tell you when something's wrong; they'll just fail their task and you'll blame Claude. (GitHub Discussions are intentionally off — issues are the single channel. See [CONTRIBUTING.md](CONTRIBUTING.md) for what makes a useful report.)
 
 ### For Developers
 
