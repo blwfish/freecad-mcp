@@ -4,7 +4,7 @@ This file is for you, the AI agent. It tells you what needs to be true on this s
 
 ## What This Is
 
-freecad-mcp is a Model Context Protocol (MCP) server providing 24 tools for FreeCAD 3D CAD modeling — parametric part design, CNC toolpath generation (CAM), mesh operations, screenshots, and arbitrary Python execution inside FreeCAD. Once installed and registered, these tools appear in your tool list and you can design 3D parts conversationally.
+freecad-mcp is a Model Context Protocol (MCP) server providing 33 tools for FreeCAD 3D CAD modeling — parametric part design, CNC toolpath generation (CAM), mesh operations, spatial analysis, screenshots, and arbitrary Python execution inside FreeCAD. Once installed and registered, these tools appear in your tool list.
 
 **Origin:** Built by one person for personal use, on a Mac, with Claude Code. Other platforms *should* work (the code handles macOS, Windows, and Linux) but are less tested. PRs for other agents and platforms will be considered.
 
@@ -150,27 +150,38 @@ The file `CLAUDE.md` in the repo root is your primary reference for **using** th
 
 ### Tool Overview
 
-**8 Smart Dispatchers** — each accepts an `operation` parameter routing to many sub-operations:
+**12 Dispatchers** — each accepts an `operation` parameter routing to many sub-operations:
 
-| Tool | Operations | What it does |
-|------|-----------|--------------|
-| `partdesign_operations` | 13 | Pad, pocket, fillet, chamfer, hole, revolution, loft, sweep, mirror, patterns |
-| `part_operations` | 18 | Primitives, booleans, transforms, extrude, revolve |
-| `view_control` | 16 | Screenshots, views, document management, object selection |
-| `cam_operations` | 37 | Full CNC: job setup, profiles, pockets, drilling, surface ops, G-code export |
-| `cam_tools` | 5 | Cutting tool library CRUD |
-| `cam_tool_controllers` | 5 | Tool controller management |
-| `spreadsheet_operations` | 8 | Parametric data management |
-| `draft_operations` | 5 | 2D drafting, clones, arrays |
+| Tool | What it does |
+|------|--------------|
+| `sketch_operations` | Create sketches, add geometry, add constraints, verify |
+| `partdesign_operations` | Pad, pocket, fillet, chamfer, hole, revolution, loft, sweep, mirror, patterns |
+| `part_operations` | Primitives, booleans, transforms, extrude, revolve, geometry check |
+| `draft_operations` | 2D drafting, ShapeString (3D text), clones, arrays |
+| `spreadsheet_operations` | Parametric data management |
+| `cam_operations` | Full CNC: job setup, profiles, pockets, drilling, surface ops, G-code export |
+| `cam_tools` | Cutting tool library CRUD |
+| `cam_tool_controllers` | Tool controller management |
+| `mesh_operations` | Import/export meshes, mesh-to-solid conversion, validation |
+| `measurement_operations` | Bounding box, volume, faces, surface area, center of mass, element counts |
+| `spatial_query` | Interference/collision detection, clearance, containment, face relationships |
+| `view_control` | Screenshots, views, document management, checkpoint/rollback, clip planes |
 
-**12 Utility Tools:**
+**21 Single-Purpose Tools:**
 - `execute_python` / `execute_python_async` — run arbitrary Python in FreeCAD (the escape hatch)
 - `poll_job` / `list_jobs` / `cancel_job` / `cancel_operation` — async job management
-- `check_freecad_connection` — verify FreeCAD is running
-- `mesh_operations` — import/export, mesh-to-solid, validation
-- `get_debug_logs` — retrieve operation logs
+- `build_sketch` — validate and emit a parametric sketch from a JSON layout descriptor
 - `continue_selection` — complete interactive edge/face selection workflows
+- `api_introspection` — live FreeCAD API signature lookup; use before `execute_python`
+- `macro_operations` — list, read, and run macros from the user's FreeCAD macro directory
+- `run_inspector` — run design-rule checks on the active document
+- `get_debug_logs` — retrieve structured operation logs
+- `check_freecad_connection` — verify FreeCAD is running with AICopilot loaded
 - `restart_freecad` — restart FreeCAD, optionally saving documents
+- `reload_modules` — hot-reload handler modules after deploying updated code
+- `manage_connection` — bridge-side diagnostics (status, clear crash-loop recovery files, validate FCStd)
+- `test_echo` — verify the bridge is reachable
+- `spawn_freecad_instance` / `list_freecad_instances` / `select_freecad_instance` / `stop_freecad_instance` — headless instance management (see Headless Mode below)
 
 ### Critical Rules
 
