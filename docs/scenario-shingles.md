@@ -1,9 +1,8 @@
 # Scenario: Designing a Shingles Generator
 
-*A real session — or rather, several sessions. This is the kind of work that develops
-over multiple conversations, each one starting with "we hit a context limit, here's
-where we left off." The model is a depot building for an HO scale model railroad,
-to be 3D printed in resin.*
+*A real project — developed over several sessions, each one picking up with "let's
+do some more work on the shingle generator." The model is a depot building for an
+HO scale model railroad, to be 3D printed in resin.*
 
 ---
 
@@ -36,8 +35,8 @@ ridge caps and valley fills for now?
 
 **User:** Yes, basic surface coverage first.
 
-*(First session ends. Later — after hitting a context limit and picking up again —
-the conversation shifts from design to implementation, and things get more specific.)*
+*(Later, picking up where we left off — the conversation shifts from design to
+implementation, and things get more specific.)*
 
 ---
 
