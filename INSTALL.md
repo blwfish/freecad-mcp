@@ -1,67 +1,31 @@
-# FreeCAD MCP Installation Guide
-
-Control FreeCAD with Claude AI through the Model Context Protocol (MCP).
+# FreeCAD MCP Installation
 
 **Requirements:**
 - FreeCAD 1.1.x or 1.2-dev ([freecad.org](https://freecad.org/downloads.php)) — CAM requires 1.2-dev
 - Python 3.10+
-- Claude Desktop or Claude Code
+- An MCP-compatible AI agent
 
 ---
 
-## Quick Install (Recommended)
+## Recommended: Let Your Agent Install It
 
-### For Claude Code Users
+You're here because you have an AI agent. Have it do the installation.
 
-```bash
-# Install the setup tool
-npm install -g freecad-mcp-setup
+Give your agent this prompt:
 
-# Run setup (installs workbench + registers MCP server)
-freecad-mcp setup
-```
+> Go to https://github.com/blwfish/freecad-mcp and read the AGENT-INSTALL.md file. Follow the instructions to install and configure the FreeCAD MCP server on this machine.
 
-That's it! The installer:
-1. Downloads the AICopilot workbench to FreeCAD's Mod folder
-2. Downloads the MCP bridge server to `~/.freecad-mcp/`
-3. Registers the MCP server with Claude Code
-
-### For Claude Desktop Users
-
-```bash
-# Install the setup tool
-npm install -g freecad-mcp-setup
-
-# Run setup (installs workbench only)
-freecad-mcp setup
-```
-
-Then manually add to your Claude Desktop config:
-
-**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
-**Linux:** `~/.config/Claude/claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "freecad": {
-      "command": "python3",
-      "args": ["/Users/YOUR_USERNAME/.freecad-mcp/freecad_mcp_server.py"]
-    }
-  }
-}
-```
+Your agent will handle the rest — installing prerequisites, cloning the repo, deploying the workbench, and registering itself with your agent platform.
 
 ---
 
 ## Manual Installation
 
-If the NPM installer doesn't work, install manually:
+If you need to install without an agent, or want to understand what the agent does, follow the steps below. This is not the recommended path.
 
 ### Step 1: Install the FreeCAD Workbench
 
-Clone or download this repository, then copy the `AICopilot` folder to FreeCAD's Mod directory:
+Clone this repository, then copy the `AICopilot` folder to FreeCAD's Mod directory:
 
 | Platform | FreeCAD Mod Directory |
 |----------|----------------------|
@@ -70,121 +34,119 @@ Clone or download this repository, then copy the `AICopilot` folder to FreeCAD's
 | Windows  | `%APPDATA%\FreeCAD\Mod\` |
 
 ```bash
-# Example for macOS
+git clone https://github.com/blwfish/freecad-mcp.git
+cd freecad-mcp
+
+# macOS example
 cp -r AICopilot ~/Library/Application\ Support/FreeCAD/Mod/
 ```
 
-### Step 2: Install the MCP Bridge
+If the Mod directory doesn't exist, create it.
 
-Copy the bridge files somewhere permanent:
+### Step 2: Install the MCP Bridge
 
 ```bash
 mkdir -p ~/.freecad-mcp
 cp freecad_mcp_server.py mcp_bridge_framing.py ~/.freecad-mcp/
+pip3 install mcp>=0.1.0
 ```
 
-### Step 3: Register with Claude
+### Step 3: Register with Your Agent
 
-**For Claude Code:**
-```bash
-claude mcp add freecad python3 ~/.freecad-mcp/freecad_mcp_server.py
-```
+The bridge speaks standard MCP over stdio. Registration syntax varies by agent platform.
 
-**For Claude Desktop:**
-Edit your config file (see paths above) and add:
+**Generic MCP config** (works for any MCP-compatible agent):
 ```json
 {
   "mcpServers": {
     "freecad": {
       "command": "python3",
-      "args": ["/full/path/to/.freecad-mcp/freecad_mcp_server.py"]
+      "args": ["/absolute/path/to/.freecad-mcp/freecad_mcp_server.py"]
     }
   }
 }
 ```
 
+Use absolute paths. On Windows, use `python` instead of `python3`.
+
+**Claude Code** has a CLI shortcut:
+```bash
+claude mcp add freecad python3 ~/.freecad-mcp/freecad_mcp_server.py
+```
+
+### Step 4: Start FreeCAD
+
+FreeCAD must be running with the AICopilot addon loaded. On first launch after installing the addon, FreeCAD detects it automatically. You should see `AI Socket Server started` in FreeCAD's Report View (menu: View → Panels → Report View).
+
 ---
 
 ## Verify Installation
 
-1. **Start FreeCAD** - The AICopilot workbench should load automatically
-2. **Check FreeCAD console** for: `MCP Socket Server started`
-3. **Start Claude** and ask: "What FreeCAD tools are available?"
-4. You should see tools like `mcp__freecad__create_box`, `mcp__freecad__view_control`, etc.
+Once FreeCAD is running and your agent is configured, ask your agent:
+
+> Check if the FreeCAD MCP connection is working.
+
+Your agent will call `check_freecad_connection()`. If it succeeds, the full pipeline is working. If it fails, FreeCAD is either not running or the AICopilot addon didn't load — check the Report View for errors.
 
 ---
 
 ## Updating
 
+Pull the latest changes, then re-copy the workbench and bridge files:
+
 ```bash
-freecad-mcp setup --update
+git pull
+cp -r AICopilot ~/Library/Application\ Support/FreeCAD/Mod/  # macOS
+cp freecad_mcp_server.py mcp_bridge_framing.py ~/.freecad-mcp/
 ```
 
-Or manually replace the `AICopilot` folder and the files in `~/.freecad-mcp/` with the latest versions.
+Or give your agent the same installation prompt again — it will update in place.
 
 ---
 
 ## Troubleshooting
 
-### "MCP server not responding"
-- Make sure FreeCAD is running
-- Check FreeCAD console for errors
-- Verify the socket server started: look for `MCP Socket Server started on /tmp/freecad_mcp.sock`
+### "Cannot connect to FreeCAD"
+- FreeCAD must be running before your agent can connect
+- Check Report View for `AI Socket Server started` — if missing, the addon didn't load
+- Verify `AICopilot` is in the correct Mod directory
 
-### "Tools not showing up in Claude"
-- Restart Claude Desktop/Code after config changes
-- Verify the path to `freecad_mcp_server.py` is correct in your config
-- Check that Python 3 is in your PATH
+### Tools not showing up in your agent
+- Restart your agent after registering the MCP server
+- Verify the path to `freecad_mcp_server.py` is correct and absolute
+- Check that Python 3.10+ is on your PATH
 
-### "FreeCAD workbench not loading"
-- Ensure `AICopilot` folder is in the correct Mod directory
-- Check FreeCAD version is 1.1 or higher
-- Look at FreeCAD console for import errors
-
-### Windows-specific issues
-- Use `python` instead of `python3` in your config
-- Use forward slashes or escaped backslashes in paths
-- Try TCP socket if Unix socket fails (edit `freecad_mcp_server.py`)
+### FreeCAD workbench not loading
+- Confirm `AICopilot` is in the correct Mod directory for your platform
+- FreeCAD version must be 1.1 or higher
+- Check the Report View or FreeCAD console for Python import errors
 
 ---
 
 ## Uninstalling
 
-1. Remove the workbench:
-   ```bash
-   rm -rf ~/Library/Application\ Support/FreeCAD/Mod/AICopilot  # macOS
-   ```
+```bash
+# Remove the workbench (macOS)
+rm -rf ~/Library/Application\ Support/FreeCAD/Mod/AICopilot
 
-2. Remove the MCP bridge:
-   ```bash
-   rm -rf ~/.freecad-mcp
-   ```
+# Remove the bridge
+rm -rf ~/.freecad-mcp
+```
 
-3. Remove from Claude:
-   ```bash
-   claude mcp remove freecad  # For Claude Code
-   ```
-   Or remove the `freecad` entry from `claude_desktop_config.json`
+Then remove the `freecad` MCP server entry from your agent's config.
 
 ---
 
 ## Architecture
 
 ```
-Claude Desktop/Code
-    ↓ (MCP protocol over stdio)
-freecad_mcp_server.py
-    ↓ (Socket connection)
-AICopilot/freecad_mcp_handler.py (inside FreeCAD)
-    ↓ (FreeCAD API)
-FreeCAD operations
+AI Agent ──(MCP over stdio)── freecad_mcp_server.py ──(Unix socket)── FreeCAD + AICopilot addon
 ```
 
-The bridge translates MCP tool calls into FreeCAD commands via a socket connection to the running FreeCAD instance.
+Two components: the **AICopilot workbench** (a FreeCAD addon that runs a socket server inside FreeCAD) and the **MCP bridge** (a Python script that translates MCP tool calls into socket messages). Both must be installed. FreeCAD must be running with the addon loaded for any tools to work.
 
 ---
 
-## Support
+## Issues
 
-- **Issues:** https://github.com/blwfish/freecad-mcp/issues
-- **Docs:** See [CLAUDE.md](CLAUDE.md) for tool reference and usage
+[github.com/blwfish/freecad-mcp/issues](https://github.com/blwfish/freecad-mcp/issues)
