@@ -4,13 +4,9 @@
 [![Integration Tests](https://github.com/blwfish/freecad-mcp/actions/workflows/integration-tests.yml/badge.svg)](https://github.com/blwfish/freecad-mcp/actions/workflows/integration-tests.yml)
 [![License: LGPL v2.1](https://img.shields.io/badge/License-LGPL_v2.1-blue.svg)](LICENSE)
 
-A bridge between your AI agent and [FreeCAD](https://www.freecad.org/) — the open-source parametric 3D CAD modeler. Design parts together, generate CNC toolpaths, diagnose modeling problems, and produce manufacturing-ready files.
-
-> **FreeCAD version support:** All tools except CAM are supported on FreeCAD 1.1.x (current stable). CAM toolpath generation requires FreeCAD 1.2-dev — the Path workbench API changed incompatibly between 1.1 and 1.2. This project tracks 1.2-dev.
-
 ## What This Does
 
-This is a thinking partner for FreeCAD work — for moving faster, for co-designing things that would take hours to build by hand, for untangling the cryptic error messages that FreeCAD is so good at generating, and for hunting down the subtle, knotty modeling problems that are nearly impossible to find alone. You bring the design intent and the domain judgment; the agent handles the FreeCAD mechanics. 33 tools cover parametric design, CNC toolpath generation, and mesh operations. See [TOOLS.md](TOOLS.md) for the full tool reference.
+A bridge between your AI agent and [FreeCAD](https://www.freecad.org/) — a thinking partner for parametric design, CNC toolpath generation, and mesh work. You bring the design intent and the domain judgment; the agent handles the FreeCAD mechanics. Together: moving faster, co-designing things that would take hours to build by hand, untangling the cryptic error messages that FreeCAD is so good at generating, and hunting down the subtle, knotty modeling problems that are nearly impossible to find alone. 33 tools. See [TOOLS.md](TOOLS.md) for the full reference.
 
 I built this for myself and use it daily for real work — designing parts, generating toolpaths, and printing them on my 3D printers or cutting them on my CNC router. This is not a demo or a proof of concept. It's a production tool that I rely on.
 
@@ -51,6 +47,8 @@ parametric generator that tiles any roof surface from a spreadsheet of parameter
 - **Check your work** — "Does this model have any geometry errors?", "Will this part have thin walls that might fail in printing?", or "Are any of these parts interfering with each other?"
 
 ## Getting Started
+
+> **FreeCAD version support:** All tools except CAM are supported on FreeCAD 1.1.x (current stable). CAM toolpath generation requires FreeCAD 1.2-dev — the Path workbench API changed incompatibly between 1.1 and 1.2. This project tracks 1.2-dev.
 
 Tell your AI agent:
 
