@@ -4,9 +4,7 @@ Thanks for taking the time to read this. This is a personal-use project — I bu
 
 ## Found a bug?
 
-Please [open an issue](https://github.com/blwfish/freecad-mcp/issues/new). GitHub Discussions are intentionally off — issues are the single feedback channel for this repo.
-
-A useful bug report includes:
+Please [open an issue](https://github.com/blwfish/freecad-mcp/issues/new?template=bug_report.md). GitHub Discussions are intentionally off — issues are the single feedback channel for this repo. The bug report template will prompt you for the right information:
 
 - **What you tried to do.** The agent prompt or call sequence, if applicable.
 - **What happened instead.** The error message or unexpected output, verbatim.
@@ -29,7 +27,7 @@ CAM improvements for 1.2-dev are welcome, as long as they track FreeCAD upstream
 
 ## Sending a PR
 
-Welcome, but a couple of preflight things:
+Welcome, but a couple of preflight things. The [PR template](/.github/PULL_REQUEST_TEMPLATE.md) has a checklist — here's the reasoning behind it:
 
 1. **Open an issue first** if it's a non-trivial change. Saves both of us from wasted effort if I disagree on direction.
 2. **Run the tests** before pushing:
