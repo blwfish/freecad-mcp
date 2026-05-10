@@ -39,32 +39,4 @@ jobs:
           fi
 
       - name: Verify tool count consistency
-        run: |
-          # Count tools in bridge (types.Tool( occurrences)
-          ACTUAL=$(grep -c 'types\.Tool(' freecad_mcp_server.py)
-          echo "Bridge defines $ACTUAL tools"
-
-          # Check README.md
-          README_COUNT=$(grep -oP '(\d+) tools' README.md | grep -oP '^\d+' | head -1)
-          echo "README.md says $README_COUNT tools"
-
-          # Check TOOLS.md
-          TOOLS_COUNT=$(grep -oP '(\d+) MCP tools' TOOLS.md | grep -oP '^\d+' | head -1)
-          echo "TOOLS.md says $TOOLS_COUNT tools"
-
-          # Compare
-          MISMATCH=0
-          if [ "$ACTUAL" != "$README_COUNT" ]; then
-            echo "::error::Tool count mismatch: bridge has $ACTUAL but README.md says $README_COUNT"
-            MISMATCH=1
-          fi
-          if [ "$ACTUAL" != "$TOOLS_COUNT" ]; then
-            echo "::error::Tool count mismatch: bridge has $ACTUAL but TOOLS.md says $TOOLS_COUNT"
-            MISMATCH=1
-          fi
-
-          if [ "$MISMATCH" = "1" ]; then
-            exit 1
-          else
-            echo "All tool counts match: $ACTUAL"
-          fi
+        run: pip install mcp && python -m pytest tests/unit/test_tool_count.py -v
