@@ -39,4 +39,11 @@ jobs:
           fi
 
       - name: Verify tool count consistency
-        run: pip install mcp && python -m pytest tests/unit/test_tool_count.py -v
+        run: |
+          BRIDGE=$(grep -c 'types\.Tool(' freecad_mcp_server.py)
+          DOCS=$(grep -cP '^\| `\w+`' TOOLS.md)
+          echo "Bridge: $BRIDGE tools, TOOLS.md: $DOCS rows"
+          if [ "$BRIDGE" != "$DOCS" ]; then
+            echo "::error::Bridge defines $BRIDGE tools but TOOLS.md has $DOCS rows"
+            exit 1
+          fi
