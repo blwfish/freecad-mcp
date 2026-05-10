@@ -22,6 +22,19 @@ Tell your AI agent:
 
 Your agent will handle the rest — installing prerequisites, cloning the repo, setting up the FreeCAD addon, and registering itself. Once setup is complete, you can ask your agent to design parts.
 
+### Verifying your installation
+
+Once FreeCAD is running with the AICopilot workbench loaded, open the Report View (menu: View → Panels → Report View). You should see something like this:
+
+![Report View on startup](docs/img/report-view-startup.png)
+
+A few things worth knowing about this output:
+
+- **AI Copilot Service starting** — confirms the AICopilot workbench loaded correctly. If you don't see this, the addon isn't installed or FreeCAD isn't finding it.
+- **Debug/crash infrastructure loaded** — active instrumentation is running. If something goes wrong mid-operation, logs and crash reports are captured automatically.
+- **Socket server started / Claude ready** — the bridge is listening. This is the line that means your AI agent can connect.
+- **Font alias warning** (in orange) — harmless Qt noise that appears on most macOS systems regardless of what you're doing. Not a problem.
+
 ## What You Can Ask Your Agent To Do
 
 - **Design a 3D part** — "I need a mounting plate, 100x60mm, with four M3 mounting holes and rounded corners"
