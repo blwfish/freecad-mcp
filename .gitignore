@@ -46,6 +46,9 @@ freecad_screenshot.png
 *.sock
 *.log
 tests/results/
+.coverage
+htmlcov/
+.pytest_cache/
 
 # Database
 *.db
