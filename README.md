@@ -6,7 +6,7 @@
 
 ## What This Does
 
-A bridge between your AI agent and [FreeCAD](https://www.freecad.org/) — a thinking partner for parametric design, CNC toolpath generation, and mesh work. You bring the design intent and the domain judgment; the agent handles the FreeCAD mechanics. Together: moving faster, co-designing things that would take hours to build by hand, untangling the cryptic error messages that FreeCAD is so good at generating, and hunting down the subtle, knotty modeling problems that are nearly impossible to find alone. 33 tools. See [TOOLS.md](TOOLS.md) for the full reference.
+A bridge between your AI agent and [FreeCAD](https://www.freecad.org/) — a thinking partner for parametric design, CNC toolpath generation, and mesh work. You bring the design intent and the domain judgment; the agent handles the FreeCAD mechanics. Together: moving faster, co-designing things that would take hours to build by hand, untangling the cryptic error messages that FreeCAD is so good at generating, and hunting down the subtle, knotty modeling problems that are nearly impossible to find alone. 33 tools covering parametric design, CNC toolpath generation, and mesh operations. See [TOOLS.md](TOOLS.md) for the full reference.
 
 I built this for myself and use it daily for real work — designing parts, generating toolpaths, and printing them on my 3D printers or cutting them on my CNC router. This is not a demo or a proof of concept. It's a production tool that I rely on.
 
