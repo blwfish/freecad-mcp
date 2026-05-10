@@ -6,13 +6,7 @@
 
 ## What This Does
 
-A bridge between your AI agent and [FreeCAD](https://www.freecad.org/) — a thinking partner for parametric design, CNC toolpath generation, and mesh work. You bring the design intent and the domain judgment; the agent handles the FreeCAD mechanics. Together: moving faster, co-designing things that would take hours to build by hand, untangling the cryptic error messages that FreeCAD is so good at generating, and hunting down the subtle, knotty modeling problems that are nearly impossible to find alone. See [TOOLS.md](TOOLS.md) for the full tool reference.
-
-I built this for myself and use it daily for real work — designing parts, generating toolpaths, and printing them on my 3D printers or cutting them on my CNC router. This is not a demo or a proof of concept. It's a production tool that I rely on.
-
-I use Claude Code on a Mac. Other platforms *should* work — the code handles macOS, Windows, and Linux — but are less tested. PRs for other agents and platforms will be considered.
-
-If you hit a bug, [open an issue](https://github.com/blwfish/freecad-mcp/issues/new) — silent failures don't help anyone. Agents won't tell you when something's wrong; they'll just fail their task and you'll blame Claude. (GitHub Discussions are intentionally off — issues are the single channel. See [CONTRIBUTING.md](CONTRIBUTING.md) for what makes a useful report.)
+A bridge between your AI agent and [FreeCAD](https://www.freecad.org/) — a thinking partner for parametric design, CNC toolpath generation, and mesh work. You bring the design intent and the domain judgment; the agent handles the FreeCAD mechanics. Together: moving faster, co-designing things that would take hours to build by hand, untangling the cryptic error messages that FreeCAD is so good at generating, and hunting down the subtle, knotty modeling problems that are nearly impossible to find alone. Built for personal daily use — designing parts, generating toolpaths, printing and cutting them — not a demo. See [TOOLS.md](TOOLS.md) for the full tool reference.
 
 ## See It In Action
 
@@ -49,6 +43,8 @@ parametric generator that tiles any roof surface from a spreadsheet of parameter
 ## Getting Started
 
 > **FreeCAD version support:** All tools except CAM are supported on FreeCAD 1.1.x (current stable). CAM toolpath generation requires FreeCAD 1.2-dev — the Path workbench API changed incompatibly between 1.1 and 1.2. This project tracks 1.2-dev.
+
+Developed on macOS with Claude Code. The code handles macOS, Windows, and Linux — other platforms *should* work but are less tested. PRs for other agents and platforms will be considered.
 
 Tell your AI agent:
 
@@ -117,6 +113,10 @@ See [AGENT-INSTALL.md](AGENT-INSTALL.md) for full technical details, architectur
 ## Security
 
 This tool grants your AI agent full access to FreeCAD's Python environment, including the filesystem and OS. This is by design. See [SECURITY.md](SECURITY.md) for the full security model and how to report vulnerabilities.
+
+## Issues
+
+If you hit a bug, [open an issue](https://github.com/blwfish/freecad-mcp/issues/new?template=bug_report.md) — silent failures don't help anyone. Agents won't tell you when something's wrong; they'll just fail the task. See [CONTRIBUTING.md](CONTRIBUTING.md) for what makes a useful report.
 
 ## License
 
