@@ -18,13 +18,15 @@ jobs:
 
       - name: Check FreeCAD releases
         id: freecad
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Get latest 1.1.x stable release
-          LATEST_1_1=$(curl -s https://api.github.com/repos/FreeCAD/FreeCAD/releases | jq -r '.[] | select(.tag_name | test("^1\\.1\\.[0-9]+$")) | .tag_name' | head -1 | sed 's/^v//')
+          LATEST_1_1=$(gh api repos/FreeCAD/FreeCAD/releases --paginate --jq '.[] | select(.tag_name | test("^1\\.1\\.[0-9]+$")) | .tag_name' | head -1 | sed 's/^v//')
           CURRENT_1_1="1.1.0"
 
           # Get latest 1.2 pre-release
-          LATEST_1_2=$(curl -s https://api.github.com/repos/FreeCAD/FreeCAD/releases | jq -r '.[] | select(.prerelease) | select(.tag_name | test("^1\\.2")) | .tag_name' | head -1 | sed 's/^v//')
+          LATEST_1_2=$(gh api repos/FreeCAD/FreeCAD/releases --jq '.[] | select(.prerelease) | select(.tag_name | test("^1\\.2")) | .tag_name' | head -1 | sed 's/^v//')
 
           echo "latest_1_1=$LATEST_1_1" >> $GITHUB_OUTPUT
           echo "current_1_1=$CURRENT_1_1" >> $GITHUB_OUTPUT
@@ -37,8 +39,9 @@ jobs:
       - name: Check Python dependencies
         id: python_deps
         run: |
-          python3 -m pip install -e . > /dev/null 2>&1
-          OUTDATED=$(python3 -m pip list --outdated --format=json | jq -r '.[] | "\(.name)==\(.latest_version)"' 2>/dev/null || echo "")
+          python3 -m venv /tmp/dep-check
+          /tmp/dep-check/bin/pip install -e . -q
+          OUTDATED=$(/tmp/dep-check/bin/pip list --outdated --format=json | jq -r '.[] | "\(.name)==\(.latest_version)"' 2>/dev/null || echo "")
           if [ -n "$OUTDATED" ]; then
             echo "outdated<<EOF" >> $GITHUB_OUTPUT
             echo "$OUTDATED" >> $GITHUB_OUTPUT
