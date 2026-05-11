@@ -40,7 +40,14 @@ jobs:
         id: python_deps
         run: |
           python3 -m venv /tmp/dep-check
-          /tmp/dep-check/bin/pip install -e . -q
+          python3 -c "
+import tomllib, sys
+with open('pyproject.toml', 'rb') as f:
+    data = tomllib.load(f)
+for dep in data['project']['dependencies']:
+    print(dep)
+" > /tmp/project-deps.txt
+          /tmp/dep-check/bin/pip install -r /tmp/project-deps.txt -q
           OUTDATED=$(/tmp/dep-check/bin/pip list --outdated --format=json | jq -r '.[] | "\(.name)==\(.latest_version)"' 2>/dev/null || echo "")
           if [ -n "$OUTDATED" ]; then
             echo "outdated<<EOF" >> $GITHUB_OUTPUT
