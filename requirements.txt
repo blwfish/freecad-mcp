@@ -1,5 +1,5 @@
 # MCP Protocol (bridge dependency)
-mcp==1.27.0
+mcp==1.27.1
 
 # FreeCAD's Python bindings come with FreeCAD (PySide2/PySide6)
 # Don't install separately - use FreeCAD's version
