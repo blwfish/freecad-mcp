@@ -4,7 +4,11 @@
 # Version: 5.0.0 - Core rewrite: eliminated dead code, unified dispatch,
 #                   replaced busy-wait polling with Queue.get(timeout)
 
-__version__ = "5.5.0"
+# Minimum FreeCAD version required for CAM tools.
+# Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
+# "not supported" error rather than crashing on missing Path/CAM API.
+CAM_MIN_FC_VERSION = (1, 2, 0)
+
 REQUIRED_VERSIONS = {
     "freecad_debug": ">=1.1.0",
     "freecad_health": ">=1.0.1",
@@ -295,20 +299,23 @@ class FreeCADSocketServer:
 
         FreeCAD.Console.PrintMessage("Socket server initialized with modular handlers\n")
 
-        # Version check: warn if FreeCAD is below 1.2
+        # Cache FreeCAD version; used by CAM dispatch gate.
         try:
             ver = FreeCAD.Version()
-            major, minor = int(ver[0]), int(ver[1])
-            if major < 1 or (major == 1 and minor < 2):
+            major = int(ver[0])
+            minor = int(ver[1])
+            patch = int(ver[2]) if len(ver) > 2 and str(ver[2]).isdigit() else 0
+            self._fc_version = (major, minor, patch)
+            cam_req = ".".join(str(x) for x in CAM_MIN_FC_VERSION)
+            if self._fc_version < CAM_MIN_FC_VERSION:
                 FreeCAD.Console.PrintWarning(
                     f"[MCP] FreeCAD {major}.{minor} detected. "
-                    f"AICopilot requires 1.2+. CAM, PartDesign, and mesh operations "
-                    f"may fail or produce incorrect results.\n"
+                    f"CAM tools require {cam_req}+; all other tools work normally.\n"
                 )
             else:
                 FreeCAD.Console.PrintMessage(f"[MCP] FreeCAD {major}.{minor} — OK\n")
         except Exception:
-            pass  # Don't crash on version check failure
+            self._fc_version = (0, 0, 0)
 
     # -----------------------------------------------------------------
     # Server lifecycle
@@ -912,6 +919,18 @@ class FreeCADSocketServer:
         if tool_name == "view_control":
             return self._dispatch_view_control(args)
 
+        # CAM version gate — return clean error on pre-1.2 FreeCAD
+        _CAM_TOOLS = {"cam_operations", "cam_tools", "cam_tool_controllers"}
+        if tool_name in _CAM_TOOLS and self._fc_version < CAM_MIN_FC_VERSION:
+            running = ".".join(str(x) for x in self._fc_version)
+            required = ".".join(str(x) for x in CAM_MIN_FC_VERSION)
+            return json.dumps({
+                "error": (
+                    f"CAM tools require FreeCAD {required} or later "
+                    f"(running {running}). Use a FreeCAD weekly build for CAM support."
+                )
+            })
+
         # Generic dispatchers — operation name matches handler method name
         generic_dispatch_map = {
             "cam_operations": self.cam_ops,
@@ -1475,6 +1494,9 @@ class FreeCADSocketServer:
         gets a clean response. The new FreeCAD instance will start fresh
         with AICopilot reconnecting on the same socket path.
         """
+        if not FreeCAD.GuiUp:
+            return json.dumps({"error": "restart_freecad is not available in headless mode"})
+
         import subprocess
 
         save_docs = args.get("save_documents", True)

@@ -299,6 +299,8 @@ class ViewOpsHandler(BaseHandler):
                 if FreeCAD.ActiveDocument is None:
                     return json.dumps({"success": False, "error": "No active document"})
             else:
+                if not FreeCAD.GuiUp:
+                    return json.dumps({"success": False, "error": "Screenshot not available in headless mode"})
                 doc = FreeCADGui.activeDocument()
                 if doc is None:
                     return json.dumps({"success": False, "error": "No active document"})
@@ -485,6 +487,8 @@ class ViewOpsHandler(BaseHandler):
             depth: Distance along the axis where the plane cuts (default 0)
         """
         try:
+            if not FreeCAD.GuiUp:
+                return "Clip plane not available in headless mode"
             from pivy import coin
             axis = args.get('axis', 'z').lower()
             depth = float(args.get('depth', 0))
@@ -527,6 +531,8 @@ class ViewOpsHandler(BaseHandler):
     def remove_clip_plane(self, args: Dict[str, Any]) -> str:
         """Remove the most recently added clip plane from the 3D viewport."""
         try:
+            if not FreeCAD.GuiUp:
+                return "Clip plane not available in headless mode"
             if not hasattr(self, '_clip_planes') or not self._clip_planes:
                 return "No clip planes to remove"
 

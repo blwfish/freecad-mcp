@@ -21,9 +21,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Read pinned version from Dockerfile (single source of truth)
+          CURRENT_1_1=$(grep '^ARG FREECAD_VERSION=' Dockerfile | cut -d= -f2)
+
           # Get latest 1.1.x stable release
           LATEST_1_1=$(gh api repos/FreeCAD/FreeCAD/releases --paginate --jq '.[] | select(.tag_name | test("^1\\.1\\.[0-9]+$")) | .tag_name' | head -1 | sed 's/^v//')
-          CURRENT_1_1="1.1.0"
 
           # Get latest 1.2 pre-release
           LATEST_1_2=$(gh api repos/FreeCAD/FreeCAD/releases --jq '.[] | select(.prerelease) | select(.tag_name | test("^1\\.2")) | .tag_name' | head -1 | sed 's/^v//')
@@ -67,10 +69,10 @@ jobs:
             if ('${{ steps.freecad.outputs.update_available }}' === 'true') {
               body += '## FreeCAD\n';
               if (freecad_1_1_current !== freecad_1_1_latest) {
-                body += `### Stable (1.1.x)\n- Current: v${freecad_1_1_current}\n- Latest: v${freecad_1_1_latest}\n- Download: https://www.freecad.org/downloads.php\n\n`;
+                body += `### Stable (1.1.x)\n- Current: v${freecad_1_1_current}\n- Latest: v${freecad_1_1_latest}\n- **Action:** bump \`ARG FREECAD_VERSION=${freecad_1_1_latest}\` in \`Dockerfile\`\n\n`;
               }
               if (freecad_1_2_latest) {
-                body += `### Development (1.2-dev)\n- Latest pre-release: v${freecad_1_2_latest}\n- Download: https://www.freecad.org/downloads.php\n- **Note:** CAM tools require 1.2-dev; other tools work with 1.1.x\n\n`;
+                body += `### Development (1.2-dev)\n- Latest pre-release: v${freecad_1_2_latest}\n- **Note:** CAM tools require 1.2+; all other tools work with 1.1.x stable\n\n`;
               }
             }
 

@@ -9,7 +9,6 @@ import base64
 import json
 import os
 import sys
-import types
 from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
@@ -23,10 +22,10 @@ sys.modules.setdefault("Part", MagicMock())
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot"))
 from handlers.view_ops import ViewOpsHandler  # noqa: E402
 
-# Target for patching the FreeCADGui name inside the handler module
+# Patch targets inside the handler module
 _GUI_PATH = "handlers.view_ops.FreeCADGui"
-# Force non-macOS code path (saveImage) for all tests
 _PLATFORM_PATH = "handlers.view_ops.platform"
+_FREECAD_PATH = "handlers.view_ops.FreeCAD"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -61,26 +60,29 @@ def make_mock_doc(view):
 
 
 # ---------------------------------------------------------------------------
-# Success path
+# Success path (Linux/saveImage — GuiUp=True)
 # ---------------------------------------------------------------------------
 
 class TestTakeScreenshotSuccess:
     def test_returns_success_true(self):
-        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+        with patch(_FREECAD_PATH) as fc, patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            fc.GuiUp = True
             plat.system.return_value = "Linux"
             gui.activeDocument.return_value = make_mock_doc(make_mock_view())
             result = json.loads(make_handler().take_screenshot({}))
         assert result["success"] is True
 
     def test_returns_valid_base64_png(self):
-        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+        with patch(_FREECAD_PATH) as fc, patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            fc.GuiUp = True
             plat.system.return_value = "Linux"
             gui.activeDocument.return_value = make_mock_doc(make_mock_view())
             result = json.loads(make_handler().take_screenshot({}))
         assert base64.b64decode(result["image_data"]) == PNG_1x1
 
     def test_mime_type_is_png(self):
-        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+        with patch(_FREECAD_PATH) as fc, patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            fc.GuiUp = True
             plat.system.return_value = "Linux"
             gui.activeDocument.return_value = make_mock_doc(make_mock_view())
             result = json.loads(make_handler().take_screenshot({}))
@@ -97,7 +99,8 @@ class TestTakeScreenshotSuccess:
                 f.write(PNG_1x1)
 
         mock_view.saveImage.side_effect = _save
-        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+        with patch(_FREECAD_PATH) as fc, patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            fc.GuiUp = True
             plat.system.return_value = "Linux"
             gui.activeDocument.return_value = make_mock_doc(mock_view)
             make_handler().take_screenshot({})
@@ -115,7 +118,8 @@ class TestTakeScreenshotSuccess:
                 f.write(PNG_1x1)
 
         mock_view.saveImage.side_effect = _save
-        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+        with patch(_FREECAD_PATH) as fc, patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            fc.GuiUp = True
             plat.system.return_value = "Linux"
             gui.activeDocument.return_value = make_mock_doc(mock_view)
             make_handler().take_screenshot({"width": 1920, "height": 1080})
@@ -132,7 +136,8 @@ class TestTakeScreenshotSuccess:
                 f.write(PNG_1x1)
 
         mock_view.saveImage.side_effect = _save
-        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+        with patch(_FREECAD_PATH) as fc, patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            fc.GuiUp = True
             plat.system.return_value = "Linux"
             gui.activeDocument.return_value = make_mock_doc(mock_view)
             make_handler().take_screenshot({})
@@ -142,12 +147,13 @@ class TestTakeScreenshotSuccess:
 
 
 # ---------------------------------------------------------------------------
-# Error paths
+# Error paths (Linux/saveImage — GuiUp=True)
 # ---------------------------------------------------------------------------
 
 class TestTakeScreenshotErrors:
     def test_no_active_document(self):
-        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+        with patch(_FREECAD_PATH) as fc, patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            fc.GuiUp = True
             plat.system.return_value = "Linux"
             gui.activeDocument.return_value = None
             result = json.loads(make_handler().take_screenshot({}))
@@ -155,7 +161,8 @@ class TestTakeScreenshotErrors:
         assert "No active document" in result["error"]
 
     def test_no_active_view(self):
-        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+        with patch(_FREECAD_PATH) as fc, patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            fc.GuiUp = True
             plat.system.return_value = "Linux"
             gui.activeDocument.return_value = make_mock_doc(view=None)
             result = json.loads(make_handler().take_screenshot({}))
@@ -165,7 +172,8 @@ class TestTakeScreenshotErrors:
     def test_save_image_raises(self):
         mock_view = MagicMock()
         mock_view.saveImage.side_effect = RuntimeError("GPU error")
-        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+        with patch(_FREECAD_PATH) as fc, patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            fc.GuiUp = True
             plat.system.return_value = "Linux"
             gui.activeDocument.return_value = make_mock_doc(mock_view)
             result = json.loads(make_handler().take_screenshot({}))
@@ -174,8 +182,23 @@ class TestTakeScreenshotErrors:
 
     def test_get_screenshot_is_alias_for_take_screenshot(self):
         """get_screenshot() should return the same result as take_screenshot()."""
-        with patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+        with patch(_FREECAD_PATH) as fc, patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            fc.GuiUp = True
             plat.system.return_value = "Linux"
             gui.activeDocument.return_value = None
             h = make_handler()
             assert h.get_screenshot({}) == h.take_screenshot({})
+
+
+# ---------------------------------------------------------------------------
+# Headless guard (GuiUp=False, non-macOS)
+# ---------------------------------------------------------------------------
+
+class TestHeadlessScreenshot:
+    def test_returns_error_in_headless_mode(self):
+        with patch(_FREECAD_PATH) as fc, patch(_PLATFORM_PATH) as plat:
+            fc.GuiUp = False
+            plat.system.return_value = "Linux"
+            result = json.loads(make_handler().take_screenshot({}))
+        assert result["success"] is False
+        assert "headless" in result["error"].lower()

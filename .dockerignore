@@ -1,0 +1,26 @@
+# Development artifacts
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.venv/
+~
+
+# Tests — not needed in the image
+tests/
+docs/
+helpers/
+
+# Build / CI tooling
+.github/
+.git/
+*.md
+cliff.toml
+deploy.sh
+pyproject.toml
+requirements.txt
+
+# Crash / debug tools (optional at runtime, not needed at build)
+freecad_crash_report.py

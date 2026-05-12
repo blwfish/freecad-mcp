@@ -311,11 +311,23 @@ class TestExecuteTool:
     def test_generic_dispatch_routing(self, server):
         """Tools in generic_dispatch_map should use _dispatch_to_handler."""
         server._dispatch_to_handler = MagicMock(return_value=json.dumps({"result": "ok"}))
+        # Satisfy CAM version gate so all five tools reach _dispatch_to_handler
+        from freecad_mcp_handler import CAM_MIN_FC_VERSION
+        server._fc_version = CAM_MIN_FC_VERSION
         for tool in ["cam_operations", "cam_tools", "cam_tool_controllers",
                       "draft_operations", "spreadsheet_operations"]:
             server._execute_tool(tool, {"operation": "test"})
 
         assert server._dispatch_to_handler.call_count == 5
+
+    def test_cam_version_gate(self, server):
+        """CAM tools return a version error when FreeCAD is below CAM_MIN_FC_VERSION."""
+        from freecad_mcp_handler import CAM_MIN_FC_VERSION
+        server._fc_version = (CAM_MIN_FC_VERSION[0], CAM_MIN_FC_VERSION[1] - 1, 0)
+        for tool in ["cam_operations", "cam_tools", "cam_tool_controllers"]:
+            result = json.loads(server._execute_tool(tool, {"operation": "test"}))
+            assert "error" in result
+            assert "CAM tools require" in result["error"]
 
     def test_partdesign_routing(self, server):
         server._dispatch_partdesign = MagicMock(return_value=json.dumps({"result": "ok"}))
@@ -665,9 +677,6 @@ class TestConfiguration:
 
     def test_default_windows_port(self, ss_module):
         assert ss_module.WINDOWS_PORT == 23456
-
-    def test_version(self, ss_module):
-        assert ss_module.__version__ == "5.5.0"
 
     def test_max_message_size(self, ss_module):
         assert ss_module.MAX_MESSAGE_SIZE == 50 * 1024
