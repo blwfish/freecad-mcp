@@ -27,4 +27,9 @@ ENV QT_QPA_PLATFORM=offscreen
 ENV PYTHONUNBUFFERED=1
 ENV PATH="/opt/freecad/bin:${PATH}"
 
+LABEL org.opencontainers.image.source="https://github.com/blwfish/freecad-mcp"
+LABEL org.opencontainers.image.description="MCP server to control FreeCAD from Claude"
+LABEL org.opencontainers.image.licenses="LGPL-2.1-or-later"
+LABEL io.modelcontextprotocol.server.name="io.github.blwfish/freecad-mcp"
+
 ENTRYPOINT ["docker-entrypoint.sh"]
