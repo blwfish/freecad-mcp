@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.blwfish/freecad-mcp",
   "title": "FreeCAD MCP",
-  "description": "MCP server to control FreeCAD from Claude — 3D modeling, PartDesign, sketches, CAM toolpath generation, mesh operations, and arbitrary FreeCAD Python via 30+ tools.",
+  "description": "Control FreeCAD from Claude — 3D modeling, PartDesign, CAM toolpaths, and more via 30+ tools.",
   "version": "5.6.0",
   "repository": {
     "url": "https://github.com/blwfish/freecad-mcp",
