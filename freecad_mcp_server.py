@@ -343,7 +343,12 @@ async def main():
                 inputSchema={
                     "type": "object",
                     "properties": {},
-                }
+                },
+                annotations=types.ToolAnnotations(
+                    readOnlyHint=True,
+                    destructiveHint=False,
+                    idempotentHint=True,
+                ),
             ),
             types.Tool(
                 name="test_echo",
@@ -357,7 +362,12 @@ async def main():
                         }
                     },
                     "required": ["message"]
-                }
+                },
+                annotations=types.ToolAnnotations(
+                    readOnlyHint=True,
+                    destructiveHint=False,
+                    idempotentHint=True,
+                ),
             ),
             types.Tool(
                 name="restart_freecad",
@@ -376,7 +386,11 @@ async def main():
                             "default": True,
                         }
                     },
-                }
+                },
+                annotations=types.ToolAnnotations(
+                    readOnlyHint=False,
+                    destructiveHint=True,
+                ),
             ),
             types.Tool(
                 name="reload_modules",
@@ -384,7 +398,12 @@ async def main():
                 inputSchema={
                     "type": "object",
                     "properties": {},
-                }
+                },
+                annotations=types.ToolAnnotations(
+                    readOnlyHint=False,
+                    destructiveHint=False,
+                    idempotentHint=True,
+                ),
             ),
             types.Tool(
                 name="manage_connection",
@@ -410,7 +429,11 @@ async def main():
                         },
                     },
                     "required": ["action"],
-                }
+                },
+                annotations=types.ToolAnnotations(
+                    readOnlyHint=False,
+                    destructiveHint=True,
+                ),
             ),
         ]
 
@@ -481,7 +504,11 @@ async def main():
                             "name": {"type": "string", "description": "Name for result feature"}
                         },
                         "required": ["operation"]
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="sketch_operations",
@@ -562,7 +589,11 @@ async def main():
                             "edge_name": {"type": "string", "description": "Edge name for external geometry (e.g. Edge1)"},
                         },
                         "required": ["operation"]
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="part_operations",
@@ -619,7 +650,11 @@ async def main():
                             "name": {"type": "string", "description": "Name for result object"}
                         },
                         "required": ["operation"]
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="view_control",
@@ -684,7 +719,11 @@ async def main():
                             "z": {"type": "number", "description": "Z placement offset (mm)", "default": 0}
                         },
                         "required": ["operation"]
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="cam_operations",
@@ -758,7 +797,11 @@ async def main():
                             "name": {"type": "string", "description": "Name for the operation"}
                         },
                         "required": ["operation"]
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="cam_tools",
@@ -786,7 +829,11 @@ async def main():
                             "name": {"type": "string", "description": "Tool name (for create operation)"}
                         },
                         "required": ["operation"]
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="cam_tool_controllers",
@@ -808,7 +855,11 @@ async def main():
                             "tool_number": {"type": "integer", "description": "Tool number for G-code", "default": 1}
                         },
                         "required": ["operation"]
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="spreadsheet_operations",
@@ -834,7 +885,11 @@ async def main():
                             "values": {"type": "array", "description": "Array of values for range"}
                         },
                         "required": ["operation"]
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="draft_operations",
@@ -865,7 +920,11 @@ async def main():
                             "name": {"type": "string", "description": "Label for created object"}
                         },
                         "required": ["operation"]
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="mesh_operations",
@@ -893,7 +952,11 @@ async def main():
                             "auto_repair": {"type": "boolean", "description": "Auto-repair mesh issues during validation", "default": False}
                         },
                         "required": ["operation"]
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="measurement_operations",
@@ -916,7 +979,12 @@ async def main():
                             "object2": {"type": "string", "description": "Second object (measure_distance)"},
                         },
                         "required": ["operation"]
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=True,
+                        destructiveHint=False,
+                        idempotentHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="spatial_query",
@@ -945,7 +1013,12 @@ async def main():
                             "axis": {"type": "string", "description": "Axis for alignment_check: X, Y, or Z (default Z)", "enum": ["X", "Y", "Z"]},
                         },
                         "required": ["operation"]
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=True,
+                        destructiveHint=False,
+                        idempotentHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="run_inspector",
@@ -983,7 +1056,12 @@ async def main():
                                 "description": "Document name. Default: active document."
                             }
                         }
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=True,
+                        destructiveHint=False,
+                        idempotentHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="macro_operations",
@@ -1014,6 +1092,10 @@ async def main():
                         },
                         "required": ["operation"],
                     },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="api_introspection",
@@ -1059,6 +1141,10 @@ async def main():
                         },
                         "required": ["operation"],
                     },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=False,
+                    ),
                 ),
                 types.Tool(
                     name="get_debug_logs",
@@ -1076,7 +1162,12 @@ async def main():
                                 "description": "Optional filter by operation name (e.g., 'execute_python', 'cam_operations')"
                             }
                         }
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=True,
+                        destructiveHint=False,
+                        idempotentHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="execute_python",
@@ -1090,7 +1181,11 @@ async def main():
                             }
                         },
                         "required": ["code"]
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="execute_python_async",
@@ -1104,7 +1199,11 @@ async def main():
                             }
                         },
                         "required": ["code"]
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="poll_job",
@@ -1118,7 +1217,11 @@ async def main():
                             }
                         },
                         "required": ["job_id"]
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=True,
+                        destructiveHint=False,
+                    ),
                 ),
                 types.Tool(
                     name="list_jobs",
@@ -1127,7 +1230,12 @@ async def main():
                         "type": "object",
                         "properties": {},
                         "required": []
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=True,
+                        destructiveHint=False,
+                        idempotentHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="cancel_operation",
@@ -1138,7 +1246,12 @@ async def main():
                         "type": "object",
                         "properties": {},
                         "required": []
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=False,
+                        idempotentHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="cancel_job",
@@ -1156,7 +1269,11 @@ async def main():
                             }
                         },
                         "required": ["job_id"]
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=False,
+                    ),
                 ),
                 types.Tool(
                     name="continue_selection",
@@ -1170,7 +1287,11 @@ async def main():
                             }
                         },
                         "required": ["operation_id"]
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=True,
+                    ),
                 ),
                 # ------------------------------------------------------------------
                 # SketchBuilder — pre-validated parametric sketch emission
@@ -1225,7 +1346,11 @@ async def main():
                             }
                         },
                         "required": ["layout"]
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=True,
+                    ),
                 ),
                 # ------------------------------------------------------------------
                 # Instance management tools
@@ -1254,7 +1379,11 @@ async def main():
                                 "default": True
                             }
                         }
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=False,
+                    ),
                 ),
                 types.Tool(
                     name="list_freecad_instances",
@@ -1265,7 +1394,12 @@ async def main():
                     inputSchema={
                         "type": "object",
                         "properties": {}
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=True,
+                        destructiveHint=False,
+                        idempotentHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="select_freecad_instance",
@@ -1286,7 +1420,12 @@ async def main():
                                 "description": "Label of the instance to activate (alternative to socket_path)"
                             }
                         }
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=False,
+                        idempotentHint=True,
+                    ),
                 ),
                 types.Tool(
                     name="stop_freecad_instance",
@@ -1306,7 +1445,11 @@ async def main():
                                 "description": "Label of the instance to stop (alternative to socket_path)"
                             }
                         }
-                    }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=True,
+                    ),
                 ),
             ]
             return base_tools + smart_dispatchers
