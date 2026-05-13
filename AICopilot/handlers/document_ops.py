@@ -124,11 +124,17 @@ class DocumentOpsHandler(BaseHandler):
                         "name": obj.Name,
                         "type": obj.TypeId,
                     }
-                    # Try to get Label, but don't crash if it fails
                     try:
                         obj_info["label"] = obj.Label
-                    except:
-                        obj_info["label"] = obj.Name  # Fallback to Name
+                    except Exception as e:
+                        obj_info["label"] = obj.Name
+                        FreeCAD.Console.PrintWarning(f"[MCP] Label read failed for {obj.Name}: {e}\n")
+                    try:
+                        all_props = set(obj.PropertiesList)
+                        returned = {"Label"}
+                        obj_info["dropped_properties"] = sorted(all_props - returned)
+                    except Exception:
+                        obj_info["dropped_properties"] = []
                     objects.append(obj_info)
                     count += 1
                 except Exception:
