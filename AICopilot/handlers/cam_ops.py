@@ -48,8 +48,12 @@ class CAMOpsHandler(BaseHandler):
                     model_list = [obj]
                 else:
                     # Provide helpful error with available objects
-                    available = [f"{o.Name} ({o.Label})" for o in doc.Objects[:10]]
-                    return f"Error: Base object '{base_object}' not found. Available objects: {', '.join(available)}"
+                    available = [f"{o.Name} ({o.Label})" for o in doc.Objects]
+                    return (
+                        f"Error: Base object '{base_object}' not found. "
+                        f"Total objects: {len(available)}. "
+                        f"Available: {', '.join(available)}"
+                    )
 
             # Create job programmatically WITHOUT GUI dialog
             # The Create function signature is: Create(name, base, templateFile=None)
