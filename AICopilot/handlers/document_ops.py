@@ -137,8 +137,8 @@ class DocumentOpsHandler(BaseHandler):
                         obj_info["dropped_properties"] = []
                     objects.append(obj_info)
                     count += 1
-                except Exception:
-                    # Skip objects that cause errors
+                except Exception as e:
+                    FreeCAD.Console.PrintWarning(f"[MCP] Skipping object during list_objects: {e}\n")
                     continue
 
             result = {
