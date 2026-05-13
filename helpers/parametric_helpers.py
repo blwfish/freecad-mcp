@@ -53,15 +53,26 @@ class ParametricHelpers:
         except Exception:
             pass
 
-        # Try cell-by-cell lookup
-        for row in range(1, 100):
-            for col in "ABCDEFGHIJ":
+        # Try cell-by-cell lookup using the sheet's own dimensions when available
+        import string
+        try:
+            max_row = self.params.rows() if callable(getattr(self.params, 'rows', None)) else 10000
+            max_col = self.params.columns() if callable(getattr(self.params, 'columns', None)) else 26
+        except Exception:
+            max_row, max_col = 10000, 26
+        cols = list(string.ascii_uppercase[:max_col])
+        last_hit_row = 0
+        for row in range(1, max_row + 1):
+            if row > last_hit_row + 50 and row > 1:
+                break
+            for col in cols:
                 cell_addr = f"{col}{row}"
                 try:
-                    if self.params.getAlias(cell_addr) == alias:
-                        val = self.params.getContents(cell_addr)
-                        # Evaluate formula
-                        return self.params.get(cell_addr).Value
+                    cell_alias = self.params.getAlias(cell_addr)
+                    if cell_alias:
+                        last_hit_row = row
+                        if cell_alias == alias:
+                            return self.params.get(cell_addr).Value
                 except Exception:
                     pass
 
