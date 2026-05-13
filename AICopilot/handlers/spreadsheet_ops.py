@@ -349,15 +349,30 @@ class SpreadsheetOpsHandler(BaseHandler):
                     pass
 
             # Alternative method using getAlias on known cells
-            # Scan common cell range if XML parsing fails
+            # Scan full sheet dimensions if XML parsing fails.
+            # Ask the spreadsheet for its own row/column count; fall back to
+            # a large-but-finite ceiling so the loop terminates even if the
+            # spreadsheet API is unavailable.
             if not aliases:
-                for row in range(1, 101):  # Check first 100 rows
-                    for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']:
+                import string
+                try:
+                    max_row = spreadsheet.rows() if callable(getattr(spreadsheet, 'rows', None)) else 10000
+                    max_col = spreadsheet.columns() if callable(getattr(spreadsheet, 'columns', None)) else 26
+                except Exception:
+                    max_row, max_col = 10000, 26
+                cols = list(string.ascii_uppercase[:max_col])
+                last_hit_row = 0
+                for row in range(1, max_row + 1):
+                    # Stop scanning if no alias found in 50 consecutive rows
+                    if row > last_hit_row + 50 and row > 1:
+                        break
+                    for col in cols:
                         cell = f"{col}{row}"
                         try:
                             alias = spreadsheet.getAlias(cell)
                             if alias:
                                 aliases[cell] = alias
+                                last_hit_row = row
                         except Exception:
                             pass
 
