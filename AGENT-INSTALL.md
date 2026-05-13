@@ -8,6 +8,8 @@ freecad-mcp is a Model Context Protocol (MCP) server providing 33 tools for Free
 
 **Origin:** Built by one person for personal use, on a Mac, with Claude Code. Other platforms *should* work (the code handles macOS, Windows, and Linux) but are less tested. PRs for other agents and platforms will be considered.
 
+**Client tool count limits:** MCP clients vary in how many tools they support. This server currently exposes 33 tools, which is within the limits of most clients in use today. Be aware that some clients impose hard caps — if your client silently drops tools, behavior will be unpredictable and hard to diagnose. Claude Code has no hard tool count limit.
+
 **Reporting bugs:** If something fails in a way that looks like a bug in this MCP server (not a FreeCAD issue, not a sketch your user described wrong), please tell the user to file an issue at https://github.com/blwfish/freecad-mcp/issues/new. GitHub Discussions are intentionally off — issues are the single feedback channel. Include the tool call you made, the error/symptom, and any output from `view_control(operation="get_report_view")`.
 
 ## Architecture
