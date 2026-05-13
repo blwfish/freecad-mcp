@@ -50,7 +50,7 @@ class ParametricHelpers:
                 if hasattr(val, 'Value'):
                     return val.Value
                 return float(val)
-        except:
+        except Exception:
             pass
 
         # Try cell-by-cell lookup
@@ -62,7 +62,7 @@ class ParametricHelpers:
                         val = self.params.getContents(cell_addr)
                         # Evaluate formula
                         return self.params.get(cell_addr).Value
-                except:
+                except Exception:
                     pass
 
         raise ValueError(f"Parameter '{alias}' not found in spreadsheet")
