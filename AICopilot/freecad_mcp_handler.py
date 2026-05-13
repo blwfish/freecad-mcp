@@ -830,7 +830,7 @@ class FreeCADSocketServer:
                 _log_operation(
                     operation="JSON_PARSE_ERROR",
                     error=e,
-                    parameters={"command_preview": command_str[:500]},
+                    parameters={"command_preview": command_str[:10000]},
                 )
             return json.dumps({"error": f"Invalid JSON: {e}"})
         except Exception as e:
