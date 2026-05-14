@@ -376,6 +376,27 @@ Use undo as many times as needed to get back to a known good state. Then rebuild
 explicit verification steps — check sketch constraints, verify sketch is fully
 constrained before closing, check solid validity after each boolean.
 
+**Step 6 — If the result still looks wrong with no error to chase, consider
+representation-layer failures:**
+
+There is a class of FreeCAD bugs where the **model is semantically correct
+but the underlying topology has accumulated drift** that breaks OCCT
+Boolean operations silently — `BRepAlgoAPI_Fuse` returns one operand
+unchanged, `Part::MultiFuse` produces an incomplete shape, no error or
+warning anywhere. The steps above (`view_control` / `list_objects` /
+`measurement_operations` / `get_debug_logs`) don't surface these because
+the symptom is on the OCCT side, not the FreeCAD side.
+
+For diagnosing this class of failure (silent Boolean drops, edge-coincident
+fuse failures, accumulated-history drift, deprecated-property warnings the
+user missed, orphaned-feature parametric-link breakage), see
+[Poirot2](https://github.com/blwfish/Poirot2) — a diagnostic library +
+assistant playbook that runs inside FreeCAD via this MCP bridge and adds
+representation-layer probes (`check_boolean_health` cross-checks
+`BRepAlgoAPI` against `BOPAlgo_Builder`; `find_recent_orphans` sweeps for
+null required references; etc.). Its `AGENT-OPERATION.md` is the
+companion playbook for this kind of diagnosis.
+
 ---
 
 ## 5. Sketch or Constraint Failure
