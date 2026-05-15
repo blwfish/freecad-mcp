@@ -185,6 +185,10 @@ def _complete_op() -> None:
     if _op_log is not None:
         _op_log.complete()
 
+# Progressive poll backoff: fast first polls catch quick ops, then settle at 1 s.
+_POLL_BACKOFF_SECS = [0.05, 0.1, 0.25, 0.5, 1.0]
+_POLL_TIMEOUT_SECS = 120  # 2-minute ceiling; return job_id so caller can cancel
+
 def _diagnose_crash(error: Exception = None) -> str:
     if _crash_mod is None:
         return f"FreeCAD connection lost: {error}"
@@ -307,6 +311,40 @@ async def main():
             report = _diagnose_crash(error=e)
             return json.dumps({"error": report})
     
+    async def poll_job_until_done(job_id: str, context: str = "Operation") -> dict:
+        """Poll a FreeCAD async job with progressive backoff.
+
+        Returns the final poll_resp dict. On timeout returns a dict with
+        status="timeout" and the job_id so the caller can surface it.
+        """
+        delays = iter(_POLL_BACKOFF_SECS)
+        delay = next(delays)
+        poll_start = time.time()
+        while True:
+            await asyncio.sleep(delay)
+            try:
+                delay = next(delays)
+            except StopIteration:
+                delay = 1.0
+            if time.time() - poll_start > _POLL_TIMEOUT_SECS:
+                return {
+                    "status": "timeout",
+                    "error": (
+                        f"{context} timed out after {_POLL_TIMEOUT_SECS}s. "
+                        f"Job {job_id} may still be running. "
+                        f"Use poll_job(job_id='{job_id}') to check status, "
+                        f"or cancel_job(job_id='{job_id}') to abort."
+                    ),
+                    "job_id": job_id,
+                }
+            poll_resp = json.loads(await send_to_freecad("poll_job", {"job_id": job_id}))
+            status = poll_resp.get("status")
+            if status in ("done", "error"):
+                return poll_resp
+            if "error" in poll_resp and "Crash" in poll_resp.get("error", ""):
+                return poll_resp
+            # status == "running" → keep polling
+
     async def handle_selection_workflow(tool_name: str, original_args: dict, selection_request: dict) -> str:
         """Handle the interactive selection workflow - Claude Code style"""
         try:
@@ -1599,29 +1637,15 @@ async def main():
             job_id = submit_resp.get("job_id")
             if not job_id:
                 return [types.TextContent(type="text", text=json.dumps({"error": "no job_id returned", "response": submit_resp}))]
-            max_poll_seconds = 600  # 10 minute timeout
-            poll_start = time.time()
-            while True:
-                await asyncio.sleep(1.0)
-                if time.time() - poll_start > max_poll_seconds:
-                    return [types.TextContent(type="text", text=json.dumps({
-                        "error": f"execute_python timed out after {max_poll_seconds}s. "
-                                 f"Job {job_id} may still be running. "
-                                 f"Use poll_job(job_id='{job_id}') to check status, "
-                                 f"or cancel_job(job_id='{job_id}') to abort.",
-                        "job_id": job_id,
-                    }))]
-                poll_resp = json.loads(await send_to_freecad("poll_job", {"job_id": job_id}))
-                status = poll_resp.get("status")
-                if status == "done":
-                    _complete_op()
-                    return [types.TextContent(type="text", text=json.dumps({"result": poll_resp.get("result"), "elapsed": poll_resp.get("elapsed")}))]
-                elif status == "error":
-                    return [types.TextContent(type="text", text=json.dumps({"error": poll_resp.get("error"), "elapsed": poll_resp.get("elapsed")}))]
-                elif "error" in poll_resp and "Crash" in poll_resp.get("error", ""):
-                    # Crash diagnosed during polling — surface it directly
-                    return [types.TextContent(type="text", text=json.dumps(poll_resp))]
-                # status == "running" → keep polling
+            poll_resp = await poll_job_until_done(job_id, context="execute_python")
+            status = poll_resp.get("status")
+            if status == "done":
+                _complete_op()
+                return [types.TextContent(type="text", text=json.dumps({"result": poll_resp.get("result"), "elapsed": poll_resp.get("elapsed")}))]
+            elif status == "timeout":
+                return [types.TextContent(type="text", text=json.dumps({"error": poll_resp["error"], "job_id": job_id}))]
+            else:
+                return [types.TextContent(type="text", text=json.dumps({"error": poll_resp.get("error"), "elapsed": poll_resp.get("elapsed")}))]
 
         # macOS screenshot: run screencapture in the bridge process (which inherits
         # Screen Recording permission from the terminal), never touching FreeCAD's
@@ -1684,39 +1708,30 @@ async def main():
                 response = await send_to_freecad(name, args)
 
             # If FreeCAD returned a job_id, auto-poll until done (transparent to the agent).
-            # This handles long-running ops (boolean fuse/cut/common on complex geometry)
-            # that use the async GUI-thread path to avoid the sync timeout.
+            # All dedicated handlers now use the async GUI-thread path so this fires
+            # for every op; progressive backoff keeps fast ops snappy.
             try:
                 result = json.loads(response)
                 if isinstance(result, dict) and result.get("job_id") and result.get("status") == "submitted":
                     job_id = result["job_id"]
-                    max_poll_seconds = 600  # 10 minute ceiling
-                    poll_start = time.time()
-                    while True:
-                        await asyncio.sleep(1.0)
-                        if time.time() - poll_start > max_poll_seconds:
-                            return [types.TextContent(type="text", text=json.dumps({
-                                "error": f"Operation timed out after {max_poll_seconds}s. "
-                                         f"Job {job_id} may still be running. "
-                                         f"Use poll_job(job_id='{job_id}') to check status, "
-                                         f"or cancel_job(job_id='{job_id}') to abort.",
-                                "job_id": job_id,
-                            }))]
-                        poll_resp = json.loads(await send_to_freecad("poll_job", {"job_id": job_id}))
-                        status = poll_resp.get("status")
-                        if status == "done":
-                            _complete_op()
-                            return [types.TextContent(type="text", text=json.dumps({
-                                "result": poll_resp.get("result"),
-                                "elapsed": poll_resp.get("elapsed"),
-                            }))]
-                        elif status == "error":
-                            return [types.TextContent(type="text", text=json.dumps({
-                                "error": poll_resp.get("error"),
-                                "elapsed": poll_resp.get("elapsed"),
-                            }))]
-                        elif "error" in poll_resp and "Crash" in poll_resp.get("error", ""):
-                            return [types.TextContent(type="text", text=json.dumps(poll_resp))]
+                    poll_resp = await poll_job_until_done(job_id, context=name)
+                    status = poll_resp.get("status")
+                    if status == "done":
+                        _complete_op()
+                        return [types.TextContent(type="text", text=json.dumps({
+                            "result": poll_resp.get("result"),
+                            "elapsed": poll_resp.get("elapsed"),
+                        }))]
+                    elif status == "timeout":
+                        return [types.TextContent(type="text", text=json.dumps({
+                            "error": poll_resp["error"],
+                            "job_id": job_id,
+                        }))]
+                    else:
+                        return [types.TextContent(type="text", text=json.dumps({
+                            "error": poll_resp.get("error"),
+                            "elapsed": poll_resp.get("elapsed"),
+                        }))]
                         # status == "running" → keep polling
             except (json.JSONDecodeError, Exception):
                 pass

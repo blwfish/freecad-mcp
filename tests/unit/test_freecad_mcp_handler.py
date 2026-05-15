@@ -299,12 +299,11 @@ class TestProcessCommand:
 
 class TestExecuteTool:
     def test_direct_map_routing(self, server):
-        """Tools in the direct_map should call the handler via _call_on_gui_thread."""
-        server._call_on_gui_thread = MagicMock(return_value=json.dumps({"result": "box"}))
+        """Tools in the direct_map should call the handler via _call_on_gui_thread_async."""
+        server._call_on_gui_thread_async = MagicMock(return_value=json.dumps({"result": "box"}))
         result = server._execute_tool("create_box", {"length": 10})
-        server._call_on_gui_thread.assert_called_once()
-        # First arg to _call_on_gui_thread should be the handler method
-        call_args = server._call_on_gui_thread.call_args
+        server._call_on_gui_thread_async.assert_called_once()
+        call_args = server._call_on_gui_thread_async.call_args
         assert call_args[0][1] == {"length": 10}  # args passed through
         assert call_args[0][2] == "create_box"  # label
 
@@ -380,26 +379,18 @@ class TestExecuteTool:
 
 class TestDispatchToHandler:
     def test_valid_operation(self, server):
-        """Should look up the operation as a method and call it on GUI thread."""
+        """Should look up the operation as a method and call it via async GUI path."""
         handler = MagicMock()
         handler.create_spreadsheet = MagicMock(return_value="Spreadsheet created")
 
-        # Simulate GUI processing with tagged request IDs
-        def process():
-            time.sleep(0.05)
-            req_id, task = server._gui_task_queue.get(timeout=1)
-            result = task()
-            server._gui_response_queue.put((req_id, result))
-
-        t = threading.Thread(target=process)
-        t.start()
-
-        result = server._dispatch_to_handler(
-            handler, {"operation": "create_spreadsheet"}, "spreadsheet_operations"
-        )
-        t.join()
-        parsed = json.loads(result)
-        assert parsed["result"] == "Spreadsheet created"
+        with patch.object(server, '_call_on_gui_thread_async',
+                          return_value=json.dumps({"result": "Spreadsheet created"})):
+            result = json.loads(
+                server._dispatch_to_handler(
+                    handler, {"operation": "create_spreadsheet"}, "spreadsheet_operations"
+                )
+            )
+        assert result["result"] == "Spreadsheet created"
 
     def test_unknown_operation(self, server):
         handler = MagicMock(spec=[])  # No attributes
@@ -1205,8 +1196,8 @@ class TestDispatchViewControlExtended:
         assert result["result"] == "snapshot_ok"
 
     def test_rollback_is_gui_op(self, server):
-        """rollback_to_checkpoint should go through GUI thread."""
-        with patch.object(server, '_run_on_gui_thread',
+        """rollback_to_checkpoint should go through async GUI thread."""
+        with patch.object(server, '_call_on_gui_thread_async',
                           return_value=json.dumps({"result": "rolled_back"})):
             result = json.loads(
                 server._dispatch_view_control({"operation": "rollback_to_checkpoint"})
@@ -1214,7 +1205,7 @@ class TestDispatchViewControlExtended:
             assert result["result"] == "rolled_back"
 
     def test_insert_shape_is_gui_op(self, server):
-        with patch.object(server, '_run_on_gui_thread',
+        with patch.object(server, '_call_on_gui_thread_async',
                           return_value=json.dumps({"result": "inserted"})):
             result = json.loads(
                 server._dispatch_view_control({"operation": "insert_shape"})
@@ -1231,7 +1222,7 @@ class TestDispatchViewControlExtended:
                 assert "error" not in result, f"{op} returned error"
 
     def test_get_report_view_is_gui_op(self, server):
-        with patch.object(server, '_run_on_gui_thread',
+        with patch.object(server, '_call_on_gui_thread_async',
                           return_value=json.dumps({"result": "report text"})):
             result = json.loads(
                 server._dispatch_view_control({"operation": "get_report_view"})
@@ -1358,11 +1349,14 @@ class TestDispatchToHandlerExtended:
         handler = MagicMock()
         handler.do_thing = MagicMock(side_effect=ValueError("bad arg"))
 
-        def run_inline(task_fn, timeout=120.0):
-            result = task_fn()
-            return json.dumps(result)
+        def run_inline(method, args, label):
+            try:
+                result = method(args)
+                return json.dumps({"result": result})
+            except Exception as e:
+                return json.dumps({"error": f"{label} error: {e}"})
 
-        with patch.object(server, '_run_on_gui_thread', side_effect=run_inline):
+        with patch.object(server, '_call_on_gui_thread_async', side_effect=run_inline):
             result = json.loads(
                 server._dispatch_to_handler(handler, {"operation": "do_thing"}, "my_tool")
             )

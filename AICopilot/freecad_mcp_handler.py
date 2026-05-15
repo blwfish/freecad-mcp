@@ -1,8 +1,8 @@
 # FreeCAD Socket Server for MCP Communication
 # Runs inside FreeCAD to receive commands from external MCP bridge
 #
-# Version: 5.0.0 - Core rewrite: eliminated dead code, unified dispatch,
-#                   replaced busy-wait polling with Queue.get(timeout)
+# Version: 5.5.0 - All handler dispatches use async GUI path; progressive
+#                   poll backoff in bridge (50ms→1s); 2-min poll ceiling
 
 # Minimum FreeCAD version required for CAM tools.
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
@@ -903,7 +903,7 @@ class FreeCADSocketServer:
 
         if tool_name in direct_map:
             method = direct_map[tool_name]
-            return self._call_on_gui_thread(method, args, tool_name)
+            return self._call_on_gui_thread_async(method, args, tool_name)
 
         # Smart dispatchers — route by operation name within a handler
         # PartDesign has explicit method mapping (operation names differ from method names)
@@ -947,11 +947,11 @@ class FreeCADSocketServer:
 
         # run_inspector is a direct-dispatch tool (no 'operation' sub-field)
         if tool_name == "run_inspector":
-            return self._call_on_gui_thread(self.inspector_ops.run, args, "run_inspector")
+            return self._call_on_gui_thread_async(self.inspector_ops.run, args, "run_inspector")
 
         # build_sketch: validate + emit a parametric sketch via SketchBuilder
         if tool_name == "build_sketch":
-            return self._call_on_gui_thread(self.sketch_builder_ops.build_sketch, args, "build_sketch")
+            return self._call_on_gui_thread_async(self.sketch_builder_ops.build_sketch, args, "build_sketch")
 
         if tool_name in generic_dispatch_map:
             return self._dispatch_to_handler(generic_dispatch_map[tool_name], args, tool_name)
@@ -1030,13 +1030,7 @@ class FreeCADSocketServer:
         if not method or not callable(method):
             return json.dumps({"error": f"Unknown {tool_name} operation: {operation}"})
 
-        def task():
-            try:
-                result = method(args)
-                return {"success": True, "result": result}
-            except Exception as e:
-                return {"error": f"{tool_name} {operation} error: {e}", "traceback": tb_module.format_exc()}
-        return self._run_on_gui_thread(task, timeout=120.0)
+        return self._call_on_gui_thread_async(method, args, f"{tool_name} {operation}")
 
     def _dispatch_partdesign(self, args: Dict[str, Any]) -> str:
         """Route PartDesign operations (operation names differ from method names)."""
@@ -1081,7 +1075,7 @@ class FreeCADSocketServer:
         if operation not in operation_map:
             return json.dumps({"error": f"Unknown PartDesign operation: {operation}"})
 
-        return self._call_on_gui_thread(operation_map[operation], args, f"PartDesign {operation}")
+        return self._call_on_gui_thread_async(operation_map[operation], args, f"PartDesign {operation}")
 
     def _dispatch_sketch(self, args: Dict[str, Any]) -> str:
         """Route Sketch operations (explicit mapping)."""
@@ -1111,7 +1105,7 @@ class FreeCADSocketServer:
         if operation not in operation_map:
             return json.dumps({"error": f"Unknown Sketch operation: {operation}"})
 
-        return self._call_on_gui_thread(operation_map[operation], args, f"Sketch {operation}")
+        return self._call_on_gui_thread_async(operation_map[operation], args, f"Sketch {operation}")
 
     def _dispatch_part_operations(self, args: Dict[str, Any]) -> str:
         """Route Part operations across multiple handlers."""
@@ -1142,10 +1136,7 @@ class FreeCADSocketServer:
         if not method:
             return json.dumps({"error": f"Unknown Part operation: {operation}"})
 
-        if operation in ("fuse", "cut", "common"):
-            return self._call_on_gui_thread_async(method, args, f"Part {operation}")
-
-        return self._call_on_gui_thread(method, args, f"Part {operation}")
+        return self._call_on_gui_thread_async(method, args, f"Part {operation}")
 
     def _dispatch_view_control(self, args: Dict[str, Any]) -> str:
         """Route view control operations (mixes view_ops and document_ops).
@@ -1173,27 +1164,26 @@ class FreeCADSocketServer:
 
         # --- Operations that MUST run on the GUI thread ---
         gui_ops = {
-            "screenshot":    (self.view_ops.take_screenshot, 60.0),
-            "set_view":      (self.view_ops.set_view, 10.0),
-            "fit_all":       (self.view_ops.fit_all, 10.0),
-            "zoom_in":       (self.view_ops.zoom_in, 10.0),
-            "zoom_out":      (self.view_ops.zoom_out, 10.0),
-            "select_object": (self.view_ops.select_object, 10.0),
-            "clear_selection": (self.view_ops.clear_selection, 5.0),
-            "get_selection": (self.view_ops.get_selection, 5.0),
-            "hide_object":   (self.view_ops.hide_object, 5.0),
-            "show_object":   (self.view_ops.show_object, 5.0),
-            "delete_object": (self.view_ops.delete_object, 10.0),
-            "undo":          (self.view_ops.undo, 10.0),
-            "redo":          (self.view_ops.redo, 10.0),
-            "activate_workbench": (self.view_ops.activate_workbench, 10.0),
-            "get_report_view":   (self.view_ops.get_report_view, 5.0),
-            # Clip plane (section view)
-            "add_clip_plane":    (self.view_ops.add_clip_plane, 10.0),
-            "remove_clip_plane": (self.view_ops.remove_clip_plane, 5.0),
+            "screenshot":         self.view_ops.take_screenshot,
+            "set_view":           self.view_ops.set_view,
+            "fit_all":            self.view_ops.fit_all,
+            "zoom_in":            self.view_ops.zoom_in,
+            "zoom_out":           self.view_ops.zoom_out,
+            "select_object":      self.view_ops.select_object,
+            "clear_selection":    self.view_ops.clear_selection,
+            "get_selection":      self.view_ops.get_selection,
+            "hide_object":        self.view_ops.hide_object,
+            "show_object":        self.view_ops.show_object,
+            "delete_object":      self.view_ops.delete_object,
+            "undo":               self.view_ops.undo,
+            "redo":               self.view_ops.redo,
+            "activate_workbench": self.view_ops.activate_workbench,
+            "get_report_view":    self.view_ops.get_report_view,
+            "add_clip_plane":     self.view_ops.add_clip_plane,
+            "remove_clip_plane":  self.view_ops.remove_clip_plane,
             # Document mutations — must run on GUI thread (recompute touches Qt)
-            "rollback_to_checkpoint": (self.document_ops.rollback_to_checkpoint, 30.0),
-            "insert_shape":           (self.document_ops.insert_shape, 15.0),
+            "rollback_to_checkpoint": self.document_ops.rollback_to_checkpoint,
+            "insert_shape":           self.document_ops.insert_shape,
         }
 
         # --- Operations safe to call from any thread ---
@@ -1206,14 +1196,7 @@ class FreeCADSocketServer:
         }
 
         if operation in gui_ops:
-            method, timeout = gui_ops[operation]
-            def task():
-                try:
-                    result = method(args)
-                    return {"success": True, "result": result}
-                except Exception as e:
-                    return {"error": f"View control {operation} error: {e}"}
-            return self._run_on_gui_thread(task, timeout=timeout)
+            return self._call_on_gui_thread_async(gui_ops[operation], args, f"view_control {operation}")
 
         if operation in safe_ops:
             try:
