@@ -485,12 +485,10 @@ class TestDispatchViewControl:
                    "undo", "redo", "activate_workbench"]
         safe_ops = ["create_document", "save_document", "list_objects"]
 
-        # GUI ops: mock _run_on_gui_thread to avoid blocking.
-        # Also force non-macOS path so screenshot doesn't bypass _run_on_gui_thread
-        # via the Darwin early-exit (which calls take_screenshot directly and would
-        # receive a MagicMock return value that json.dumps can't serialize).
+        # GUI ops: mock _call_on_gui_thread_async to avoid blocking.
+        # Also force non-macOS path so screenshot doesn't take the Darwin early-exit.
         for op in gui_ops:
-            with patch.object(server, '_run_on_gui_thread',
+            with patch.object(server, '_call_on_gui_thread_async',
                               return_value=json.dumps({"result": "ok"})), \
                  patch("freecad_mcp_handler.platform.system", return_value="Linux"):
                 result = server._dispatch_view_control({"operation": op})
@@ -515,21 +513,18 @@ class TestDispatchViewControl:
         assert "Unknown view control operation" in parsed["error"]
 
     def test_handler_exception(self, server):
-        """If the handler raises, view_control should catch and return error.
-
-        GUI ops wrap the handler call in a task closure that catches exceptions
-        and returns an error dict. _run_on_gui_thread serializes that dict.
-        We mock _run_on_gui_thread to execute the task inline (simulating the
-        GUI thread) so the exception propagates through the normal path.
-        """
+        """If the handler raises, view_control should catch and return error."""
         server.view_ops.take_screenshot = MagicMock(side_effect=RuntimeError("screenshot failed"))
 
-        def run_inline(task_fn, timeout=10.0):
-            """Execute the task immediately and return JSON result."""
-            result = task_fn()
-            return json.dumps(result)
+        def run_inline(method, args, label):
+            try:
+                result = method(args)
+                return json.dumps({"result": result})
+            except Exception as e:
+                return json.dumps({"error": f"{label} error: {e}"})
 
-        with patch.object(server, '_run_on_gui_thread', side_effect=run_inline):
+        with patch.object(server, '_call_on_gui_thread_async', side_effect=run_inline), \
+             patch("freecad_mcp_handler.platform.system", return_value="Linux"):
             result = server._dispatch_view_control({"operation": "screenshot"})
             parsed = json.loads(result)
             assert "screenshot failed" in parsed["error"]
