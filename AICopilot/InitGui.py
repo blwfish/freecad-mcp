@@ -40,7 +40,12 @@ else:
                 FreeCAD.Console.PrintMessage("AI Service already running\n")
                 return True
 
-            FreeCAD.Console.PrintMessage("Starting FreeCAD AI Copilot Service...\n")
+            try:
+                from freecad_mcp_handler import FreeCADSocketServer, __version__ as _handler_version
+            except ImportError:
+                _handler_version = "?"
+
+            FreeCAD.Console.PrintMessage(f"Starting FreeCAD AI Copilot Service v{_handler_version}...\n")
 
             try:
                 from freecad_mcp_handler import FreeCADSocketServer
