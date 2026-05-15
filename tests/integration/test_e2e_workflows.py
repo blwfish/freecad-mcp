@@ -66,12 +66,12 @@ def send_command(tool: str, args: dict, timeout: float = 10.0) -> dict:
         status = poll.get("status")
         if status == "done":
             inner = poll.get("result", {})
+            # Preserve the {"result": handler_json_string} shape that the old
+            # sync path produced — callers that do resp.get("result") or
+            # json.loads(resp["result"]) expect this wrapper to be present.
             if isinstance(inner, str):
-                try:
-                    return json.loads(inner)
-                except Exception:
-                    return {"result": inner}
-            return inner if isinstance(inner, dict) else {"result": inner}
+                return {"result": inner}
+            return inner if isinstance(inner, dict) else {"result": str(inner)}
         if status == "error":
             return {"error": poll.get("error", "unknown error")}
 
@@ -334,8 +334,11 @@ class TestExport:
 class TestScreenshot:
     """Test screenshot capture."""
 
-    def test_screenshot(self, clean_document):
+    def test_screenshot(self, clean_document, freecad_instance):
         """Taking a screenshot should produce an image."""
+        if freecad_instance.get("mode") == "headless":
+            pytest.skip("Screenshot not available in headless mode")
+
         # Create something to look at
         send_command("part_operations", {
             "operation": "box",
