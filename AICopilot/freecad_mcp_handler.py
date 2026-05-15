@@ -1023,8 +1023,54 @@ class FreeCADSocketServer:
             return self._restart_freecad(args)
         if tool_name == "reload_modules":
             return self._reload_handlers()
+        if tool_name == "get_instance_info":
+            return self._get_instance_info()
 
         return json.dumps({"error": f"Unknown tool: {tool_name}"})
+
+    def _get_instance_info(self) -> str:
+        """Return identifying info about this FreeCAD process.
+
+        Cheap, read-only query used by the bridge's list_freecad_instances
+        to enrich the listing with what each instance currently has open.
+        """
+        def task():
+            try:
+                doc = FreeCAD.ActiveDocument
+                doc_label = doc.Label if doc else None
+                doc_file = doc.FileName if doc else None
+            except Exception:
+                doc_label = None
+                doc_file = None
+
+            window_title = None
+            if FreeCAD.GuiUp:
+                try:
+                    mw = FreeCADGui.getMainWindow()
+                    if mw is not None:
+                        window_title = mw.windowTitle()
+                except Exception:
+                    pass
+
+            try:
+                version = ".".join(str(p) for p in FreeCAD.Version()[:3])
+            except Exception:
+                version = None
+
+            return {
+                "success": True,
+                "result": {
+                    "uuid": getattr(self, "instance_uuid", None),
+                    "socket_path": getattr(self, "socket_path", None),
+                    "gui": bool(FreeCAD.GuiUp),
+                    "active_doc_label": doc_label,
+                    "active_doc_file": doc_file,
+                    "window_title": window_title,
+                    "freecad_version": version,
+                    "pid": os.getpid(),
+                },
+            }
+        return self._run_on_gui_thread(task, timeout=2.0)
 
     def _call_on_gui_thread(self, method, args: Dict[str, Any], label: str, timeout: float = 120.0) -> str:
         """Wrap a handler method call for GUI-safe execution."""
