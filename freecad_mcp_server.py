@@ -77,6 +77,49 @@ def _scan_discovery(prune_stale: bool = True) -> list[dict]:
     return live
 
 
+# =============================================================================
+# Per-instance info cache — keyed by socket_path → (timestamp, info_dict)
+# =============================================================================
+_INFO_CACHE_TTL = 5.0
+_info_cache: dict = {}
+
+
+def _fetch_instance_info(sock_path: str, timeout: float = 1.0) -> dict | None:
+    """Round-trip get_instance_info to a single FreeCAD instance.
+
+    Returns the parsed result dict on success, None on any failure (so the
+    caller falls back to discovery-file metadata).
+    """
+    if not sock_path or platform.system() == "Windows":
+        return None
+
+    now = time.time()
+    cached = _info_cache.get(sock_path)
+    if cached and (now - cached[0]) < _INFO_CACHE_TTL:
+        return cached[1]
+
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        s.connect(sock_path)
+        cmd = json.dumps({"tool": "get_instance_info", "args": {}})
+        if not send_message(s, cmd):
+            s.close()
+            return None
+        resp = receive_message(s, timeout=timeout + 1.0)
+        s.close()
+        if not resp:
+            return None
+        parsed = json.loads(resp)
+        result = parsed.get("result") if isinstance(parsed, dict) else None
+        if isinstance(result, dict):
+            _info_cache[sock_path] = (now, result)
+            return result
+    except (OSError, json.JSONDecodeError):
+        return None
+    return None
+
+
 class _BridgeCtx:
     """Holds the active socket path and all spawned instance metadata.
 
@@ -1983,9 +2026,31 @@ async def main():
         # ------------------------------------------------------------------
 
         elif name == "list_freecad_instances":
+            instances = _ctx.list_all()
+            # Enrich each entry with active-doc / window-title info via a
+            # short round-trip. Run probes in parallel so 3 instances take
+            # ~1 round-trip's worth of time, not N's worth.
+            fetch_tasks = []
+            for entry in instances:
+                sp = entry.get("socket_path")
+                if sp and entry.get("available", True):
+                    fetch_tasks.append((entry, asyncio.to_thread(_fetch_instance_info, sp)))
+            for entry, task in fetch_tasks:
+                try:
+                    info = await task
+                except Exception:
+                    info = None
+                if info:
+                    entry["active_doc_label"] = info.get("active_doc_label")
+                    entry["active_doc_file"] = info.get("active_doc_file")
+                    entry["window_title"] = info.get("window_title")
+                    # Backfill uuid/version/gui if discovery didn't have them
+                    for k in ("uuid", "freecad_version", "gui"):
+                        if not entry.get(k) and info.get(k) is not None:
+                            entry[k] = info[k]
             return [types.TextContent(
                 type="text",
-                text=json.dumps({"instances": _ctx.list_all()}, indent=2)
+                text=json.dumps({"instances": instances}, indent=2)
             )]
 
         elif name == "select_freecad_instance":

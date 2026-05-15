@@ -67,10 +67,40 @@ A few things worth knowing about this output:
 - **Socket server started / Claude ready** — the bridge is listening. This is the line that means your AI agent can connect.
 - **Font alias warning** (in orange) — harmless Qt noise that appears on most macOS systems regardless of what you're doing. Not a problem.
 
+### Running multiple FreeCAD instances
+
+The MCP can talk to more than one FreeCAD at a time — useful for comparing a local debug build against a stock release, running a regression in a side window while keeping your main work open, or driving headless workers from the same Claude session.
+
+Each FreeCAD process (GUI or headless) generates a UUID at startup, binds its own socket at `/tmp/freecad_mcp_<uuid>.sock`, and writes a discovery file to `~/.cache/freecad-mcp/instances/<uuid>.json`. The bridge scans that directory to find live instances regardless of who launched them.
+
+**Optional env vars on launch:**
+
+- `FREECAD_MCP_LABEL=<name>` — give the instance a human-readable name (defaults to the UUID otherwise)
+- `FREECAD_MCP_SOCKET=<path>` — override the socket path entirely (escape hatch for CI / tightly-scripted launches)
+
+**Listing and switching from the agent:**
+
+```
+list_freecad_instances          # all live instances + active doc info
+select_freecad_instance uuid=<id>           # by uuid
+select_freecad_instance label="weekly"      # or by label
+```
+
+**Spawning from the agent:**
+
+```
+spawn_freecad_instance gui=true label="private" \
+    freecad_binary=/path/to/your/private/build/bin/FreeCAD
+spawn_freecad_instance gui=true label="weekly" \
+    freecad_binary=/Applications/FreeCAD.app/Contents/MacOS/FreeCAD
+```
+
+Resolution rules when no instance is explicitly selected: 0 live → error, 1 live → auto-select, 2+ live → error listing them (call `select_freecad_instance`).
+
 ### For Developers
 
 ```bash
-# Unit tests (593 tests, no FreeCAD required)
+# Unit tests (918 tests, no FreeCAD required)
 python3 -m pytest tests/unit/
 
 # Integration tests (91 tests, requires running FreeCAD with AICopilot loaded)
