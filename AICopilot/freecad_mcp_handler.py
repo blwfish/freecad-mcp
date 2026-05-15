@@ -7,6 +7,8 @@
 # Minimum FreeCAD version required for CAM tools.
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
 # "not supported" error rather than crashing on missing Path/CAM API.
+__version__ = "5.5.0"
+
 CAM_MIN_FC_VERSION = (1, 2, 0)
 
 REQUIRED_VERSIONS = {
@@ -1154,8 +1156,7 @@ class FreeCADSocketServer:
         # on the GUI thread — subprocess.run() blocks Qt event processing, which
         # causes the bridge to time out even when screencapture works fine.
         # take_screenshot() uses FreeCAD.ActiveDocument (thread-safe) on macOS.
-        import platform as _platform
-        if operation == "screenshot" and _platform.system() == "Darwin":
+        if operation == "screenshot" and platform.system() == "Darwin":
             try:
                 result = self.view_ops.take_screenshot(args)
                 return json.dumps({"result": result})
