@@ -1,13 +1,15 @@
 # FreeCAD Socket Server for MCP Communication
 # Runs inside FreeCAD to receive commands from external MCP bridge
 #
-# Version: 5.5.0 - All handler dispatches use async GUI path; progressive
-#                   poll backoff in bridge (50ms→1s); 2-min poll ceiling
+# Version: 5.8.0 - Multi-instance discovery via per-instance UUID +
+#                   ~/.cache registry; GUI spawn + explicit freecad_binary;
+#                   list_freecad_instances enriched with active doc + window
+#                   title; startup banner shows handler version.
 
 # Minimum FreeCAD version required for CAM tools.
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
 # "not supported" error rather than crashing on missing Path/CAM API.
-__version__ = "5.5.0"
+__version__ = "5.8.0"
 
 CAM_MIN_FC_VERSION = (1, 2, 0)
 
