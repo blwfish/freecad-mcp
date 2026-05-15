@@ -45,8 +45,10 @@ MAX_ASYNC_JOBS = 50
 # Completed jobs older than this (seconds) are automatically cleaned up
 ASYNC_JOB_TTL = 600
 
-# Configurable socket path/port via environment variables
-SOCKET_PATH = os.environ.get("FREECAD_MCP_SOCKET", "/tmp/freecad_mcp.sock")
+# Configurable socket path/port via environment variables.
+# SOCKET_PATH is None when the env var is unset; start_server() then
+# generates /tmp/freecad_mcp_<uuid>.sock from instance_registry.
+SOCKET_PATH = os.environ.get("FREECAD_MCP_SOCKET") or None
 WINDOWS_HOST = "localhost"
 WINDOWS_PORT = int(os.environ.get("FREECAD_MCP_PORT", "23456"))
 
@@ -326,6 +328,32 @@ class FreeCADSocketServer:
     def start_server(self):
         """Start the socket server."""
         try:
+            # Always generate a UUID for this instance — used for discovery file
+            # whether the socket path was env-supplied or auto-generated.
+            try:
+                from instance_registry import generate_uuid, is_socket_alive, default_socket_path
+            except ImportError:
+                # Fallback shim: registry module missing (shouldn't happen in shipped
+                # builds, but keep the server functional in dev scratchpads).
+                import uuid as _uuid
+                def generate_uuid():
+                    return _uuid.uuid4().hex[:12]
+                def default_socket_path(u):
+                    return f"/tmp/freecad_mcp_{u}.sock"
+                def is_socket_alive(p, timeout=0.5):
+                    if not os.path.exists(p):
+                        return False
+                    try:
+                        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                        s.settimeout(timeout)
+                        s.connect(p)
+                        s.close()
+                        return True
+                    except OSError:
+                        return False
+
+            self.instance_uuid = generate_uuid()
+
             if IS_WINDOWS:
                 self.socket_path = None
                 self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -335,13 +363,31 @@ class FreeCADSocketServer:
                     f"Socket server started on {WINDOWS_HOST}:{WINDOWS_PORT} (Windows TCP)\n"
                 )
             else:
-                self.socket_path = SOCKET_PATH
+                # Resolve the socket path:
+                #   FREECAD_MCP_SOCKET wins if set; otherwise UUID-suffixed default.
+                if SOCKET_PATH:
+                    self.socket_path = SOCKET_PATH
+                else:
+                    self.socket_path = default_socket_path(self.instance_uuid)
+
+                # Probe-before-unlink: never stomp a live peer's socket.
                 if os.path.exists(self.socket_path):
+                    if is_socket_alive(self.socket_path):
+                        FreeCAD.Console.PrintError(
+                            f"Socket {self.socket_path} is already in use by another live "
+                            "FreeCAD instance. Refusing to start. Set FREECAD_MCP_SOCKET "
+                            "to a unique path, or stop the other instance first.\n"
+                        )
+                        return False
+                    # Stale socket from a prior crash — safe to remove.
                     os.remove(self.socket_path)
+
                 self.server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 self.server_socket.bind(self.socket_path)
                 os.chmod(self.socket_path, 0o600)
-                FreeCAD.Console.PrintMessage(f"Socket server started on {self.socket_path}\n")
+                FreeCAD.Console.PrintMessage(
+                    f"Socket server started on {self.socket_path} (uuid={self.instance_uuid})\n"
+                )
 
             self.server_socket.listen(5)
             self.running = True

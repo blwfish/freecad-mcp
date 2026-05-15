@@ -17,13 +17,15 @@ Usage (called by freecad_mcp_handler.py):
 The file is intentionally NOT cleared on crash — that's the whole point.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 import json
 import os
 import time
 
-LAST_OP_FILE = "/tmp/freecad_mcp_last_op.json"
+# Per-instance file: each FreeCAD process writes to its own path so that
+# multiple concurrent instances don't clobber one another's crash context.
+LAST_OP_FILE = f"/tmp/freecad_mcp_last_op_{os.getpid()}.json"
 _MAX_ARG_BYTES = 1500   # truncate large args (e.g. long Python scripts)
 
 

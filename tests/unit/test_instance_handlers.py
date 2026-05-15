@@ -48,6 +48,12 @@ def bridge():
     return _load_bridge()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_discovery(bridge, tmp_path, monkeypatch):
+    """Point DISCOVERY_DIR at an empty tmp path so host state can't leak in."""
+    monkeypatch.setattr(bridge, "DISCOVERY_DIR", str(tmp_path / "instances"))
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

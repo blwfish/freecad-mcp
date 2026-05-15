@@ -56,7 +56,7 @@ from collections import deque
 from pathlib import Path
 from typing import Optional
 
-LAST_OP_FILE = "/tmp/freecad_mcp_last_op.json"
+LAST_OP_FILE_GLOB = "/tmp/freecad_mcp_last_op_*.json"  # per-PID files written by crash_watcher
 OPLOG_FILE   = "/tmp/freecad_mcp_oplog.json"
 MAX_OPLOG    = 10
 
@@ -126,13 +126,29 @@ def _summarize(tool: str, args: dict) -> str:
 # Crash diagnosis helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _read_last_op() -> Optional[dict]:
-    """Read what FreeCAD was executing (written by crash_watcher inside FC)."""
-    try:
-        with open(LAST_OP_FILE) as f:
-            return json.load(f)
-    except Exception:
-        return None
+def _read_last_op(pid: Optional[int] = None) -> Optional[dict]:
+    """Read what FreeCAD was executing (written by crash_watcher inside FC).
+
+    If pid is given, prefer the PID-specific file. Otherwise (or if that file
+    is missing), fall back to the most-recently-modified per-PID file.
+    """
+    candidates = []
+    if pid is not None:
+        candidates.append(f"/tmp/freecad_mcp_last_op_{pid}.json")
+    # Fallback: glob all per-PID files, newest first.
+    all_per_pid = glob.glob(LAST_OP_FILE_GLOB)
+    all_per_pid.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    for p in all_per_pid:
+        if p not in candidates:
+            candidates.append(p)
+
+    for path in candidates:
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except Exception:
+            continue
+    return None
 
 
 def _find_macos_crash_report(max_age_s: int = 180) -> Optional[str]:
@@ -329,10 +345,11 @@ def clear_recovery_files(dry_run: bool = False) -> list:
 
 def diagnose(
     *,
-    socket_path: str = "/tmp/freecad_mcp.sock",
+    socket_path: Optional[str] = None,
     proc=None,              # subprocess.Popen for headless instances
     op_log: Optional[OpLog] = None,
     error: Optional[Exception] = None,
+    pid: Optional[int] = None,
 ) -> str:
     """Return a human-readable markdown crash report.
 
@@ -357,7 +374,7 @@ def diagnose(
                 parts.append(f"  - ✓ `{op['tool']}`")
 
     # ── 2. What was FreeCAD executing? (written by crash_watcher inside FC) ──
-    last_op = _read_last_op()
+    last_op = _read_last_op(pid=pid)
     if last_op:
         age  = time.time() - last_op.get("started_at", time.time())
         tool = last_op.get("tool", "?")
