@@ -3,7 +3,7 @@
   "name": "io.github.blwfish/freecad-mcp",
   "title": "FreeCAD MCP",
   "description": "Control FreeCAD from Claude — 3D modeling, PartDesign, CAM toolpaths, and more via 30+ tools.",
-  "version": "5.6.0",
+  "version": "5.7.0",
   "repository": {
     "url": "https://github.com/blwfish/freecad-mcp",
     "source": "github"
