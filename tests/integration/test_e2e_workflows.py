@@ -29,26 +29,51 @@ from . import conftest
 # ---------------------------------------------------------------------------
 
 
-def send_command(tool: str, args: dict, timeout: float = 10.0) -> dict:
-    """Send a command to FreeCAD and return the parsed response."""
+def _socket_call(tool: str, args: dict, timeout: float = 10.0) -> dict:
+    """Single socket round-trip: send a command, return the parsed response."""
     sock_path = conftest.get_socket_path()
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(timeout)
     s.connect(sock_path)
     try:
         msg = json.dumps({"tool": tool, "args": args}).encode("utf-8")
-        # Length-prefixed framing
         s.sendall(struct.pack("!I", len(msg)) + msg)
-
-        # Read response length
         length_bytes = _recv_exact(s, 4)
         resp_len = struct.unpack("!I", length_bytes)[0]
-
-        # Read response body
         resp_bytes = _recv_exact(s, resp_len)
         return json.loads(resp_bytes.decode("utf-8"))
     finally:
         s.close()
+
+
+def send_command(tool: str, args: dict, timeout: float = 10.0) -> dict:
+    """Send a command to FreeCAD and return the parsed response.
+
+    Handlers now dispatch asynchronously and may return {"job_id": ...,
+    "status": "submitted"}.  This helper polls until the job completes so
+    callers always receive the final result.
+    """
+    result = _socket_call(tool, args, timeout)
+    if not (isinstance(result, dict) and result.get("status") == "submitted" and "job_id" in result):
+        return result
+    job_id = result["job_id"]
+    deadline = time.time() + timeout
+    while True:
+        time.sleep(0.1)
+        if time.time() > deadline:
+            return {"error": f"Timed out polling job {job_id} after {timeout}s"}
+        poll = _socket_call("poll_job", {"job_id": job_id}, timeout=5.0)
+        status = poll.get("status")
+        if status == "done":
+            inner = poll.get("result", {})
+            if isinstance(inner, str):
+                try:
+                    return json.loads(inner)
+                except Exception:
+                    return {"result": inner}
+            return inner if isinstance(inner, dict) else {"result": inner}
+        if status == "error":
+            return {"error": poll.get("error", "unknown error")}
 
 
 def _recv_exact(s, n):
