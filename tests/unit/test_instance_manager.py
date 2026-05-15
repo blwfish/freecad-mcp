@@ -42,6 +42,13 @@ def bridge():
     return _load_bridge()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_discovery(bridge, tmp_path, monkeypatch):
+    """Point DISCOVERY_DIR at an empty tmp path for every test so the host
+    machine's real discovery state cannot leak in."""
+    monkeypatch.setattr(bridge, "DISCOVERY_DIR", str(tmp_path / "instances"))
+
+
 # ===========================================================================
 # _BridgeCtx
 # ===========================================================================
@@ -62,9 +69,11 @@ class TestBridgeCtx:
         assert ctx.socket_path == "/tmp/test_mcp.sock"
 
     def test_default_socket_path_fallback(self, monkeypatch, bridge):
+        # When FREECAD_MCP_SOCKET is unset, the bridge starts with no target;
+        # resolve_target() picks an instance lazily from the discovery dir.
         monkeypatch.delenv("FREECAD_MCP_SOCKET", raising=False)
         ctx = bridge._BridgeCtx()
-        assert ctx.socket_path == "/tmp/freecad_mcp.sock"
+        assert ctx.socket_path is None
 
     def test_register_and_list(self, bridge):
         ctx = bridge._BridgeCtx()
@@ -106,12 +115,25 @@ class TestBridgeCtx:
         ctx.socket_path = str(tmp_path / "nonexistent.sock")
         assert ctx.freecad_available is False
 
-    def test_freecad_available_true_when_socket_exists(self, bridge, tmp_path):
-        sock = tmp_path / "test.sock"
-        sock.touch()
-        ctx = bridge._BridgeCtx()
-        ctx.socket_path = str(sock)
-        assert ctx.freecad_available is True
+    def test_freecad_available_true_when_socket_listens(self, bridge):
+        # freecad_available now probes the socket (connect), not just existence.
+        # Bind+listen a real Unix socket so the probe succeeds. Use /tmp
+        # directly because AF_UNIX paths are length-limited on macOS.
+        import uuid as _uuid
+        sock_path = f"/tmp/freecad_mcp_test_{_uuid.uuid4().hex[:8]}.sock"
+        if os.path.exists(sock_path):
+            os.unlink(sock_path)
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            srv.bind(sock_path)
+            srv.listen(1)
+            ctx = bridge._BridgeCtx()
+            ctx.socket_path = sock_path
+            assert ctx.freecad_available is True
+        finally:
+            srv.close()
+            if os.path.exists(sock_path):
+                os.unlink(sock_path)
 
 
 # ===========================================================================

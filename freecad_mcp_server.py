@@ -21,30 +21,92 @@ from typing import Any
 # Mutable bridge state — socket target + spawned instance registry
 # =============================================================================
 
+DISCOVERY_DIR = os.path.expanduser("~/.cache/freecad-mcp/instances")
+
+
+def _socket_alive(sock_path: str, timeout: float = 0.5) -> bool:
+    """Return True if a Unix socket at sock_path accepts connections."""
+    if not sock_path or not os.path.exists(sock_path):
+        return False
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        s.connect(sock_path)
+        s.close()
+        return True
+    except OSError:
+        return False
+
+
+def _scan_discovery(prune_stale: bool = True) -> list[dict]:
+    """Read ~/.cache/freecad-mcp/instances/*.json, return live records.
+
+    On Windows this is a no-op (returns []); GUI discovery on Windows is TCP
+    based and uses _ctx.socket_path directly.
+    """
+    if platform.system() == "Windows":
+        return []
+    try:
+        entries = os.listdir(DISCOVERY_DIR)
+    except FileNotFoundError:
+        return []
+
+    live = []
+    for name in entries:
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(DISCOVERY_DIR, name)
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            if prune_stale:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+            continue
+        sock_path = data.get("socket_path")
+        if sock_path and _socket_alive(sock_path):
+            live.append(data)
+        elif prune_stale:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+    return live
+
+
 class _BridgeCtx:
     """Holds the active socket path and all spawned instance metadata.
 
     Using a class instance (rather than closure variables) lets nested async
     functions read and write the active target without nonlocal gymnastics.
+
+    `socket_path` starts as None on Unix; the first tool call triggers
+    discovery-based auto-selection. On Windows it's a fixed TCP endpoint
+    (the discovery scheme is Unix-socket-only).
     """
 
     def __init__(self):
         if platform.system() == "Windows":
-            self.socket_path: str = "localhost:23456"
+            self.socket_path: str | None = "localhost:23456"
         else:
-            self.socket_path: str = os.environ.get(
-                "FREECAD_MCP_SOCKET", "/tmp/freecad_mcp.sock"
-            )
-        # socket_path -> {pid, proc, label, headless, started_at}
+            # Honor an explicit env override; otherwise resolve lazily.
+            self.socket_path = os.environ.get("FREECAD_MCP_SOCKET")
+        # socket_path -> {pid, proc, label, headless, started_at, uuid}
         self.instances: dict = {}
 
     @property
     def freecad_available(self) -> bool:
         if platform.system() == "Windows":
             return True
-        return os.path.exists(self.socket_path)
+        if not self.socket_path:
+            return False
+        return _socket_alive(self.socket_path)
 
-    def register(self, sock_path: str, pid: int, proc, label: str, headless: bool = True):
+    def register(self, sock_path: str, pid: int, proc, label: str,
+                 headless: bool = True, instance_uuid: str | None = None):
         self.instances[sock_path] = {
             "socket_path": sock_path,
             "pid": pid,
@@ -52,15 +114,116 @@ class _BridgeCtx:
             "label": label,
             "headless": headless,
             "started_at": time.time(),
+            "uuid": instance_uuid,
         }
 
     def unregister(self, sock_path: str):
         self.instances.pop(sock_path, None)
 
+    def lookup_pid(self, sock_path: str | None) -> int | None:
+        """Find the PID for a socket path, checking managed instances then discovery."""
+        if not sock_path:
+            return None
+        info = self.instances.get(sock_path)
+        if info and info.get("pid"):
+            return info["pid"]
+        for record in _scan_discovery(prune_stale=False):
+            if record.get("socket_path") == sock_path:
+                return record.get("pid")
+        return None
+
+    def resolve_target(self) -> tuple[str | None, str | None]:
+        """Resolve the active socket path. Returns (socket_path, error_or_none).
+
+        Resolution order:
+          1. self.socket_path already set and live → use it.
+          2. self.socket_path set but stale → clear, fall through.
+          3. Scan discovery dir:
+             - 0 live instances → error
+             - 1 live instance  → auto-select, log
+             - 2+ live          → error listing them
+        """
+        if platform.system() == "Windows":
+            return self.socket_path, None
+
+        # 1/2: previously selected target
+        if self.socket_path:
+            if _socket_alive(self.socket_path):
+                return self.socket_path, None
+            # stale — drop it and re-resolve via discovery
+            self.socket_path = None
+
+        # 3: discovery
+        live = _scan_discovery()
+        if not live:
+            return None, (
+                "No live FreeCAD instances found. Start FreeCAD with AICopilot, "
+                "or call spawn_freecad_instance."
+            )
+        if len(live) == 1:
+            self.socket_path = live[0]["socket_path"]
+            return self.socket_path, None
+        # multiple: require explicit selection
+        listing = ", ".join(
+            f"{r.get('label') or r['uuid']} (uuid={r['uuid']}, gui={r.get('gui')})"
+            for r in live
+        )
+        return None, (
+            f"{len(live)} live FreeCAD instances; cannot auto-select. "
+            f"Call select_freecad_instance with one of: {listing}"
+        )
+
     def list_all(self) -> list:
+        """Merge bridge-spawned + discovered instances into a single view.
+
+        If self.socket_path is set but not present in either source (e.g.
+        FREECAD_MCP_SOCKET env override pointing at a hand-launched instance
+        that doesn't write discovery files), a synthetic entry is added so
+        the caller can see the active target.
+        """
         result = []
-        # Current socket (may or may not be a spawned instance)
-        if self.socket_path not in self.instances:
+        seen_paths = set()
+
+        # Bridge-spawned (managed) instances
+        for sp, info in self.instances.items():
+            seen_paths.add(sp)
+            result.append({
+                **{k: v for k, v in info.items() if k != "proc"},
+                "managed": True,
+                "is_current": sp == self.socket_path,
+                "available": _socket_alive(sp) if platform.system() != "Windows" else True,
+            })
+
+        # Discovered (unmanaged) instances
+        if platform.system() != "Windows":
+            for record in _scan_discovery():
+                sp = record.get("socket_path")
+                if sp in seen_paths:
+                    # Already covered by managed listing — annotate with discovery extras
+                    for entry in result:
+                        if entry.get("socket_path") == sp:
+                            entry.setdefault("uuid", record.get("uuid"))
+                            entry.setdefault("gui", record.get("gui"))
+                            entry.setdefault("freecad_version", record.get("freecad_version"))
+                    continue
+                seen_paths.add(sp)
+                result.append({
+                    "socket_path": sp,
+                    "uuid": record.get("uuid"),
+                    "pid": record.get("pid"),
+                    "label": record.get("label"),
+                    "gui": record.get("gui"),
+                    "headless": not record.get("gui", False),
+                    "started_at": record.get("started_at"),
+                    "freecad_version": record.get("freecad_version"),
+                    "freecad_binary": record.get("freecad_binary"),
+                    "managed": False,
+                    "is_current": sp == self.socket_path,
+                    "available": True,  # scan_discovery already pruned dead
+                })
+
+        # Synthetic entry for an explicit env-var target that isn't tracked anywhere
+        if self.socket_path and self.socket_path not in seen_paths:
             result.append({
                 "socket_path": self.socket_path,
                 "label": "default",
@@ -69,13 +232,7 @@ class _BridgeCtx:
                 "is_current": True,
                 "available": self.freecad_available,
             })
-        for sp, info in self.instances.items():
-            result.append({
-                **info,
-                "managed": True,
-                "is_current": sp == self.socket_path,
-                "available": os.path.exists(sp) if platform.system() != "Windows" else True,
-            })
+
         return result
 
 
@@ -192,12 +349,15 @@ _POLL_TIMEOUT_SECS = 120  # 2-minute ceiling; return job_id so caller can cancel
 def _diagnose_crash(error: Exception = None) -> str:
     if _crash_mod is None:
         return f"FreeCAD connection lost: {error}"
-    proc = _ctx.instances.get(_ctx.socket_path, {}).get("proc")
+    info = _ctx.instances.get(_ctx.socket_path, {}) if _ctx.socket_path else {}
+    proc = info.get("proc")
+    pid = info.get("pid") or _ctx.lookup_pid(_ctx.socket_path)
     return _crash_mod.diagnose(
         socket_path=_ctx.socket_path,
         proc=proc,
         op_log=_op_log,
         error=error,
+        pid=pid,
     )
 
 # Initialize debugging infrastructure (optional - works without it)
@@ -255,9 +415,9 @@ async def main():
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.connect(('localhost', 23456))
             else:
-                current_path = _ctx.socket_path
-                if not os.path.exists(current_path):
-                    return json.dumps({"error": "FreeCAD socket not available. Please start FreeCAD with AICopilot installed, or call spawn_freecad_instance."})
+                current_path, err = _ctx.resolve_target()
+                if err:
+                    return json.dumps({"error": err})
                 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 sock.connect(current_path)
 
@@ -1444,18 +1604,22 @@ async def main():
                     description=(
                         "Switch the active FreeCAD instance. All subsequent tool calls "
                         "will be routed to this instance. Use list_freecad_instances to "
-                        "see available socket paths / labels."
+                        "see available uuids / labels / socket paths."
                     ),
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "socket_path": {
+                            "uuid": {
                                 "type": "string",
-                                "description": "Socket path of the instance to activate"
+                                "description": "Instance UUID (preferred selector)"
                             },
                             "label": {
                                 "type": "string",
-                                "description": "Label of the instance to activate (alternative to socket_path)"
+                                "description": "Instance label (alternative to uuid)"
+                            },
+                            "socket_path": {
+                                "type": "string",
+                                "description": "Socket path of the instance (alternative to uuid/label)"
                             }
                         }
                     },
@@ -1474,13 +1638,17 @@ async def main():
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "socket_path": {
+                            "uuid": {
                                 "type": "string",
-                                "description": "Socket path of the instance to stop"
+                                "description": "Instance UUID"
                             },
                             "label": {
                                 "type": "string",
-                                "description": "Label of the instance to stop (alternative to socket_path)"
+                                "description": "Instance label (alternative to uuid)"
+                            },
+                            "socket_path": {
+                                "type": "string",
+                                "description": "Socket path (alternative to uuid/label)"
                             }
                         }
                     },
@@ -1501,12 +1669,14 @@ async def main():
         """Handle tool calls with smart dispatcher routing"""
         
         if name == "check_freecad_connection":
+            # Trigger lazy resolution so available/socket_path reflect discovery.
+            resolved, resolve_err = _ctx.resolve_target()
             available = _ctx.freecad_available
             status = {
                 "freecad_socket_exists": available,
                 "socket_path": _ctx.socket_path,
                 "status": "FreeCAD running with AICopilot" if available
-                         else "FreeCAD not running. Start FreeCAD or call spawn_freecad_instance.",
+                         else (resolve_err or "FreeCAD not running. Start FreeCAD or call spawn_freecad_instance."),
                 "instances": _ctx.list_all(),
             }
             return [types.TextContent(
@@ -1528,7 +1698,7 @@ async def main():
             await asyncio.sleep(3)
             # Poll for new instance (up to 30s)
             for i in range(30):
-                if os.path.exists(_ctx.socket_path):
+                if _ctx.socket_path and os.path.exists(_ctx.socket_path):
                     try:
                         test = await send_to_freecad("test_echo", {"message": "ping"})
                         parsed = json.loads(test)
@@ -1767,12 +1937,38 @@ async def main():
             args = arguments or {}
             target_path = args.get("socket_path")
             target_label = args.get("label")
+            target_uuid = args.get("uuid")
 
-            # Resolve label → socket_path if needed
+            # Build a combined search space: managed + discovered.
+            candidates = []
+            for sp, info in _ctx.instances.items():
+                candidates.append({
+                    "socket_path": sp,
+                    "label": info.get("label"),
+                    "uuid": info.get("uuid"),
+                })
+            for record in _scan_discovery():
+                candidates.append({
+                    "socket_path": record.get("socket_path"),
+                    "label": record.get("label"),
+                    "uuid": record.get("uuid"),
+                })
+
+            # Resolve by uuid → label → socket_path
+            if not target_path and target_uuid:
+                for c in candidates:
+                    if c.get("uuid") == target_uuid:
+                        target_path = c["socket_path"]
+                        break
+                if not target_path:
+                    return [types.TextContent(
+                        type="text",
+                        text=json.dumps({"error": f"No instance with uuid '{target_uuid}'"})
+                    )]
             if not target_path and target_label:
-                for sp, info in _ctx.instances.items():
-                    if info.get("label") == target_label:
-                        target_path = sp
+                for c in candidates:
+                    if c.get("label") == target_label:
+                        target_path = c["socket_path"]
                         break
                 if not target_path:
                     return [types.TextContent(
@@ -1783,7 +1979,7 @@ async def main():
             if not target_path:
                 return [types.TextContent(
                     type="text",
-                    text=json.dumps({"error": "Provide socket_path or label"})
+                    text=json.dumps({"error": "Provide socket_path, label, or uuid"})
                 )]
 
             _ctx.socket_path = target_path
@@ -1879,7 +2075,18 @@ async def main():
                     })
                 )]
 
-            _ctx.register(sock_path, proc.pid, proc, label or sock_path, headless=True)
+            # The spawned process generates its own UUID inside AICopilot.
+            # Look it up from the discovery file so we can store it.
+            instance_uuid = None
+            for record in _scan_discovery(prune_stale=False):
+                if record.get("socket_path") == sock_path:
+                    instance_uuid = record.get("uuid")
+                    break
+
+            _ctx.register(
+                sock_path, proc.pid, proc, label or sock_path,
+                headless=True, instance_uuid=instance_uuid,
+            )
             if select_new:
                 _ctx.socket_path = sock_path
 
@@ -1889,6 +2096,7 @@ async def main():
                     "result": "Headless FreeCAD instance spawned and ready",
                     "socket_path": sock_path,
                     "pid": proc.pid,
+                    "uuid": instance_uuid,
                     "label": label or sock_path,
                     "selected": select_new,
                 })
@@ -1898,7 +2106,13 @@ async def main():
             args = arguments or {}
             target_path = args.get("socket_path")
             target_label = args.get("label")
+            target_uuid = args.get("uuid")
 
+            if not target_path and target_uuid:
+                for sp, info in _ctx.instances.items():
+                    if info.get("uuid") == target_uuid:
+                        target_path = sp
+                        break
             if not target_path and target_label:
                 for sp, info in _ctx.instances.items():
                     if info.get("label") == target_label:
@@ -1908,7 +2122,7 @@ async def main():
             if not target_path:
                 return [types.TextContent(
                     type="text",
-                    text=json.dumps({"error": "Provide socket_path or label of instance to stop"})
+                    text=json.dumps({"error": "Provide socket_path, label, or uuid of instance to stop"})
                 )]
 
             info = _ctx.instances.get(target_path)
@@ -1938,9 +2152,10 @@ async def main():
 
             _ctx.unregister(target_path)
 
-            # If we just stopped the active instance, revert to default
+            # If we just stopped the active instance, clear it so the next
+            # call re-resolves via discovery (or env var if set).
             if _ctx.socket_path == target_path:
-                _ctx.socket_path = os.environ.get("FREECAD_MCP_SOCKET", "/tmp/freecad_mcp.sock")
+                _ctx.socket_path = os.environ.get("FREECAD_MCP_SOCKET")
 
             return [types.TextContent(
                 type="text",

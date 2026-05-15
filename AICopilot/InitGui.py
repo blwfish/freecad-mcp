@@ -55,6 +55,26 @@ else:
                 FreeCAD.Console.PrintError(f"Socket server error: {e}\n")
                 return False
 
+            # Write discovery file so the bridge (and tools) can find this instance.
+            try:
+                import instance_registry
+                fc_version = None
+                try:
+                    fc_version = ".".join(str(p) for p in FreeCAD.Version()[:3])
+                except Exception:
+                    pass
+                instance_registry.write_discovery(
+                    self.socket_server.instance_uuid,
+                    self.socket_server.socket_path,
+                    gui=True,
+                    label=os.environ.get("FREECAD_MCP_LABEL"),
+                    freecad_version=fc_version,
+                    freecad_binary=sys.executable,
+                )
+                self.instance_uuid = self.socket_server.instance_uuid
+            except Exception as e:
+                FreeCAD.Console.PrintWarning(f"Discovery file not written: {e}\n")
+
             self.is_running = True
             FreeCAD.__ai_global_service = self
             FreeCAD.Console.PrintMessage("AI Copilot Service running - available from all workbenches\n")
@@ -72,6 +92,15 @@ else:
                 self.socket_server = None
 
             self.is_running = False
+
+            # Remove discovery file before clearing FreeCAD attrs.
+            uid = getattr(self, "instance_uuid", None)
+            if uid:
+                try:
+                    import instance_registry
+                    instance_registry.remove_discovery(uid)
+                except Exception:
+                    pass
 
             for attr in ('__ai_socket_server', '__ai_global_service'):
                 if hasattr(FreeCAD, attr):

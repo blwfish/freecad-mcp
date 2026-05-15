@@ -659,7 +659,9 @@ class TestCallOnGuiThread:
 
 class TestConfiguration:
     def test_default_socket_path(self, ss_module):
-        assert ss_module.SOCKET_PATH == "/tmp/freecad_mcp.sock"
+        # SOCKET_PATH is None when FREECAD_MCP_SOCKET is unset; the real path
+        # is generated per-instance at start_server() time (uuid-suffixed).
+        assert ss_module.SOCKET_PATH is None
 
     def test_default_windows_port(self, ss_module):
         assert ss_module.WINDOWS_PORT == 23456

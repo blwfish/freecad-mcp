@@ -88,10 +88,15 @@ except ImportError:
 # Start the socket server
 # ---------------------------------------------------------------------------
 def main():
-    active_socket = os.environ.get("FREECAD_MCP_SOCKET", "/tmp/freecad_mcp.sock")
-    FreeCAD.Console.PrintMessage(
-        f"[Headless MCP] Starting socket server on {active_socket}\n"
-    )
+    requested_socket = os.environ.get("FREECAD_MCP_SOCKET")
+    if requested_socket:
+        FreeCAD.Console.PrintMessage(
+            f"[Headless MCP] Starting socket server on {requested_socket}\n"
+        )
+    else:
+        FreeCAD.Console.PrintMessage(
+            "[Headless MCP] Starting socket server (path auto-generated)\n"
+        )
 
     try:
         from freecad_mcp_handler import FreeCADSocketServer
@@ -110,8 +115,30 @@ def main():
     # Expose on FreeCAD module so execute_python code can reach it if needed
     FreeCAD.__ai_socket_server = server
 
+    # Write discovery file (best-effort — never fatal).
+    instance_uuid = None
+    try:
+        import instance_registry
+        fc_version = None
+        try:
+            fc_version = ".".join(str(p) for p in FreeCAD.Version()[:3])
+        except Exception:
+            pass
+        instance_registry.write_discovery(
+            server.instance_uuid,
+            server.socket_path,
+            gui=False,
+            label=os.environ.get("FREECAD_MCP_LABEL"),
+            freecad_version=fc_version,
+            freecad_binary=sys.executable,
+        )
+        instance_uuid = server.instance_uuid
+    except Exception as e:
+        FreeCAD.Console.PrintWarning(f"[Headless MCP] Discovery file not written: {e}\n")
+
     FreeCAD.Console.PrintMessage(
-        f"[Headless MCP] Ready. Listening on {active_socket}\n"
+        f"[Headless MCP] Ready. Listening on {server.socket_path} "
+        f"(uuid={server.instance_uuid})\n"
     )
 
     # ---------------------------------------------------------------------------
@@ -138,6 +165,12 @@ def main():
     finally:
         FreeCAD.Console.PrintMessage("[Headless MCP] Stopping socket server.\n")
         server.stop_server()
+        if instance_uuid:
+            try:
+                import instance_registry
+                instance_registry.remove_discovery(instance_uuid)
+            except Exception:
+                pass
         if hasattr(FreeCAD, "__ai_socket_server"):
             del FreeCAD.__ai_socket_server
 
