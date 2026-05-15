@@ -7,6 +7,8 @@
 # Minimum FreeCAD version required for CAM tools.
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
 # "not supported" error rather than crashing on missing Path/CAM API.
+__version__ = "5.5.0"
+
 CAM_MIN_FC_VERSION = (1, 2, 0)
 
 REQUIRED_VERSIONS = {
