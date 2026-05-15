@@ -164,6 +164,41 @@ class TestFindFreecadCmd:
 
 
 # ===========================================================================
+# _find_freecad_gui
+# ===========================================================================
+
+class TestFindFreecadGui:
+
+    def test_env_override_takes_priority(self, bridge, monkeypatch, tmp_path):
+        fake_bin = tmp_path / "MyFreeCAD"
+        fake_bin.touch()
+        monkeypatch.setenv("FREECAD_MCP_FREECAD_GUI_BIN", str(fake_bin))
+        result = bridge._find_freecad_gui()
+        assert result == str(fake_bin)
+
+    def test_env_override_missing_file_falls_through(self, bridge, monkeypatch):
+        monkeypatch.setenv("FREECAD_MCP_FREECAD_GUI_BIN", "/nonexistent/FreeCAD")
+        # Should not crash; may pick something else off the system
+        bridge._find_freecad_gui()
+
+    def test_returns_none_when_nothing_found(self, bridge, monkeypatch):
+        monkeypatch.delenv("FREECAD_MCP_FREECAD_GUI_BIN", raising=False)
+        with patch("shutil.which", return_value=None), \
+             patch("os.path.isfile", return_value=False):
+            assert bridge._find_freecad_gui() is None
+
+    def test_macos_skips_shutil_which(self, bridge, monkeypatch):
+        """On Darwin, GUI lookup must target the .app inner Mach-O directly —
+        going through `open`/PATH would dedupe to an existing process."""
+        monkeypatch.delenv("FREECAD_MCP_FREECAD_GUI_BIN", raising=False)
+        with patch("platform.system", return_value="Darwin"), \
+             patch("shutil.which") as which_mock, \
+             patch("os.path.isfile", return_value=False):
+            bridge._find_freecad_gui()
+            which_mock.assert_not_called()
+
+
+# ===========================================================================
 # _find_headless_script
 # ===========================================================================
 

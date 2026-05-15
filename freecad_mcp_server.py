@@ -277,6 +277,45 @@ def _find_freecadcmd() -> str | None:
     return None
 
 
+def _find_freecad_gui() -> str | None:
+    """Return path to the FreeCAD GUI binary, or None if not found.
+
+    Used by spawn_freecad_instance(gui=True) to launch a GUI FreeCAD with a
+    custom env (FREECAD_MCP_SOCKET / FREECAD_MCP_LABEL). On macOS we deliberately
+    target the inner Mach-O at .app/Contents/MacOS/FreeCAD — going through
+    `open` would dedupe to an existing process and not propagate env vars.
+
+    Search order:
+      1. FREECAD_MCP_FREECAD_GUI_BIN env var (explicit override)
+      2. shutil.which("FreeCAD" / "freecad")  — Linux distro install
+      3. macOS app bundle inner binaries
+      4. Local builds
+    """
+    override = os.environ.get("FREECAD_MCP_FREECAD_GUI_BIN")
+    if override and os.path.isfile(override):
+        return override
+
+    if platform.system() != "Darwin":
+        for name in ("FreeCAD", "freecad"):
+            path = shutil.which(name)
+            if path:
+                return path
+
+    mac_candidates = [
+        "/Applications/FreeCAD.app/Contents/MacOS/FreeCAD",
+        "/Applications/FreeCAD 1.0.app/Contents/MacOS/FreeCAD",
+        "/Applications/FreeCAD 1.1.app/Contents/MacOS/FreeCAD",
+        "/Applications/FreeCAD 1.2.app/Contents/MacOS/FreeCAD",
+        os.path.expanduser("~/Documents/FC-clone/build/release/bin/FreeCAD"),
+        "/Volumes/Files/claude/FC-clone/build/release/bin/FreeCAD",
+    ]
+    for p in mac_candidates:
+        if os.path.isfile(p):
+            return p
+
+    return None
+
+
 def _find_headless_script() -> str | None:
     """Return path to headless_server.py, or None if not found.
 
@@ -1556,9 +1595,12 @@ async def main():
                 types.Tool(
                     name="spawn_freecad_instance",
                     description=(
-                        "Spawn a new headless FreeCAD instance managed by this bridge. "
-                        "Returns the socket path and PID. By default selects the new "
-                        "instance as the active target."
+                        "Spawn a new FreeCAD instance managed by this bridge. "
+                        "Defaults to headless (FreeCADCmd). Set gui=true to launch a "
+                        "full GUI window — useful for side-by-side comparisons between "
+                        "different FreeCAD builds via the freecad_binary arg. "
+                        "Returns the socket path, PID, uuid. Selects the new instance "
+                        "as the active target by default."
                     ),
                     inputSchema={
                         "type": "object",
@@ -1570,6 +1612,19 @@ async def main():
                             "socket_path": {
                                 "type": "string",
                                 "description": "Explicit socket path (auto-generated UUID path if omitted)"
+                            },
+                            "gui": {
+                                "type": "boolean",
+                                "description": "Launch a GUI window instead of headless (default false)",
+                                "default": False
+                            },
+                            "freecad_binary": {
+                                "type": "string",
+                                "description": (
+                                    "Explicit FreeCAD binary path. Overrides auto-detection. "
+                                    "Use to pick between, e.g., /Applications/FreeCAD.app and a "
+                                    "local build."
+                                )
                             },
                             "select": {
                                 "type": "boolean",
@@ -1996,6 +2051,8 @@ async def main():
             label = args.get("label")
             sock_path = args.get("socket_path") or f"/tmp/freecad_mcp_{uuid.uuid4().hex[:8]}.sock"
             select_new = args.get("select", True)
+            gui_mode = bool(args.get("gui", False))
+            freecad_binary_override = args.get("freecad_binary")
 
             # Validate socket path: must resolve to within /tmp/ to prevent path traversal
             # On macOS, /tmp is a symlink to /private/tmp, so accept both
@@ -2008,36 +2065,68 @@ async def main():
                     })
                 )]
 
-            freecadcmd = _find_freecadcmd()
-            if not freecadcmd:
-                return [types.TextContent(
-                    type="text",
-                    text=json.dumps({
-                        "error": (
-                            "Cannot find FreeCADCmd binary. "
-                            "Set FREECAD_MCP_FREECAD_BIN env var to its path."
-                        )
-                    })
-                )]
+            # Resolve which FreeCAD binary to launch, and which arg vector to use.
+            if freecad_binary_override:
+                if not os.path.isfile(freecad_binary_override):
+                    return [types.TextContent(
+                        type="text",
+                        text=json.dumps({
+                            "error": f"freecad_binary not found: {freecad_binary_override}"
+                        })
+                    )]
+                freecad_bin = freecad_binary_override
+            elif gui_mode:
+                freecad_bin = _find_freecad_gui()
+                if not freecad_bin:
+                    return [types.TextContent(
+                        type="text",
+                        text=json.dumps({
+                            "error": (
+                                "Cannot find FreeCAD GUI binary. "
+                                "Set FREECAD_MCP_FREECAD_GUI_BIN env var or pass "
+                                "freecad_binary=... to point at it."
+                            )
+                        })
+                    )]
+            else:
+                freecad_bin = _find_freecadcmd()
+                if not freecad_bin:
+                    return [types.TextContent(
+                        type="text",
+                        text=json.dumps({
+                            "error": (
+                                "Cannot find FreeCADCmd binary. "
+                                "Set FREECAD_MCP_FREECAD_BIN env var to its path."
+                            )
+                        })
+                    )]
 
-            headless_script = _find_headless_script()
-            if not headless_script:
-                return [types.TextContent(
-                    type="text",
-                    text=json.dumps({
-                        "error": (
-                            "Cannot find headless_server.py. "
-                            "Set FREECAD_MCP_MODULE_DIR env var, or deploy AICopilot "
-                            "to ~/.freecad-mcp/AICopilot/."
-                        )
-                    })
-                )]
+            # Build the launch command. Headless wraps headless_server.py; GUI
+            # auto-loads InitGui.py from the AICopilot addon at startup.
+            if gui_mode:
+                launch_cmd = [freecad_bin]
+            else:
+                headless_script = _find_headless_script()
+                if not headless_script:
+                    return [types.TextContent(
+                        type="text",
+                        text=json.dumps({
+                            "error": (
+                                "Cannot find headless_server.py. "
+                                "Set FREECAD_MCP_MODULE_DIR env var, or deploy AICopilot "
+                                "to ~/.freecad-mcp/AICopilot/."
+                            )
+                        })
+                    )]
+                launch_cmd = [freecad_bin, headless_script, "--socket-path", sock_path]
 
             env = os.environ.copy()
             env["FREECAD_MCP_SOCKET"] = sock_path
+            if label:
+                env["FREECAD_MCP_LABEL"] = label
             try:
                 proc = subprocess.Popen(
-                    [freecadcmd, headless_script, "--socket-path", sock_path],
+                    launch_cmd,
                     env=env,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -2049,8 +2138,10 @@ async def main():
                     text=json.dumps({"error": f"Failed to spawn FreeCAD: {e}"})
                 )]
 
-            # Wait for socket to appear and respond (up to 30 s)
-            deadline = time.time() + 30
+            # GUI startup (workbench load, Qt init) is noticeably slower than
+            # headless — give it more time.
+            ready_timeout = 60 if gui_mode else 30
+            deadline = time.time() + ready_timeout
             ready = False
             while time.time() < deadline:
                 if os.path.exists(sock_path):
@@ -2067,10 +2158,11 @@ async def main():
 
             if not ready:
                 proc.kill()
+                kind = "GUI" if gui_mode else "Headless"
                 return [types.TextContent(
                     type="text",
                     text=json.dumps({
-                        "error": "Headless FreeCAD did not become ready within 30 s",
+                        "error": f"{kind} FreeCAD did not become ready within {ready_timeout} s",
                         "socket_path": sock_path,
                     })
                 )]
@@ -2085,19 +2177,22 @@ async def main():
 
             _ctx.register(
                 sock_path, proc.pid, proc, label or sock_path,
-                headless=True, instance_uuid=instance_uuid,
+                headless=not gui_mode, instance_uuid=instance_uuid,
             )
             if select_new:
                 _ctx.socket_path = sock_path
 
+            kind = "GUI" if gui_mode else "Headless"
             return [types.TextContent(
                 type="text",
                 text=json.dumps({
-                    "result": "Headless FreeCAD instance spawned and ready",
+                    "result": f"{kind} FreeCAD instance spawned and ready",
                     "socket_path": sock_path,
                     "pid": proc.pid,
                     "uuid": instance_uuid,
                     "label": label or sock_path,
+                    "gui": gui_mode,
+                    "freecad_binary": freecad_bin,
                     "selected": select_new,
                 })
             )]
