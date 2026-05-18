@@ -126,12 +126,27 @@ class BaseHandler:
         Tries internal name first (fast, exact), then falls back to label
         search so callers can pass user-visible labels like "LeftTab".
 
+        FreeCAD does NOT enforce uniqueness on Label — multiple objects can
+        share the same Label, only Name is guaranteed unique.  When a label
+        lookup hits multiple objects we REFUSE to guess which one was meant,
+        because the previous "first match wins" behavior could silently
+        perform destructive operations (move/rotate/cut) on the wrong solid.
+        Callers should either pass the unique internal Name to disambiguate,
+        or rename one of the objects so labels are unique.
+
         Args:
             object_name: Internal name or Label of the object to find
             doc: Document to search in (uses active document if not specified)
 
         Returns:
-            FreeCAD object or None if not found
+            FreeCAD object, or None if not found.
+
+        Raises:
+            ValueError: if `object_name` matches multiple objects by Label.
+                The error message lists every candidate's internal Name so
+                the caller can retry with an unambiguous identifier.  The
+                surrounding handler try/except converts this into a clear
+                error response for the MCP client.
         """
         if doc is None:
             doc = FreeCAD.ActiveDocument
@@ -142,7 +157,16 @@ class BaseHandler:
             return obj
         # Fall back to label search
         results = doc.getObjectsByLabel(object_name)
-        return results[0] if results else None
+        if not results:
+            return None
+        if len(results) > 1:
+            names = [getattr(o, "Name", "?") for o in results]
+            raise ValueError(
+                f"Ambiguous label {object_name!r}: {len(results)} objects "
+                f"share this label ({', '.join(names)}). "
+                f"Use the internal Name to disambiguate."
+            )
+        return results[0]
 
     def recompute(self, doc: FreeCAD.Document = None):
         """Recompute the document.

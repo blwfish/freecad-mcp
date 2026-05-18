@@ -194,38 +194,55 @@ class TestGetObject:
     # Ambiguous-label cases.
     #
     # FreeCAD allows multiple objects to share the same Label (only
-    # internal Name is unique).  get_object's label fallback does
-    # `results[0] if results else None`, so when two objects share a
-    # label, the *first one in document order* wins silently.  Callers
-    # like move_object / rotate_object then operate on the wrong object
-    # — a frustrating, hard-to-debug failure.
+    # internal Name is unique).  Previously get_object's label fallback
+    # did `results[0] if results else None`, so when two objects shared
+    # a label, the *first one in document order* won silently and
+    # callers like move_object / rotate_object operated on the wrong
+    # object — a frustrating, hard-to-debug failure that could destroy
+    # work via a Boolean cut on the unintended solid.
     #
-    # These tests pin the current "first match wins" behavior so a
-    # future fix that errors on ambiguity is deliberate, and document
-    # that callers asking for "MyBox" when there are two of them get
-    # nondeterministic surgery on the wrong one.
+    # As of this change, get_object raises ValueError on ambiguous
+    # label matches, naming the candidates so the caller can retry
+    # with the unique internal Name.  The outer handler try/except
+    # surfaces this as a clear MCP error response.
     # ----------------------------------------------------------------
 
-    def test_ambiguous_label_returns_first_match(self, base_handler):
-        """Two objects with the same Label — first match wins silently.
-
-        FreeCAD lets users (or tools) duplicate labels.  Today the
-        fallback path picks the first one without warning.  Pinning
-        the behavior so a future change to raise/warn is intentional.
-        """
+    def test_ambiguous_label_raises_with_candidate_names(self, base_handler):
+        """Two objects sharing a Label → ValueError listing both internal
+        Names, so the caller can retry unambiguously.  This is the fix
+        for the silent first-match-wins bug — the test was pinned to the
+        old behavior at commit 628f5a9 and is updated here alongside the
+        fix to base.get_object."""
         obj1 = MagicMock(Label="Tab")
         obj1.Name = "Box001"
         obj2 = MagicMock(Label="Tab")
         obj2.Name = "Box002"
-        # Internal name lookup misses (caller passed the Label, not Name)
         doc = MagicMock()
         doc.getObject = lambda n: None
         doc.getObjectsByLabel = lambda label: [obj1, obj2] if label == "Tab" else []
 
-        result = base_handler.get_object("Tab", doc)
-        # Today: first match wins.  This is silent — a downstream
-        # move_object call will move obj1 even if the user meant obj2.
-        assert result is obj1
+        with pytest.raises(ValueError, match="Ambiguous label 'Tab'"):
+            base_handler.get_object("Tab", doc)
+
+        # Error message must name BOTH candidates so the caller knows
+        # what their disambiguation options are.
+        try:
+            base_handler.get_object("Tab", doc)
+        except ValueError as e:
+            msg = str(e)
+            assert "Box001" in msg
+            assert "Box002" in msg
+            assert "internal Name" in msg  # nudge toward the right fix
+
+    def test_unambiguous_label_still_works(self, base_handler):
+        """A label that matches exactly one object returns that object —
+        the fix only changes the ambiguous-match path."""
+        obj = MagicMock(Label="UniqueLabel")
+        obj.Name = "Box042"
+        doc = MagicMock()
+        doc.getObject = lambda n: None
+        doc.getObjectsByLabel = lambda label: [obj] if label == "UniqueLabel" else []
+        assert base_handler.get_object("UniqueLabel", doc) is obj
 
     def test_name_takes_precedence_over_label(self, base_handler):
         """If something matches by Name AND something else by Label,
