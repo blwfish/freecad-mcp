@@ -86,20 +86,24 @@ class ParametricHelpers:
         except (ValueError, TypeError):
             pass
 
-        # Try to interpret as an expression
-        # Replace parameter names with their values
+        # Substitute each identifier token with its parameter value in a single
+        # pass via re.sub. Using str.replace per token is substring-based and
+        # corrupts identifiers that contain other identifiers as prefixes
+        # (e.g. param "w" mangling identifier "width"). A re.sub callback over
+        # the same \b...\w*\b token pattern operates on whole identifiers and
+        # never revisits previously substituted text.
         import re
-        result_expr = expr
 
-        # Find all word-like tokens and try to replace them with param values
-        tokens = re.findall(r'\b[a-zA-Z_]\w*\b', expr)
-        for token in tokens:
+        def _replace(match):
+            token = match.group(0)
             try:
-                val = self.get_param(token)
-                result_expr = result_expr.replace(token, str(val))
+                return str(self.get_param(token))
             except ValueError:
-                # Not a parameter, might be a unit like "mm" or "ft"
-                pass
+                # Not a parameter, might be a unit like "mm" or "ft" or an
+                # identifier the eval below will catch.
+                return token
+
+        result_expr = re.sub(r'\b[a-zA-Z_]\w*\b', _replace, expr)
 
         # Restricted eval: disable builtins to prevent arbitrary code execution.
         # Only numeric literals and arithmetic operators should remain after token substitution.
