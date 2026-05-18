@@ -190,6 +190,60 @@ class TestGetObject:
         mock_freecad.ActiveDocument = doc
         assert base_handler.get_object("Obj") is obj
 
+    # ----------------------------------------------------------------
+    # Ambiguous-label cases.
+    #
+    # FreeCAD allows multiple objects to share the same Label (only
+    # internal Name is unique).  get_object's label fallback does
+    # `results[0] if results else None`, so when two objects share a
+    # label, the *first one in document order* wins silently.  Callers
+    # like move_object / rotate_object then operate on the wrong object
+    # — a frustrating, hard-to-debug failure.
+    #
+    # These tests pin the current "first match wins" behavior so a
+    # future fix that errors on ambiguity is deliberate, and document
+    # that callers asking for "MyBox" when there are two of them get
+    # nondeterministic surgery on the wrong one.
+    # ----------------------------------------------------------------
+
+    def test_ambiguous_label_returns_first_match(self, base_handler):
+        """Two objects with the same Label — first match wins silently.
+
+        FreeCAD lets users (or tools) duplicate labels.  Today the
+        fallback path picks the first one without warning.  Pinning
+        the behavior so a future change to raise/warn is intentional.
+        """
+        obj1 = MagicMock(Label="Tab")
+        obj1.Name = "Box001"
+        obj2 = MagicMock(Label="Tab")
+        obj2.Name = "Box002"
+        # Internal name lookup misses (caller passed the Label, not Name)
+        doc = MagicMock()
+        doc.getObject = lambda n: None
+        doc.getObjectsByLabel = lambda label: [obj1, obj2] if label == "Tab" else []
+
+        result = base_handler.get_object("Tab", doc)
+        # Today: first match wins.  This is silent — a downstream
+        # move_object call will move obj1 even if the user meant obj2.
+        assert result is obj1
+
+    def test_name_takes_precedence_over_label(self, base_handler):
+        """If something matches by Name AND something else by Label,
+        Name wins — getObject is tried first and short-circuits the
+        label fallback.  Catches a refactor that swaps the order."""
+        named = MagicMock(Label="A")
+        named.Name = "Box"
+        labeled = MagicMock(Label="Box")
+        labeled.Name = "Cyl"
+        doc = MagicMock()
+        doc.getObject = lambda n: {"Box": named}.get(n)
+        doc.getObjectsByLabel = lambda label: (
+            [labeled] if label == "Box" else []
+        )
+        # Asking for "Box" should return the object Named "Box",
+        # not the one Labeled "Box".
+        assert base_handler.get_object("Box", doc) is named
+
 
 # ---------------------------------------------------------------------------
 # recompute
