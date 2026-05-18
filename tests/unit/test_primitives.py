@@ -154,5 +154,148 @@ class TestCreateTorus(unittest.TestCase):
         doc.addObject.assert_called_once_with("Part::Torus", "Torus")
 
 
+# ---------------------------------------------------------------------------
+# Degenerate-dimension tests
+#
+# All existing primitives tests use round positive numbers
+# (length=25/15/10, radius=5/10).  None cover what happens when the
+# user (or an LLM-generated tool call) passes zero, negative, or
+# missing dimensions.  The handlers don't validate — they pass the
+# values straight through to Part::Box / Part::Cylinder / etc.  That
+# means:
+#
+#   - create_box(length=0, width=0, height=0) returns "Created box:
+#     ...(0x0x0mm)" with no error.  Downstream OCCT will produce a
+#     null shape that crashes any subsequent Boolean operation.
+#   - create_cylinder(radius=-5) propagates a negative radius into a
+#     Part::Cylinder, which FreeCAD silently clamps or produces an
+#     invalid shape from.
+#   - Missing 'length' falls back to default=10.  An LLM that mis-spells
+#     the key gets a 10mm default it didn't ask for, with no warning.
+#
+# These tests pin the current behavior (no validation, returns success
+# string) so a future change to add validation is intentional, not
+# accidental.  They also serve as the "what does the consumer get to
+# work with?" check — the response string is the *only* signal the
+# MCP client receives about what was created.
+# ---------------------------------------------------------------------------
+
+class TestCreateBoxDegenerateDimensions(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(PrimitivesHandler)
+
+    def test_zero_dimensions_passed_through(self):
+        """length=0/width=0/height=0 produces a zero-volume Part::Box
+        with no error.  Downstream OCCT Booleans will fail; the caller
+        gets a success string with "0x0x0mm" as the only signal."""
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_box({
+            'length': 0, 'width': 0, 'height': 0,
+        })
+
+        # No validation — the response says "Created" not "Error".
+        self.assertIn("Created box", result)
+        self.assertIn("0x0x0", result)
+        box = doc.Objects[-1]
+        self.assertEqual(box.Length, 0)
+        self.assertEqual(box.Width, 0)
+        self.assertEqual(box.Height, 0)
+
+    def test_negative_dimension_passed_through(self):
+        """Negative length is propagated to Part::Box.  FreeCAD will
+        either clamp or produce a degenerate shape — either way, the
+        handler's return value reflects what the caller asked for, so
+        a careful caller can detect the issue from the response string."""
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_box({
+            'length': -10, 'width': 5, 'height': 5,
+        })
+
+        self.assertIn("Created box", result)
+        self.assertIn("-10", result)
+        self.assertEqual(doc.Objects[-1].Length, -10)
+
+    def test_missing_dimension_uses_default(self):
+        """Missing 'length' defaults to 10mm.  An LLM that omits a key
+        (or mis-spells it as 'lenght') silently gets a default — the
+        response string is the only place this is observable."""
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_box({'width': 5, 'height': 5})
+
+        # Default length=10 from the handler
+        self.assertEqual(doc.Objects[-1].Length, 10)
+        # The response must echo the default value so the caller can
+        # see what was actually used.
+        self.assertIn("10x5x5", result)
+
+
+class TestCreateCylinderDegenerateDimensions(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(PrimitivesHandler)
+
+    def test_zero_radius_passed_through(self):
+        """radius=0 yields a degenerate cylinder.  No error from the
+        handler."""
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_cylinder({'radius': 0, 'height': 10})
+
+        self.assertIn("Created cylinder", result)
+        self.assertEqual(doc.Objects[-1].Radius, 0)
+
+    def test_zero_height_passed_through(self):
+        """height=0 yields a flat disk (or null shape, depending on
+        FreeCAD version).  Handler returns success."""
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_cylinder({'radius': 5, 'height': 0})
+
+        self.assertIn("Created cylinder", result)
+        self.assertEqual(doc.Objects[-1].Height, 0)
+
+
+class TestCreateConeDegenerateDimensions(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(PrimitivesHandler)
+
+    def test_equal_radii_makes_a_cylinder(self):
+        """radius1 == radius2 is a valid degenerate case (it's a
+        cylinder, not a cone).  Handler accepts it without complaint."""
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_cone({
+            'radius1': 5, 'radius2': 5, 'height': 10,
+        })
+
+        self.assertIn("Created cone", result)
+        cone = doc.Objects[-1]
+        self.assertEqual(cone.Radius1, 5)
+        self.assertEqual(cone.Radius2, 5)
+
+    def test_radius2_default_is_zero(self):
+        """The default radius2 is 0 — a pointed cone.  Catches the
+        case where a refactor changes the default to something else
+        and silently shifts the geometry of every cone call that
+        relied on the default."""
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+
+        self.handler.create_cone({'radius1': 5, 'height': 10})
+
+        self.assertEqual(doc.Objects[-1].Radius2, 0)
+
+
 if __name__ == '__main__':
     unittest.main()

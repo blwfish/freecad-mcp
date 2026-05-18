@@ -219,6 +219,92 @@ class TestListObjects:
 
 
 # ---------------------------------------------------------------------------
+# list_objects — degenerate pagination params
+#
+# The existing tests cover {limit=2, offset=1, limit=9999}.  They do NOT
+# cover the threshold values the function branches on:
+#   - limit == 0 (silently returns zero objects)
+#   - limit < 0 (silently returns zero objects — `count >= -5` is True at 0)
+#   - offset >= total (returns empty list, no flag)
+#   - limit == exactly 500 (the cap, the > vs >= boundary)
+#   - limit == 501 (the first value that gets clipped)
+# A document with 200 objects + limit=0 should not silently return [];
+# at minimum, the caller needs a way to detect truncation happened.
+# This test family pins current behavior so refactors don't silently
+# change semantics, and documents the "silent truncation" gap.
+# ---------------------------------------------------------------------------
+
+class TestListObjectsDegeneratePagination:
+    def _make_doc(self, mock_freecad, n_objects):
+        doc = MagicMock()
+        objs = []
+        for i in range(n_objects):
+            obj = MagicMock()
+            obj.Name = f"Obj{i:04d}"
+            obj.Label = f"Obj{i:04d}"
+            obj.TypeId = "Part::Feature"
+            objs.append(obj)
+        doc.Objects = objs
+        mock_freecad.ActiveDocument = doc
+        return doc
+
+    def test_limit_zero_returns_empty(self, doc_handler, mock_freecad):
+        """limit=0 returns zero objects (no warning, no error).
+        Pinning behavior — if a caller passes 0 by accident they get
+        an empty list back even though the document has content."""
+        self._make_doc(mock_freecad, n_objects=5)
+        result = json.loads(doc_handler.list_objects({"limit": 0}))
+        assert result["total"] == 5
+        assert result["returned"] == 0
+        assert result["objects"] == []
+        # Truncation is detectable: total > returned tells the caller
+        # data was elided.  Without that comparison, the response looks
+        # the same as an empty document.
+        assert result["total"] > result["returned"]
+
+    def test_limit_negative_returns_empty(self, doc_handler, mock_freecad):
+        """limit=-5 collapses to zero objects.  The internal check
+        `count >= limit` is True from the start, so the loop exits
+        immediately.  Should arguably error; today it doesn't."""
+        self._make_doc(mock_freecad, n_objects=5)
+        result = json.loads(doc_handler.list_objects({"limit": -5}))
+        assert result["total"] == 5
+        assert result["returned"] == 0
+
+    def test_offset_beyond_total_returns_empty(self, doc_handler, mock_freecad):
+        """offset > total returns an empty list — caller must compare
+        offset vs total to detect this case."""
+        self._make_doc(mock_freecad, n_objects=3)
+        result = json.loads(doc_handler.list_objects({"offset": 999}))
+        assert result["total"] == 3
+        assert result["returned"] == 0
+        assert result["offset"] == 999
+
+    def test_limit_exactly_at_cap_unchanged(self, doc_handler, mock_freecad):
+        """limit=500 is the cap.  min(500, 500) == 500 — unchanged."""
+        self._make_doc(mock_freecad, n_objects=10)
+        result = json.loads(doc_handler.list_objects({"limit": 500}))
+        assert result["limit"] == 500
+
+    def test_limit_one_over_cap_clipped(self, doc_handler, mock_freecad):
+        """limit=501 is the first value that gets clipped to 500."""
+        self._make_doc(mock_freecad, n_objects=10)
+        result = json.loads(doc_handler.list_objects({"limit": 501}))
+        assert result["limit"] == 500
+
+    def test_truncation_detectable_via_total_minus_returned(self, doc_handler, mock_freecad):
+        """When total > returned, the caller should be able to detect
+        truncation.  The handler doesn't return a `truncated` flag, but
+        `total - returned` works as a fallback.  Pinned so a future
+        refactor doesn't drop the `total` field."""
+        self._make_doc(mock_freecad, n_objects=600)
+        result = json.loads(doc_handler.list_objects({}))  # default limit=100
+        assert result["total"] == 600
+        assert result["returned"] == 100
+        assert result["total"] - result["returned"] == 500
+
+
+# ---------------------------------------------------------------------------
 # hide_object / show_object / delete_object
 # ---------------------------------------------------------------------------
 

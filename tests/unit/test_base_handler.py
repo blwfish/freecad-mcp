@@ -190,6 +190,77 @@ class TestGetObject:
         mock_freecad.ActiveDocument = doc
         assert base_handler.get_object("Obj") is obj
 
+    # ----------------------------------------------------------------
+    # Ambiguous-label cases.
+    #
+    # FreeCAD allows multiple objects to share the same Label (only
+    # internal Name is unique).  Previously get_object's label fallback
+    # did `results[0] if results else None`, so when two objects shared
+    # a label, the *first one in document order* won silently and
+    # callers like move_object / rotate_object operated on the wrong
+    # object — a frustrating, hard-to-debug failure that could destroy
+    # work via a Boolean cut on the unintended solid.
+    #
+    # As of this change, get_object raises ValueError on ambiguous
+    # label matches, naming the candidates so the caller can retry
+    # with the unique internal Name.  The outer handler try/except
+    # surfaces this as a clear MCP error response.
+    # ----------------------------------------------------------------
+
+    def test_ambiguous_label_raises_with_candidate_names(self, base_handler):
+        """Two objects sharing a Label → ValueError listing both internal
+        Names, so the caller can retry unambiguously.  This is the fix
+        for the silent first-match-wins bug — the test was pinned to the
+        old behavior at commit 628f5a9 and is updated here alongside the
+        fix to base.get_object."""
+        obj1 = MagicMock(Label="Tab")
+        obj1.Name = "Box001"
+        obj2 = MagicMock(Label="Tab")
+        obj2.Name = "Box002"
+        doc = MagicMock()
+        doc.getObject = lambda n: None
+        doc.getObjectsByLabel = lambda label: [obj1, obj2] if label == "Tab" else []
+
+        with pytest.raises(ValueError, match="Ambiguous label 'Tab'"):
+            base_handler.get_object("Tab", doc)
+
+        # Error message must name BOTH candidates so the caller knows
+        # what their disambiguation options are.
+        try:
+            base_handler.get_object("Tab", doc)
+        except ValueError as e:
+            msg = str(e)
+            assert "Box001" in msg
+            assert "Box002" in msg
+            assert "internal Name" in msg  # nudge toward the right fix
+
+    def test_unambiguous_label_still_works(self, base_handler):
+        """A label that matches exactly one object returns that object —
+        the fix only changes the ambiguous-match path."""
+        obj = MagicMock(Label="UniqueLabel")
+        obj.Name = "Box042"
+        doc = MagicMock()
+        doc.getObject = lambda n: None
+        doc.getObjectsByLabel = lambda label: [obj] if label == "UniqueLabel" else []
+        assert base_handler.get_object("UniqueLabel", doc) is obj
+
+    def test_name_takes_precedence_over_label(self, base_handler):
+        """If something matches by Name AND something else by Label,
+        Name wins — getObject is tried first and short-circuits the
+        label fallback.  Catches a refactor that swaps the order."""
+        named = MagicMock(Label="A")
+        named.Name = "Box"
+        labeled = MagicMock(Label="Box")
+        labeled.Name = "Cyl"
+        doc = MagicMock()
+        doc.getObject = lambda n: {"Box": named}.get(n)
+        doc.getObjectsByLabel = lambda label: (
+            [labeled] if label == "Box" else []
+        )
+        # Asking for "Box" should return the object Named "Box",
+        # not the one Labeled "Box".
+        assert base_handler.get_object("Box", doc) is named
+
 
 # ---------------------------------------------------------------------------
 # recompute
@@ -283,6 +354,51 @@ class TestCheckComplexity:
         obj = self._make_obj(5, 50)
         assert base_handler.check_complexity([obj], max_solids=3) is not None
         assert base_handler.check_complexity([obj], max_solids=10) is None
+
+    # ----------------------------------------------------------------
+    # Threshold-boundary cases.  The existing tests use 600 solids and
+    # 15000 faces — well past the defaults, so they don't pin which
+    # side of the boundary the check lives on.  The check is `>`, not
+    # `>=`: max_solids=500 must NOT warn at 500, MUST warn at 501.
+    # ----------------------------------------------------------------
+
+    def test_exactly_at_max_solids_no_warning(self, base_handler):
+        """500 solids is exactly the default cap and must NOT warn,
+        because the comparison is `>` (strict greater-than)."""
+        obj = self._make_obj(500, 0)
+        assert base_handler.check_complexity([obj]) is None
+
+    def test_one_over_max_solids_warns(self, base_handler):
+        """501 solids is the first value that triggers the warning."""
+        obj = self._make_obj(501, 0)
+        result = base_handler.check_complexity([obj])
+        assert result is not None
+        assert "501 solids" in result
+
+    def test_exactly_at_max_faces_no_warning(self, base_handler):
+        """10000 faces is exactly the default cap and must NOT warn."""
+        obj = self._make_obj(0, 10000)
+        assert base_handler.check_complexity([obj]) is None
+
+    def test_one_over_max_faces_warns(self, base_handler):
+        """10001 faces is the first value that triggers the warning."""
+        obj = self._make_obj(0, 10001)
+        result = base_handler.check_complexity([obj])
+        assert result is not None
+        assert "10001 faces" in result
+
+    def test_zero_objects_no_warning(self, base_handler):
+        """Empty input list — no objects, no warning."""
+        assert base_handler.check_complexity([]) is None
+
+    def test_sum_just_crosses_threshold(self, base_handler):
+        """Boundary in the multi-object sum case: 250+251 = 501 solids
+        across two objects crosses the threshold; 250+250 = 500 does not."""
+        crosses = [self._make_obj(250, 0), self._make_obj(251, 0)]
+        assert base_handler.check_complexity(crosses) is not None
+        # The sum-exactly-at-threshold case must NOT warn.
+        boundary = [self._make_obj(250, 0), self._make_obj(250, 0)]
+        assert base_handler.check_complexity(boundary) is None
 
 
 # ---------------------------------------------------------------------------

@@ -174,3 +174,88 @@ class TestScanDiscovery:
             f.write("hello")
         result = instance_registry.scan_discovery()
         assert len(result) == 1
+
+
+# ---------------------------------------------------------------------------
+# Forward-compatibility / malformed-but-parseable JSON
+#
+# scan_discovery distinguishes three failure modes:
+#   - corrupt or unreadable JSON  → deleted (current is dead, nothing
+#     usable to preserve)
+#   - parseable JSON with a known dead socket_path  → deleted (stale)
+#   - parseable JSON with NO socket_path at all     → KEPT, warning logged
+#
+# That last case is the forward-compat path: a future bridge version
+# writing records with a renamed key would otherwise have every record
+# silently deleted by an older AICopilot scanning the same directory.
+# We preserve unknown-schema records so the newer process can still
+# rely on them.
+# ---------------------------------------------------------------------------
+
+class TestScanDiscoveryMalformedRecords:
+    def test_record_missing_socket_path_is_preserved(self, isolated_dir):
+        """A parseable JSON record missing `socket_path` is NOT deleted —
+        it's likely a future-version record with a renamed key.  The
+        previous behavior (silent delete) was pinned at commit 82f2764 and
+        is flipped here alongside the fix to instance_registry."""
+        instance_registry.ensure_dir()
+        bad_path = os.path.join(isolated_dir, "future0000001.json")
+        with open(bad_path, "w") as f:
+            json.dump({
+                "uuid": "future0000001",
+                "pid": 12345,
+                # 'socket_path' deliberately missing — pretend a future
+                # version of write_discovery renamed this field.
+                "gui": False,
+                "label": "future-version-instance",
+                "started_at": 1700000000.0,
+            }, f)
+        result = instance_registry.scan_discovery(prune_stale=True)
+        assert result == []                       # we can't connect to it
+        assert os.path.exists(bad_path)           # but we don't destroy it
+
+    def test_record_missing_socket_path_preserved_with_prune_disabled(self, isolated_dir):
+        """prune_stale=False is a no-op for missing-socket-path records —
+        they're preserved either way.  Symmetric to the prune=True case."""
+        instance_registry.ensure_dir()
+        bad_path = os.path.join(isolated_dir, "future0000002.json")
+        with open(bad_path, "w") as f:
+            json.dump({"uuid": "future0000002", "gui": True}, f)
+        result = instance_registry.scan_discovery(prune_stale=False)
+        assert result == []
+        assert os.path.exists(bad_path)
+
+    def test_missing_socket_path_logs_warning(self, isolated_dir, capsys):
+        """Forward-compat record produces a visible warning so the bug
+        isn't invisible to operators debugging discovery problems."""
+        instance_registry.ensure_dir()
+        bad_path = os.path.join(isolated_dir, "future0000003.json")
+        payload = {"uuid": "future0000003", "endpoint": "tcp://localhost:23457"}
+        with open(bad_path, "w") as f:
+            json.dump(payload, f)
+        instance_registry.scan_discovery(prune_stale=True)
+        captured = capsys.readouterr()
+        combined = captured.out + captured.err
+        # Warning identifies the file and the keys we *did* see so an
+        # operator can decide whether to handle the new schema.
+        assert "future0000003.json" in combined
+        assert "endpoint" in combined  # the unfamiliar key
+
+    def test_record_with_unlistened_socket_file_is_pruned(self, isolated_dir, tmp_path):
+        """is_socket_alive returns False for a file that exists but isn't
+        a listening Unix socket.  Existing test_prunes_stale_entries uses
+        a nonexistent path; this exercises the "file exists but connect
+        fails" branch — the real-world case after a crash that left a
+        stale socket file behind."""
+        instance_registry.ensure_dir()
+        # Create a regular file at a /tmp socket path
+        stale_sock = str(tmp_path / "stale.sock")
+        with open(stale_sock, "w") as f:
+            f.write("")
+        u = "ghost0000001"
+        instance_registry.write_discovery(u, stale_sock, gui=False, label="ghost")
+        path = instance_registry.discovery_path(u)
+        assert os.path.isfile(path)
+        result = instance_registry.scan_discovery(prune_stale=True)
+        assert result == []
+        assert not os.path.exists(path)
