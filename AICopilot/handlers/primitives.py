@@ -1,4 +1,33 @@
 # Primitive shape creation handlers for FreeCAD MCP
+#
+# ───────────────────────────────────────────────────────────────────────────
+# KNOWN GAP — primitives-validation
+#
+# Every handler in this module reads dimensions via `args.get('length', 10)`
+# style fallbacks and passes them straight through to Part::Box / ::Cylinder
+# / etc. without validating sign, magnitude, or key spelling.  Three concrete
+# symptoms (each pinned by a test in tests/unit/test_primitives.py —
+# TestCreateBoxDegenerateDimensions, TestCreateCylinderDegenerateDimensions,
+# and the missing-key class):
+#
+#   1. create_box(length=0, width=0, height=0) returns "Created box (0x0x0mm)"
+#      — a null shape sits in the document and crashes downstream OCCT Booleans.
+#   2. create_box(length=-10, ...) propagates a negative dimension; FreeCAD
+#      silently clamps or produces an invalid shape.
+#   3. Missing `length` falls back to 10mm.  An LLM that types `'lenght'`
+#      gets a 10mm box silently.  This is the most common real-world hit
+#      because LLMs misspell parameter names constantly.  Pinned by
+#      test_missing_dimension_uses_default in TestCreateBoxDegenerateDimensions.
+#
+# WHEN MODIFYING THIS MODULE: grep for `TODO(primitives-validation)` to find
+# the call sites, and decide whether your change should also close the gap.
+# A proper fix would (a) reject unknown args keys with a clear error listing
+# the accepted parameters, and (b) reject zero/negative dimensions with the
+# parameter name in the error.  The Test*DegenerateDimensions classes in
+# tests/unit/test_primitives.py will fail when you do this — that's the
+# signal that you should flip them to assert the new validation behavior,
+# not silently delete them.
+# ───────────────────────────────────────────────────────────────────────────
 
 import FreeCAD
 import FreeCADGui
@@ -12,6 +41,8 @@ class PrimitivesHandler(BaseHandler):
     def create_box(self, args: Dict[str, Any]) -> str:
         """Create a box with specified dimensions."""
         try:
+            # TODO(primitives-validation): no sign/key/zero check — see module
+            # header for the gap and the pinning test class to flip on fix.
             length = args.get('length', 10)
             width = args.get('width', 10)
             height = args.get('height', 10)
