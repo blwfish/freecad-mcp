@@ -179,20 +179,25 @@ class TestScanDiscovery:
 # ---------------------------------------------------------------------------
 # Forward-compatibility / malformed-but-parseable JSON
 #
-# The existing tests cover "valid JSON, valid socket" and "garbage JSON".
-# They don't cover the in-between case: well-formed JSON missing a field
-# the current code expects.  Today, scan_discovery silently deletes any
-# such file because the falsy `sock_path` goes down the prune branch.
-# This is a forward-compatibility footgun — a future version writing
-# discovery records with a renamed field (e.g. "socket" instead of
-# "socket_path") would have every record nuked by an older bridge.
+# scan_discovery distinguishes three failure modes:
+#   - corrupt or unreadable JSON  → deleted (current is dead, nothing
+#     usable to preserve)
+#   - parseable JSON with a known dead socket_path  → deleted (stale)
+#   - parseable JSON with NO socket_path at all     → KEPT, warning logged
+#
+# That last case is the forward-compat path: a future bridge version
+# writing records with a renamed key would otherwise have every record
+# silently deleted by an older AICopilot scanning the same directory.
+# We preserve unknown-schema records so the newer process can still
+# rely on them.
 # ---------------------------------------------------------------------------
 
 class TestScanDiscoveryMalformedRecords:
-    def test_record_missing_socket_path_is_pruned(self, isolated_dir):
-        """A discovery file with all our other fields but no `socket_path`
-        is silently pruned.  Pinning this catches the case where a future
-        schema rename causes mass deletion of valid records."""
+    def test_record_missing_socket_path_is_preserved(self, isolated_dir):
+        """A parseable JSON record missing `socket_path` is NOT deleted —
+        it's likely a future-version record with a renamed key.  The
+        previous behavior (silent delete) was pinned at commit 82f2764 and
+        is flipped here alongside the fix to instance_registry."""
         instance_registry.ensure_dir()
         bad_path = os.path.join(isolated_dir, "future0000001.json")
         with open(bad_path, "w") as f:
@@ -206,23 +211,35 @@ class TestScanDiscoveryMalformedRecords:
                 "started_at": 1700000000.0,
             }, f)
         result = instance_registry.scan_discovery(prune_stale=True)
-        assert result == []
-        # Today this is True; ideally a future fix would keep the file
-        # and surface a "schema mismatch" warning instead.  Pinning as-is
-        # so the silent-delete behavior is at least visible in tests.
-        assert not os.path.exists(bad_path)
+        assert result == []                       # we can't connect to it
+        assert os.path.exists(bad_path)           # but we don't destroy it
 
-    def test_record_missing_socket_path_kept_when_prune_disabled(self, isolated_dir):
-        """Symmetric coverage: prune_stale=False means even malformed
-        records survive.  Catches a refactor that drops the prune flag
-        check in the malformed branch."""
+    def test_record_missing_socket_path_preserved_with_prune_disabled(self, isolated_dir):
+        """prune_stale=False is a no-op for missing-socket-path records —
+        they're preserved either way.  Symmetric to the prune=True case."""
         instance_registry.ensure_dir()
         bad_path = os.path.join(isolated_dir, "future0000002.json")
         with open(bad_path, "w") as f:
             json.dump({"uuid": "future0000002", "gui": True}, f)
         result = instance_registry.scan_discovery(prune_stale=False)
         assert result == []
-        assert os.path.exists(bad_path)  # kept when prune disabled
+        assert os.path.exists(bad_path)
+
+    def test_missing_socket_path_logs_warning(self, isolated_dir, capsys):
+        """Forward-compat record produces a visible warning so the bug
+        isn't invisible to operators debugging discovery problems."""
+        instance_registry.ensure_dir()
+        bad_path = os.path.join(isolated_dir, "future0000003.json")
+        payload = {"uuid": "future0000003", "endpoint": "tcp://localhost:23457"}
+        with open(bad_path, "w") as f:
+            json.dump(payload, f)
+        instance_registry.scan_discovery(prune_stale=True)
+        captured = capsys.readouterr()
+        combined = captured.out + captured.err
+        # Warning identifies the file and the keys we *did* see so an
+        # operator can decide whether to handle the new schema.
+        assert "future0000003.json" in combined
+        assert "endpoint" in combined  # the unfamiliar key
 
     def test_record_with_unlistened_socket_file_is_pruned(self, isolated_dir, tmp_path):
         """is_socket_alive returns False for a file that exists but isn't

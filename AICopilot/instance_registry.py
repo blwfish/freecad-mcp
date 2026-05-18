@@ -102,9 +102,18 @@ def is_socket_alive(socket_path: str, timeout: float = 0.5) -> bool:
 def scan_discovery(prune_stale: bool = True) -> list[dict]:
     """Return list of live instance discovery records.
 
-    A record is considered live if its socket_path is connectable. If
+    A record is considered live if its socket_path is connectable.  If
     prune_stale is True, records whose sockets cannot be reached are deleted
     from the discovery directory.
+
+    Forward-compatibility note: a record that's parseable JSON but missing
+    `socket_path` (e.g. a newer bridge version using a renamed key) is NOT
+    deleted, even when prune_stale=True.  Mass-deleting unrecognized records
+    would silently kill discovery for any future schema migration — older
+    AICopilots scanning newer files would nuke them.  Instead we log a
+    warning and leave the record in place so the newer process can still
+    rely on it.  Only records that DO carry socket_path but whose socket
+    is dead are pruned, since those are unambiguously stale.
     """
     try:
         entries = os.listdir(DISCOVERY_DIR)
@@ -128,11 +137,41 @@ def scan_discovery(prune_stale: bool = True) -> list[dict]:
                     pass
             continue
         sock_path = data.get("socket_path")
-        if sock_path and is_socket_alive(sock_path):
+        if sock_path is None:
+            # Schema mismatch — likely a future-version record we don't
+            # know how to interpret.  Don't delete; log and skip.
+            _log_unknown_schema(path, data)
+            continue
+        if is_socket_alive(sock_path):
             live.append(data)
         elif prune_stale:
+            # Socket is definitively dead — safe to remove.
             try:
                 os.unlink(path)
             except OSError:
                 pass
     return live
+
+
+def _log_unknown_schema(path: str, data: dict) -> None:
+    """Emit a one-line warning about a discovery record we don't understand.
+
+    Always writes to stderr so the warning is observable in tests and in
+    headless contexts.  Additionally surfaces it to FreeCAD's GUI console
+    when running inside FreeCAD.  Never raises — this helper exists purely
+    so the bug isn't *invisible*; the caller has already decided to keep
+    the record either way.
+    """
+    keys = sorted(data.keys()) if isinstance(data, dict) else []
+    msg = (
+        f"instance_registry.scan_discovery: skipping record without "
+        f"socket_path: {os.path.basename(path)} (keys: {keys}). "
+        f"Possibly a newer schema; record preserved.\n"
+    )
+    import sys
+    sys.stderr.write(msg)
+    try:
+        import FreeCAD  # type: ignore
+        FreeCAD.Console.PrintWarning(msg)
+    except Exception:
+        pass
