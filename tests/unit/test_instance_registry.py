@@ -174,3 +174,71 @@ class TestScanDiscovery:
             f.write("hello")
         result = instance_registry.scan_discovery()
         assert len(result) == 1
+
+
+# ---------------------------------------------------------------------------
+# Forward-compatibility / malformed-but-parseable JSON
+#
+# The existing tests cover "valid JSON, valid socket" and "garbage JSON".
+# They don't cover the in-between case: well-formed JSON missing a field
+# the current code expects.  Today, scan_discovery silently deletes any
+# such file because the falsy `sock_path` goes down the prune branch.
+# This is a forward-compatibility footgun — a future version writing
+# discovery records with a renamed field (e.g. "socket" instead of
+# "socket_path") would have every record nuked by an older bridge.
+# ---------------------------------------------------------------------------
+
+class TestScanDiscoveryMalformedRecords:
+    def test_record_missing_socket_path_is_pruned(self, isolated_dir):
+        """A discovery file with all our other fields but no `socket_path`
+        is silently pruned.  Pinning this catches the case where a future
+        schema rename causes mass deletion of valid records."""
+        instance_registry.ensure_dir()
+        bad_path = os.path.join(isolated_dir, "future0000001.json")
+        with open(bad_path, "w") as f:
+            json.dump({
+                "uuid": "future0000001",
+                "pid": 12345,
+                # 'socket_path' deliberately missing — pretend a future
+                # version of write_discovery renamed this field.
+                "gui": False,
+                "label": "future-version-instance",
+                "started_at": 1700000000.0,
+            }, f)
+        result = instance_registry.scan_discovery(prune_stale=True)
+        assert result == []
+        # Today this is True; ideally a future fix would keep the file
+        # and surface a "schema mismatch" warning instead.  Pinning as-is
+        # so the silent-delete behavior is at least visible in tests.
+        assert not os.path.exists(bad_path)
+
+    def test_record_missing_socket_path_kept_when_prune_disabled(self, isolated_dir):
+        """Symmetric coverage: prune_stale=False means even malformed
+        records survive.  Catches a refactor that drops the prune flag
+        check in the malformed branch."""
+        instance_registry.ensure_dir()
+        bad_path = os.path.join(isolated_dir, "future0000002.json")
+        with open(bad_path, "w") as f:
+            json.dump({"uuid": "future0000002", "gui": True}, f)
+        result = instance_registry.scan_discovery(prune_stale=False)
+        assert result == []
+        assert os.path.exists(bad_path)  # kept when prune disabled
+
+    def test_record_with_unlistened_socket_file_is_pruned(self, isolated_dir, tmp_path):
+        """is_socket_alive returns False for a file that exists but isn't
+        a listening Unix socket.  Existing test_prunes_stale_entries uses
+        a nonexistent path; this exercises the "file exists but connect
+        fails" branch — the real-world case after a crash that left a
+        stale socket file behind."""
+        instance_registry.ensure_dir()
+        # Create a regular file at a /tmp socket path
+        stale_sock = str(tmp_path / "stale.sock")
+        with open(stale_sock, "w") as f:
+            f.write("")
+        u = "ghost0000001"
+        instance_registry.write_discovery(u, stale_sock, gui=False, label="ghost")
+        path = instance_registry.discovery_path(u)
+        assert os.path.isfile(path)
+        result = instance_registry.scan_discovery(prune_stale=True)
+        assert result == []
+        assert not os.path.exists(path)
