@@ -275,3 +275,133 @@ class TestRoundTrip:
         finally:
             client.close()
             peer.close()
+
+
+# ---------------------------------------------------------------------------
+# Threshold-boundary tests for MAX_MESSAGE_SIZE
+#
+# The check in receive_message is `message_len > MAX_MESSAGE_SIZE`, i.e. a
+# message of *exactly* MAX_MESSAGE_SIZE bytes must be accepted, and exactly
+# MAX_MESSAGE_SIZE+1 must be rejected.  The "49KB ok / 100KB rejected" pair
+# above doesn't pin the threshold.  These tests do.
+# ---------------------------------------------------------------------------
+
+MAX_MESSAGE_SIZE = 50 * 1024  # must match the value in mcp_bridge_framing
+
+
+class TestMaxMessageSizeThreshold:
+    def test_exactly_max_size_is_accepted(self):
+        """Length == MAX_MESSAGE_SIZE must pass (the check is `>`, not `>=`)."""
+        client, peer = make_socketpair()
+        try:
+            msg = "x" * MAX_MESSAGE_SIZE
+
+            def sender():
+                send_message(client, msg)
+
+            t = threading.Thread(target=sender)
+            t.start()
+            result = receive_message(peer, timeout=10.0)
+            t.join()
+            assert result == msg
+            assert len(result) == MAX_MESSAGE_SIZE
+        finally:
+            client.close()
+            peer.close()
+
+    def test_one_byte_over_max_is_rejected(self):
+        """Length == MAX_MESSAGE_SIZE + 1 must be rejected as oversized."""
+        client, peer = make_socketpair()
+        try:
+            # Don't bother sending a real payload; the length-prefix check
+            # rejects before reading the body.
+            peer.sendall(struct.pack(">I", MAX_MESSAGE_SIZE + 1))
+            result = receive_message(client, timeout=2.0)
+            assert result is None
+        finally:
+            client.close()
+            peer.close()
+
+    @pytest.mark.xfail(
+        reason=(
+            "Bug: receive_message can't distinguish a 0-length frame from a "
+            "closed connection.  In receive_message, after _recv_exact(sock, 0) "
+            "returns b'', `if not message_bytes: return None` fires and the "
+            "empty string is lost.  send_message happily encodes empty strings "
+            "(see test_send_empty_string), making this an asymmetric protocol "
+            "bug.  Test pinned at xfail so a future fix flips it to pass."
+        ),
+        strict=True,
+    )
+    def test_zero_length_is_accepted(self):
+        """Length == 0 should be a valid empty message — the sender-side
+        test already covers framing of empty strings, so the receive side
+        ought to round-trip them.  Currently it returns None instead."""
+        client, peer = make_socketpair()
+        try:
+            peer.sendall(struct.pack(">I", 0))
+            result = receive_message(client, timeout=2.0)
+            assert result == ""
+        finally:
+            client.close()
+            peer.close()
+
+
+# ---------------------------------------------------------------------------
+# Malformed-payload tests for receive_message
+#
+# These exercise the "external bytes don't decode as UTF-8" path, which
+# returns None rather than raising.  Without coverage, a buggy or malicious
+# peer can crash the bridge instead of seeing a clean None.
+# ---------------------------------------------------------------------------
+
+class TestReceiveMalformedPayload:
+    def test_invalid_utf8_returns_none(self):
+        """Bytes that aren't valid UTF-8 should cause receive_message to
+        return None, not raise UnicodeDecodeError up the call stack."""
+        client, peer = make_socketpair()
+        try:
+            # 0xC0 0x80 is the classic "overlong NUL" — illegal in UTF-8.
+            # Also try 0xFF, which is never valid as a leading byte.
+            bad = b"\xff\xfe\xfd"
+            peer.sendall(struct.pack(">I", len(bad)) + bad)
+            result = receive_message(client, timeout=2.0)
+            assert result is None
+        finally:
+            client.close()
+            peer.close()
+
+    def test_truncated_payload_returns_none(self):
+        """If the length-prefix claims more bytes than the peer actually
+        sends and the peer then closes, receive_message returns None."""
+        client, peer = make_socketpair()
+        try:
+            # Prefix says 100 bytes; we only send 10, then close.
+            peer.sendall(struct.pack(">I", 100) + b"abcdefghij")
+            peer.close()
+            result = receive_message(client, timeout=2.0)
+            assert result is None
+        finally:
+            client.close()
+
+    def test_multibyte_utf8_roundtrip(self):
+        """Length prefix is in *bytes*, not chars.  A message of multibyte
+        chars (each 3 bytes in UTF-8) must round-trip without splitting a
+        character.  Catches confusion between len(str) and len(bytes)."""
+        client, peer = make_socketpair()
+        try:
+            # 100 CJK characters * 3 bytes/char = 300 bytes
+            msg = "中" * 100
+            assert len(msg.encode("utf-8")) == 300
+
+            def sender():
+                send_message(client, msg)
+
+            t = threading.Thread(target=sender)
+            t.start()
+            result = receive_message(peer, timeout=5.0)
+            t.join()
+            assert result == msg
+        finally:
+            client.close()
+            peer.close()
