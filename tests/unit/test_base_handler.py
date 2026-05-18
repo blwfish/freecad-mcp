@@ -284,6 +284,51 @@ class TestCheckComplexity:
         assert base_handler.check_complexity([obj], max_solids=3) is not None
         assert base_handler.check_complexity([obj], max_solids=10) is None
 
+    # ----------------------------------------------------------------
+    # Threshold-boundary cases.  The existing tests use 600 solids and
+    # 15000 faces — well past the defaults, so they don't pin which
+    # side of the boundary the check lives on.  The check is `>`, not
+    # `>=`: max_solids=500 must NOT warn at 500, MUST warn at 501.
+    # ----------------------------------------------------------------
+
+    def test_exactly_at_max_solids_no_warning(self, base_handler):
+        """500 solids is exactly the default cap and must NOT warn,
+        because the comparison is `>` (strict greater-than)."""
+        obj = self._make_obj(500, 0)
+        assert base_handler.check_complexity([obj]) is None
+
+    def test_one_over_max_solids_warns(self, base_handler):
+        """501 solids is the first value that triggers the warning."""
+        obj = self._make_obj(501, 0)
+        result = base_handler.check_complexity([obj])
+        assert result is not None
+        assert "501 solids" in result
+
+    def test_exactly_at_max_faces_no_warning(self, base_handler):
+        """10000 faces is exactly the default cap and must NOT warn."""
+        obj = self._make_obj(0, 10000)
+        assert base_handler.check_complexity([obj]) is None
+
+    def test_one_over_max_faces_warns(self, base_handler):
+        """10001 faces is the first value that triggers the warning."""
+        obj = self._make_obj(0, 10001)
+        result = base_handler.check_complexity([obj])
+        assert result is not None
+        assert "10001 faces" in result
+
+    def test_zero_objects_no_warning(self, base_handler):
+        """Empty input list — no objects, no warning."""
+        assert base_handler.check_complexity([]) is None
+
+    def test_sum_just_crosses_threshold(self, base_handler):
+        """Boundary in the multi-object sum case: 250+251 = 501 solids
+        across two objects crosses the threshold; 250+250 = 500 does not."""
+        crosses = [self._make_obj(250, 0), self._make_obj(251, 0)]
+        assert base_handler.check_complexity(crosses) is not None
+        # The sum-exactly-at-threshold case must NOT warn.
+        boundary = [self._make_obj(250, 0), self._make_obj(250, 0)]
+        assert base_handler.check_complexity(boundary) is None
+
 
 # ---------------------------------------------------------------------------
 # find_body / find_body_for_object
