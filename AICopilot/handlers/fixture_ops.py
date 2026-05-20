@@ -24,6 +24,7 @@
 import json
 import math
 import os
+import re
 import struct
 import time
 from typing import Any, Dict, Optional
@@ -82,7 +83,6 @@ def _safe_name(name: str) -> bool:
     if '..' in name or '/' in name or '\\' in name:
         return False
     # Allow alphanumerics, underscores, hyphens, and dots (not leading).
-    import re
     return bool(re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$', name))
 
 
@@ -118,7 +118,8 @@ def _write_binary_stl(shape, path: str) -> None:
     """
     import Mesh
     mesh = Mesh.Mesh()
-    mesh.addMesh(shape.tessellate(0.1)[0], shape.tessellate(0.1)[1])
+    verts, tris = shape.tessellate(0.1)
+    mesh.addMesh(verts, tris)
     mesh.write(path)
 
 

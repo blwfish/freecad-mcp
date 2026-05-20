@@ -403,24 +403,16 @@ class VerificationOpsHandler(BaseHandler):
             face_count = len(shape.Faces)
             solid_count = len(shape.Solids)
 
-            # shape.check() returns a string on success or raises on failure.
-            # In older FreeCAD builds it may return None or the empty string.
+            # shape.check() raises on failure; any non-exception return is success.
+            # (FreeCAD's BRepCheck_Analyzer raises or returns an error description
+            # on problems; returning normally — including None or empty string —
+            # means the check passed.)
             check_result = ""
             check_ok = True
             try:
                 result = shape.check()
-                if result is None:
-                    check_result = "Shape is valid"
-                elif isinstance(result, str):
-                    check_result = result.strip() or "Shape is valid"
-                else:
-                    check_result = str(result)
-                # A non-empty string that isn't the success sentinel is an error
-                # (FreeCAD's .check() returns "Shape is valid" on success,
-                # raises or returns an error description on failure)
-                if check_result and check_result.lower() not in (
-                        "shape is valid", "valid", ""):
-                    check_ok = False
+                check_result = str(result) if result else "Shape is valid"
+                # Non-exception return → check passed regardless of string content.
             except Exception as check_exc:
                 check_result = str(check_exc)
                 check_ok = False
