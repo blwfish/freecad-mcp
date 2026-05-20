@@ -1,62 +1,35 @@
 # Fixture: shingle_dormer_simple
 
-**Saved:** 2026-05-20 (reference fixture, hand-authored)
-**FreeCAD version:** 0.22.0
-**Document:** depot_roof
-**Object:** ShingleSheet_Dormer
+**Saved:** 2026-05-20
+**FreeCAD version:** 1.2.0
+**Document:** ShingleDormerSimple
+**Object:** ShingledRoof_RoofSurface
 
 ## Description
 
-Simple single-plane dormer roof shingle sheet. 60 mm wide × 40 mm run
-(the dormer face), shingle length 5 mm, exposure 3.5 mm, 3 shingles across
-plus half-offset stagger. No ridge caps or valley fills — base surface
-coverage only.
-
-This fixture captures the generator's output before the 2026-03-12 v5.2.0
-rotation matrix bug (det = -1). That bug caused the shingle Z-axis to flip,
-producing shingles that appeared to extrude into the roof surface rather than
-out of it. The topology itself (face/edge/vertex counts) was unchanged by the
-rotation bug, but the bbox Z extent collapsed from [0.0, 0.3] to [-0.3, 0.0],
-which compare_to_fixture would have caught at the bbox.z_min coordinate.
+60×40 mm flat surface (Z-normal). Generator: shingle_generator v5.3.4.
+Params: shingleWidth=7.0, shingleHeight=5.0, exposure=3.5, randomOffset=0.5.
+131 shingles generated and clipped to face bounds.
 
 ## Topology summary
 
-- Faces: 120
-- Edges: 240
-- Vertices: 122
-- Volume: 181.4400 mm³
-- Is solid: False
-- Is closed: False
+- Faces: 901
+- Edges: 1911
+- Vertices: 1274
+- Volume: 1533.682005 mm³
+- Is solid: false
+- Is closed: true
 - Bounding box X: [0.0000, 60.0000] mm
 - Bounding box Y: [0.0000, 40.0000] mm
-- Bounding box Z: [0.0000, 0.3000] mm
-
-## Generator parameters (from `params` spreadsheet)
-
-| Parameter    | Value  | Notes                         |
-|---|---|---|
-| shingleLength | 5.0 mm | Slate, 1900-era scale         |
-| shingleWidth  | 7.0 mm |                               |
-| exposure      | 3.5 mm | 70 % exposure                 |
-| randomOffset  | 0.5 mm | Half-shingle random stagger   |
+- Bounding box Z: [0.0000, 0.7600] mm
 
 ## Files
 
 - `topology.json` — machine-readable topology for comparison
-- `shape.stl` — binary STL for visual reference (empty placeholder here;
-  re-run `save_fixture` against a live FreeCAD session to populate)
-- `fixture.md` — this file
+- `shape.stl` — binary STL (real generator output)
 
 ## Usage
 
 ```python
-compare_to_fixture(shape="ShingleSheet_Dormer", fixture_name="shingle_dormer_simple")
+compare_to_fixture(shape="ShingledRoof_RoofSurface", fixture_name="shingle_dormer_simple")
 ```
-
-## Why this fixture matters
-
-The shingle generator's rotation matrix bug (v5.2.0, 2026-03-12) took 6
-sessions to root-cause because there was no automated comparison. With this
-fixture, the very next `compare_to_fixture` call after the bug was introduced
-would have returned `ok=False` with `bbox.z_min` flagged, pointing directly at
-the coordinate-system issue.

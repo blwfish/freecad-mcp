@@ -1,14 +1,23 @@
 {
   "schema_version": 1,
-  "face_count": 60,
-  "edge_count": 120,
-  "vertex_count": 62,
-  "volume": 54.0,
+  "face_count": 259,
+  "edge_count": 543,
+  "vertex_count": 362,
+  "volume": 344.544975138904,
   "bbox": {
-    "x": [0.0, 30.0],
-    "y": [0.0, 18.0],
-    "z": [0.0, 0.3]
+    "x": [
+      -2.7885058215652195e-15,
+      30.0
+    ],
+    "y": [
+      -1.7182773002029876e-15,
+      18.000000000000004
+    ],
+    "z": [
+      0.0,
+      0.7600000000000003
+    ]
   },
   "is_solid": false,
-  "is_closed": false
+  "is_closed": true
 }
