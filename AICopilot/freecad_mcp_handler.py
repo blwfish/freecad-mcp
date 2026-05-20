@@ -169,6 +169,7 @@ try:
         IntrospectionOpsHandler,
         SketchBuilderOpsHandler,
         VerificationOpsHandler,
+        FixtureOpsHandler,
     )
     FreeCAD.Console.PrintMessage("Modular handlers loaded successfully\n")
 except ImportError as e:
@@ -297,6 +298,7 @@ class FreeCADSocketServer:
         self.introspection_ops = IntrospectionOpsHandler(self, _log_operation, _capture_state)
         self.sketch_builder_ops = SketchBuilderOpsHandler(self, _log_operation, _capture_state)
         self.verification_ops = VerificationOpsHandler(self, _log_operation, _capture_state)
+        self.fixture_ops = FixtureOpsHandler(self, _log_operation, _capture_state)
         # GUI-sensitive handlers get the task queues for thread safety
         self.view_ops = ViewOpsHandler(
             self, self._gui_task_queue, self._gui_response_queue, _log_operation, _capture_state
@@ -996,6 +998,7 @@ class FreeCADSocketServer:
             "macro_operations": self.macro_ops,
             "api_introspection": self.introspection_ops,
             "geometric_verification": self.verification_ops,
+            "fixture_operations": self.fixture_ops,
         }
 
         # run_inspector is a direct-dispatch tool (no 'operation' sub-field)
@@ -1472,6 +1475,7 @@ class FreeCADSocketServer:
                 'handlers.introspection_ops',
                 'handlers.sketch_builder_ops',
                 'handlers.verification_ops',
+                'handlers.fixture_ops',
             ]
             for mod_name in handler_modules:
                 mod = sys.modules.get(mod_name)
@@ -1506,6 +1510,7 @@ class FreeCADSocketServer:
                 IntrospectionOpsHandler,
                 SketchBuilderOpsHandler,
                 VerificationOpsHandler,
+                FixtureOpsHandler,
             )
 
             # Re-create handler instances
@@ -1528,6 +1533,7 @@ class FreeCADSocketServer:
             self.introspection_ops = IntrospectionOpsHandler(self, _log_operation, _capture_state)
             self.sketch_builder_ops = SketchBuilderOpsHandler(self, _log_operation, _capture_state)
             self.verification_ops = VerificationOpsHandler(self, _log_operation, _capture_state)
+            self.fixture_ops = FixtureOpsHandler(self, _log_operation, _capture_state)
             self.view_ops = ViewOpsHandler(
                 self, self._gui_task_queue, self._gui_response_queue,
                 _log_operation, _capture_state

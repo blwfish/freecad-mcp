@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "face_count": 10,
+  "edge_count": 20,
+  "vertex_count": 12,
+  "volume": 500.0,
+  "bbox": {
+    "x": [
+      0.0,
+      10.0
+    ],
+    "y": [
+      0.0,
+      10.0
+    ],
+    "z": [
+      0.0,
+      10.0
+    ]
+  },
+  "is_solid": true,
+  "is_closed": true
+}

@@ -1399,6 +1399,80 @@ async def main():
                     ),
                 ),
                 types.Tool(
+                    name="fixture_operations",
+                    description=(
+                        "Snapshot-style geometric regression for generator output. "
+                        "Two operations: "
+                        "save_fixture — capture topology (face/edge/vertex counts, volume, bbox, "
+                        "is_solid, is_closed), STL export, optional screenshot, and fixture.md "
+                        "for an object under fixtures/<fixture_name>/ in the repo. Idempotent. "
+                        "compare_to_fixture — compare current shape topology against saved fixture, "
+                        "returns structured diff with ok boolean. "
+                        "Tolerances: face/edge/vertex counts exact; volume within 0.1%; "
+                        "bbox within 0.001 mm — all overridable. "
+                        "Canonical workflow: build generator output, save_fixture once, "
+                        "compare_to_fixture on every subsequent run. "
+                        "Use after the shingle generator, brick generator, or any parametric "
+                        "shape whose topology should be stable across sessions."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "description": "Operation to perform",
+                                "enum": ["save_fixture", "compare_to_fixture"],
+                            },
+                            "shape": {
+                                "type": "string",
+                                "description": (
+                                    "Name or label of the FreeCAD object to snapshot or compare."
+                                ),
+                            },
+                            "fixture_name": {
+                                "type": "string",
+                                "description": (
+                                    "Directory name under fixtures/ for this fixture. "
+                                    "Alphanumeric, underscores, hyphens, and dots only — no path separators. "
+                                    "Example: 'shingle_dormer_simple' or 'shingle_complex_roof'."
+                                ),
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": (
+                                    "Human-readable description written into fixture.md. "
+                                    "Explain when this fixture was captured and what it asserts. "
+                                    "Only used by save_fixture."
+                                ),
+                            },
+                            "tolerances": {
+                                "type": "object",
+                                "description": (
+                                    "Override default comparison tolerances for compare_to_fixture. "
+                                    "Keys: volume_rel_tol (float, default 0.001 = 0.1%), "
+                                    "bbox_abs_tol (float in mm, default 0.001)."
+                                ),
+                                "properties": {
+                                    "volume_rel_tol": {
+                                        "type": "number",
+                                        "description": "Volume relative tolerance, e.g. 0.001 for 0.1%",
+                                    },
+                                    "bbox_abs_tol": {
+                                        "type": "number",
+                                        "description": "Bounding box absolute tolerance in mm, e.g. 0.001",
+                                    },
+                                },
+                            },
+                        },
+                        "required": ["operation", "shape", "fixture_name"],
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=False,
+                        idempotentHint=True,
+                    ),
+                ),
+                types.Tool(
                     name="run_inspector",
                     description="Run FreeCAD Inspector DRC checks on the active document. "
                                 "Checks model validity (open shells, zero-volume solids, invalid geometry, "
