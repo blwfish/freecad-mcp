@@ -948,8 +948,8 @@ async def main():
                                 "enum": [
                                     # View operations
                                     "screenshot", "set_view", "fit_all", "zoom_in", "zoom_out",
-                                    # Document operations  
-                                    "create_document", "save_document", "list_objects",
+                                    # Document operations
+                                    "create_document", "save_document", "list_objects", "get_object_properties",
                                     # Selection operations
                                     "select_object", "clear_selection", "get_selection",
                                     # Object visibility
@@ -1622,6 +1622,29 @@ async def main():
                     ),
                 ),
                 types.Tool(
+                    name="get_last_traceback",
+                    description="Retrieve the full Python traceback for a previous error. Error responses include an error_id field; pass it here to get the full stack trace. Omit error_id to get the most recent traceback.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "error_id": {
+                                "type": "string",
+                                "description": "The error_id from a previous error response (e.g. 'err-0003'). Omit to get the most recent."
+                            },
+                            "count": {
+                                "type": "integer",
+                                "description": "Number of recent tracebacks to return when no error_id is specified (default 1, max 20)",
+                                "default": 1
+                            }
+                        }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=True,
+                        destructiveHint=False,
+                        idempotentHint=True,
+                    ),
+                ),
+                types.Tool(
                     name="execute_python",
                     description="Execute arbitrary Python code in FreeCAD context for power users and advanced operations",
                     inputSchema={
@@ -1951,7 +1974,7 @@ async def main():
             }
             return [types.TextContent(
                 type="text",
-                text=json.dumps(status, indent=2)
+                text=json.dumps(status)
             )]
             
         elif name == "test_echo":
@@ -2011,7 +2034,7 @@ async def main():
                     "removed": removed,
                     "count": len(removed),
                     "note": "Removed corrupt FreeCAD recovery files. Restart FreeCAD for a clean session.",
-                }, indent=2))]
+                }))]
 
             elif action == "validate_fcstd":
                 path = (arguments or {}).get("path", "")
@@ -2030,7 +2053,7 @@ async def main():
                         result = {"valid": False, "size_bytes": 0, "error": str(exc)}
                 else:
                     result = _crash_mod.validate_fcstd(path)
-                return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+                return [types.TextContent(type="text", text=json.dumps(result))]
 
             else:  # action == "status"
                 out: dict = {
@@ -2042,7 +2065,7 @@ async def main():
                     rec = _crash_mod.find_recovery_files()
                     out["recovery_files"] = rec
                     out["crash_loop_risk"] = any(not f["valid"] for f in rec)
-                return [types.TextContent(type="text", text=json.dumps(out, indent=2))]
+                return [types.TextContent(type="text", text=json.dumps(out))]
 
         # Handle continue_selection tool
         elif name == "continue_selection":
@@ -2222,7 +2245,7 @@ async def main():
                             entry[k] = info[k]
             return [types.TextContent(
                 type="text",
-                text=json.dumps({"instances": instances}, indent=2)
+                text=json.dumps({"instances": instances})
             )]
 
         elif name == "select_freecad_instance":

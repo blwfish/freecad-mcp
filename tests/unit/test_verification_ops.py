@@ -310,10 +310,10 @@ class TestVerifyNoSelfIntersection(unittest.TestCase):
     # --- known-good fixture ---
 
     def test_valid_shape_passes(self):
-        """A shape where isValid()=True and check() returns 'Shape is valid'."""
+        """A shape where isValid()=True and check() returns None (success in FreeCAD)."""
         obj = make_part_object("Box1")
         obj.Shape.isValid = MagicMock(return_value=True)
-        obj.Shape.check = MagicMock(return_value="Shape is valid")
+        obj.Shape.check = MagicMock(return_value=None)
         doc = make_mock_doc([obj])
         mock_FreeCAD.ActiveDocument = doc
 
@@ -336,10 +336,10 @@ class TestVerifyNoSelfIntersection(unittest.TestCase):
     # --- known-bad fixture ---
 
     def test_invalid_shape_fails(self):
-        """isValid()=False must produce ok=False."""
+        """isValid()=False must produce ok=False even if check() passes."""
         obj = make_part_object("Bad")
         obj.Shape.isValid = MagicMock(return_value=False)
-        obj.Shape.check = MagicMock(return_value="Shape is valid")
+        obj.Shape.check = MagicMock(return_value=None)
         doc = make_mock_doc([obj])
         mock_FreeCAD.ActiveDocument = doc
 
@@ -389,7 +389,7 @@ class TestVerifyNoSelfIntersection(unittest.TestCase):
         """details must include face_count and solid_count."""
         obj = make_box_object("Box1")
         obj.Shape.isValid = MagicMock(return_value=True)
-        obj.Shape.check = MagicMock(return_value="Shape is valid")
+        obj.Shape.check = MagicMock(return_value=None)
         doc = make_mock_doc([obj])
         mock_FreeCAD.ActiveDocument = doc
 
@@ -571,7 +571,7 @@ class TestStructuredOutput(unittest.TestCase):
         self.h = make_handler(VerificationOpsHandler)
         obj = make_box_object("Box1")
         obj.Shape.isValid = MagicMock(return_value=True)
-        obj.Shape.check = MagicMock(return_value="Shape is valid")
+        obj.Shape.check = MagicMock(return_value=None)
         _attach_face_normals(obj, [(0, 0, 1)])
         doc = make_mock_doc([obj])
         mock_FreeCAD.ActiveDocument = doc

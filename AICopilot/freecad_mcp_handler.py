@@ -30,6 +30,7 @@ import platform
 import struct
 import sys
 import traceback as tb_module
+import collections
 from typing import Dict, Any, Optional
 
 # Conditional GUI imports (not available in console mode)
@@ -278,6 +279,11 @@ class FreeCADSocketServer:
         # Variables created in one call survive to the next.
         self._python_namespace: Dict[str, Any] = {}
 
+        # Traceback ring buffer: stores last 20 tracebacks by error_id.
+        # Error responses include only the error_id; callers use get_last_traceback to fetch.
+        self._last_tracebacks: collections.deque = collections.deque(maxlen=20)
+        self._traceback_counter: int = 0
+
         # Initialize handlers
         self.primitives = PrimitivesHandler(self, _log_operation, _capture_state)
         self.boolean_ops = BooleanOpsHandler(self, _log_operation, _capture_state)
@@ -491,7 +497,7 @@ class FreeCADSocketServer:
                         job.update({
                             "status": "error",
                             "error": str(e),
-                            "traceback": tb,
+                            "error_id": self._store_traceback(tb),
                             "elapsed": time.time() - job["started"],
                             "finished": time.time(),
                         })
@@ -609,7 +615,7 @@ class FreeCADSocketServer:
                 self._async_jobs[job_id].update({
                     "status": "error",
                     "error": str(e),
-                    "traceback": tb_module.format_exc(),
+                    "error_id": self._store_traceback(tb_module.format_exc()),
                     "elapsed": time.time() - self._async_jobs[job_id]["started"],
                     "finished": time.time(),
                 })
@@ -1027,6 +1033,8 @@ class FreeCADSocketServer:
             return self._cancel_job(args)
         if tool_name == "get_debug_logs":
             return self._get_debug_logs(args)
+        if tool_name == "get_last_traceback":
+            return self._get_last_traceback(args)
         if tool_name == "restart_freecad":
             return self._restart_freecad(args)
         if tool_name == "reload_modules":
@@ -1080,6 +1088,17 @@ class FreeCADSocketServer:
             }
         return self._run_on_gui_thread(task, timeout=2.0)
 
+    def _store_traceback(self, tb: str) -> str:
+        """Store a traceback in the ring buffer; return the error_id for retrieval."""
+        self._traceback_counter += 1
+        error_id = f"err-{self._traceback_counter:04d}"
+        self._last_tracebacks.append({
+            "error_id": error_id,
+            "timestamp": time.time(),
+            "traceback": tb,
+        })
+        return error_id
+
     def _call_on_gui_thread(self, method, args: Dict[str, Any], label: str, timeout: float = 120.0) -> str:
         """Wrap a handler method call for GUI-safe execution."""
         def task():
@@ -1087,7 +1106,7 @@ class FreeCADSocketServer:
                 result = method(args)
                 return {"success": True, "result": result}
             except Exception as e:
-                return {"error": f"{label} error: {e}", "traceback": tb_module.format_exc()}
+                return {"error": f"{label} error: {e}", "error_id": self._store_traceback(tb_module.format_exc())}
         return self._run_on_gui_thread(task, timeout=timeout)
 
     def _call_on_gui_thread_async(self, method, args: Dict[str, Any], label: str) -> str:
@@ -1115,7 +1134,7 @@ class FreeCADSocketServer:
                 result = method(args)
                 return {"success": True, "result": result}
             except Exception as e:
-                return {"error": f"{label} error: {e}", "traceback": tb_module.format_exc()}
+                return {"error": f"{label} error: {e}", "error_id": self._store_traceback(tb_module.format_exc())}
         self._run_on_gui_thread_async(job_id, task)
         return json.dumps({"job_id": job_id, "status": "submitted"})
 
@@ -1289,11 +1308,12 @@ class FreeCADSocketServer:
 
         # --- Operations safe to call from any thread ---
         safe_ops = {
-            "create_document":  self.document_ops.create_document,
-            "save_document":    self.document_ops.save_document,
-            "list_objects":     self.document_ops.list_objects,
+            "create_document":      self.document_ops.create_document,
+            "save_document":        self.document_ops.save_document,
+            "list_objects":         self.document_ops.list_objects,
+            "get_object_properties": self.document_ops.get_object_properties,
             # checkpoint only reads names — thread-safe
-            "checkpoint":       self.document_ops.checkpoint,
+            "checkpoint":           self.document_ops.checkpoint,
         }
 
         if operation in gui_ops:
@@ -1374,9 +1394,9 @@ class FreeCADSocketServer:
                     if "result" in namespace:
                         result_value = namespace["result"]
             except SyntaxError as e:
-                return {"error": f"SyntaxError: {e}", "traceback": tb_module.format_exc()}
+                return {"error": f"SyntaxError: {e}", "error_id": self._store_traceback(tb_module.format_exc())}
         except Exception as e:
-            return {"error": f"Python execution error: {e}", "traceback": tb_module.format_exc()}
+            return {"error": f"Python execution error: {e}", "error_id": self._store_traceback(tb_module.format_exc())}
         finally:
             sys.stdout = old_stdout
 
@@ -1679,3 +1699,22 @@ class FreeCADSocketServer:
 
         except Exception as e:
             return json.dumps({"error": f"Failed to retrieve debug logs: {e}"})
+
+    def _get_last_traceback(self, args: Dict[str, Any]) -> str:
+        """Retrieve full traceback(s) from the in-memory ring buffer.
+
+        Pass error_id to fetch a specific traceback, or omit to get the most recent ones.
+        """
+        error_id = args.get("error_id")
+        if error_id:
+            for entry in self._last_tracebacks:
+                if entry["error_id"] == error_id:
+                    return json.dumps(entry)
+            return json.dumps({"error": f"No traceback found for error_id={error_id!r}. "
+                                        f"Buffer holds last {len(self._last_tracebacks)} errors."})
+        count = min(args.get("count", 1), 20)
+        entries = list(self._last_tracebacks)[-count:]
+        return json.dumps({
+            "tracebacks": entries,
+            "total_stored": len(self._last_tracebacks),
+        })

@@ -130,11 +130,9 @@ class DocumentOpsHandler(BaseHandler):
                         obj_info["label"] = obj.Name
                         FreeCAD.Console.PrintWarning(f"[MCP] Label read failed for {obj.Name}: {e}\n")
                     try:
-                        all_props = set(obj.PropertiesList)
-                        returned = {"Label"}
-                        obj_info["dropped_properties"] = sorted(all_props - returned)
+                        obj_info["property_count"] = len(obj.PropertiesList)
                     except Exception:
-                        obj_info["dropped_properties"] = []
+                        pass
                     objects.append(obj_info)
                     count += 1
                 except Exception as e:
@@ -153,6 +151,39 @@ class DocumentOpsHandler(BaseHandler):
 
         except Exception as e:
             return f"Error listing objects: {e}"
+
+    def get_object_properties(self, args: Dict[str, Any]) -> str:
+        """Return all FreeCAD properties for a named object.
+
+        Use this when you need to inspect what properties an object exposes.
+        list_objects returns only name/type/label; call this for the full picture.
+        """
+        try:
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return json.dumps({"error": "No active document"})
+            name = args.get("object_name", "")
+            obj = doc.getObject(name)
+            if obj is None:
+                return json.dumps({"error": f"Object not found: {name!r}"})
+            props = {}
+            for prop_name in sorted(obj.PropertiesList):
+                try:
+                    val = getattr(obj, prop_name)
+                    json.dumps(val)  # probe serializability
+                    props[prop_name] = val
+                except (TypeError, ValueError):
+                    props[prop_name] = repr(val)
+                except Exception as e:
+                    props[prop_name] = f"<error: {e}>"
+            return json.dumps({
+                "object_name": name,
+                "type": obj.TypeId,
+                "property_count": len(props),
+                "properties": props,
+            })
+        except Exception as e:
+            return json.dumps({"error": f"Error getting properties: {e}"})
 
     def select_object(self, args: Dict[str, Any]) -> str:
         """Select an object."""

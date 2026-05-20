@@ -403,16 +403,17 @@ class VerificationOpsHandler(BaseHandler):
             face_count = len(shape.Faces)
             solid_count = len(shape.Solids)
 
-            # shape.check() raises on failure; any non-exception return is success.
-            # (FreeCAD's BRepCheck_Analyzer raises or returns an error description
-            # on problems; returning normally — including None or empty string —
-            # means the check passed.)
+            # shape.check() signals problems two ways: raising an exception, or
+            # returning a non-empty error string. None or "" means the check passed.
             check_result = ""
             check_ok = True
             try:
                 result = shape.check()
-                check_result = str(result) if result else "Shape is valid"
-                # Non-exception return → check passed regardless of string content.
+                if result:  # non-empty string → errors were reported
+                    check_result = str(result)
+                    check_ok = False
+                else:
+                    check_result = "Shape is valid"
             except Exception as check_exc:
                 check_result = str(check_exc)
                 check_ok = False

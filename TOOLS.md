@@ -81,6 +81,7 @@ MCP tools for controlling FreeCAD, grouped by function.
 | `macro_operations` | List, read, and run macros from the user's FreeCAD macro directory. Lets the agent reuse existing automation scripts. |
 | `api_introspection` | Live signature and docstring lookup against FreeCAD's running module tree, with fuzzy search across core and workbenches. Use before `execute_python` to avoid wrong-signature errors. |
 | `get_debug_logs` | Retrieve structured operation logs from `/tmp/freecad_mcp_debug/`. Each log entry records before/after model state. |
+| `get_last_traceback` | Retrieve the full Python traceback for a previous error. Error responses include an `error_id`; pass it here to get the complete stack trace without bloating every response. |
 
 ---
 
