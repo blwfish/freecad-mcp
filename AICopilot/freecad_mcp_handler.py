@@ -30,6 +30,7 @@ import platform
 import struct
 import sys
 import traceback as tb_module
+import collections
 from typing import Dict, Any, Optional
 
 # Conditional GUI imports (not available in console mode)
@@ -168,6 +169,8 @@ try:
         MacroOpsHandler,
         IntrospectionOpsHandler,
         SketchBuilderOpsHandler,
+        VerificationOpsHandler,
+        FixtureOpsHandler,
     )
     FreeCAD.Console.PrintMessage("Modular handlers loaded successfully\n")
 except ImportError as e:
@@ -276,6 +279,11 @@ class FreeCADSocketServer:
         # Variables created in one call survive to the next.
         self._python_namespace: Dict[str, Any] = {}
 
+        # Traceback ring buffer: stores last 20 tracebacks by error_id.
+        # Error responses include only the error_id; callers use get_last_traceback to fetch.
+        self._last_tracebacks: collections.deque = collections.deque(maxlen=20)
+        self._traceback_counter: int = 0
+
         # Initialize handlers
         self.primitives = PrimitivesHandler(self, _log_operation, _capture_state)
         self.boolean_ops = BooleanOpsHandler(self, _log_operation, _capture_state)
@@ -295,6 +303,8 @@ class FreeCADSocketServer:
         self.macro_ops = MacroOpsHandler(self, _log_operation, _capture_state)
         self.introspection_ops = IntrospectionOpsHandler(self, _log_operation, _capture_state)
         self.sketch_builder_ops = SketchBuilderOpsHandler(self, _log_operation, _capture_state)
+        self.verification_ops = VerificationOpsHandler(self, _log_operation, _capture_state)
+        self.fixture_ops = FixtureOpsHandler(self, _log_operation, _capture_state)
         # GUI-sensitive handlers get the task queues for thread safety
         self.view_ops = ViewOpsHandler(
             self, self._gui_task_queue, self._gui_response_queue, _log_operation, _capture_state
@@ -487,7 +497,7 @@ class FreeCADSocketServer:
                         job.update({
                             "status": "error",
                             "error": str(e),
-                            "traceback": tb,
+                            "error_id": self._store_traceback(tb),
                             "elapsed": time.time() - job["started"],
                             "finished": time.time(),
                         })
@@ -605,7 +615,7 @@ class FreeCADSocketServer:
                 self._async_jobs[job_id].update({
                     "status": "error",
                     "error": str(e),
-                    "traceback": tb_module.format_exc(),
+                    "error_id": self._store_traceback(tb_module.format_exc()),
                     "elapsed": time.time() - self._async_jobs[job_id]["started"],
                     "finished": time.time(),
                 })
@@ -993,6 +1003,8 @@ class FreeCADSocketServer:
             "spatial_query": self.spatial_ops,
             "macro_operations": self.macro_ops,
             "api_introspection": self.introspection_ops,
+            "geometric_verification": self.verification_ops,
+            "fixture_operations": self.fixture_ops,
         }
 
         # run_inspector is a direct-dispatch tool (no 'operation' sub-field)
@@ -1021,6 +1033,8 @@ class FreeCADSocketServer:
             return self._cancel_job(args)
         if tool_name == "get_debug_logs":
             return self._get_debug_logs(args)
+        if tool_name == "get_last_traceback":
+            return self._get_last_traceback(args)
         if tool_name == "restart_freecad":
             return self._restart_freecad(args)
         if tool_name == "reload_modules":
@@ -1074,6 +1088,17 @@ class FreeCADSocketServer:
             }
         return self._run_on_gui_thread(task, timeout=2.0)
 
+    def _store_traceback(self, tb: str) -> str:
+        """Store a traceback in the ring buffer; return the error_id for retrieval."""
+        self._traceback_counter += 1
+        error_id = f"err-{self._traceback_counter:04d}"
+        self._last_tracebacks.append({
+            "error_id": error_id,
+            "timestamp": time.time(),
+            "traceback": tb,
+        })
+        return error_id
+
     def _call_on_gui_thread(self, method, args: Dict[str, Any], label: str, timeout: float = 120.0) -> str:
         """Wrap a handler method call for GUI-safe execution."""
         def task():
@@ -1081,7 +1106,7 @@ class FreeCADSocketServer:
                 result = method(args)
                 return {"success": True, "result": result}
             except Exception as e:
-                return {"error": f"{label} error: {e}", "traceback": tb_module.format_exc()}
+                return {"error": f"{label} error: {e}", "error_id": self._store_traceback(tb_module.format_exc())}
         return self._run_on_gui_thread(task, timeout=timeout)
 
     def _call_on_gui_thread_async(self, method, args: Dict[str, Any], label: str) -> str:
@@ -1109,7 +1134,7 @@ class FreeCADSocketServer:
                 result = method(args)
                 return {"success": True, "result": result}
             except Exception as e:
-                return {"error": f"{label} error: {e}", "traceback": tb_module.format_exc()}
+                return {"error": f"{label} error: {e}", "error_id": self._store_traceback(tb_module.format_exc())}
         self._run_on_gui_thread_async(job_id, task)
         return json.dumps({"job_id": job_id, "status": "submitted"})
 
@@ -1283,11 +1308,12 @@ class FreeCADSocketServer:
 
         # --- Operations safe to call from any thread ---
         safe_ops = {
-            "create_document":  self.document_ops.create_document,
-            "save_document":    self.document_ops.save_document,
-            "list_objects":     self.document_ops.list_objects,
+            "create_document":      self.document_ops.create_document,
+            "save_document":        self.document_ops.save_document,
+            "list_objects":         self.document_ops.list_objects,
+            "get_object_properties": self.document_ops.get_object_properties,
             # checkpoint only reads names — thread-safe
-            "checkpoint":       self.document_ops.checkpoint,
+            "checkpoint":           self.document_ops.checkpoint,
         }
 
         if operation in gui_ops:
@@ -1368,9 +1394,9 @@ class FreeCADSocketServer:
                     if "result" in namespace:
                         result_value = namespace["result"]
             except SyntaxError as e:
-                return {"error": f"SyntaxError: {e}", "traceback": tb_module.format_exc()}
+                return {"error": f"SyntaxError: {e}", "error_id": self._store_traceback(tb_module.format_exc())}
         except Exception as e:
-            return {"error": f"Python execution error: {e}", "traceback": tb_module.format_exc()}
+            return {"error": f"Python execution error: {e}", "error_id": self._store_traceback(tb_module.format_exc())}
         finally:
             sys.stdout = old_stdout
 
@@ -1468,6 +1494,8 @@ class FreeCADSocketServer:
                 'handlers.macro_ops',
                 'handlers.introspection_ops',
                 'handlers.sketch_builder_ops',
+                'handlers.verification_ops',
+                'handlers.fixture_ops',
             ]
             for mod_name in handler_modules:
                 mod = sys.modules.get(mod_name)
@@ -1501,6 +1529,8 @@ class FreeCADSocketServer:
                 MacroOpsHandler,
                 IntrospectionOpsHandler,
                 SketchBuilderOpsHandler,
+                VerificationOpsHandler,
+                FixtureOpsHandler,
             )
 
             # Re-create handler instances
@@ -1522,6 +1552,8 @@ class FreeCADSocketServer:
             self.macro_ops = MacroOpsHandler(self, _log_operation, _capture_state)
             self.introspection_ops = IntrospectionOpsHandler(self, _log_operation, _capture_state)
             self.sketch_builder_ops = SketchBuilderOpsHandler(self, _log_operation, _capture_state)
+            self.verification_ops = VerificationOpsHandler(self, _log_operation, _capture_state)
+            self.fixture_ops = FixtureOpsHandler(self, _log_operation, _capture_state)
             self.view_ops = ViewOpsHandler(
                 self, self._gui_task_queue, self._gui_response_queue,
                 _log_operation, _capture_state
@@ -1667,3 +1699,22 @@ class FreeCADSocketServer:
 
         except Exception as e:
             return json.dumps({"error": f"Failed to retrieve debug logs: {e}"})
+
+    def _get_last_traceback(self, args: Dict[str, Any]) -> str:
+        """Retrieve full traceback(s) from the in-memory ring buffer.
+
+        Pass error_id to fetch a specific traceback, or omit to get the most recent ones.
+        """
+        error_id = args.get("error_id")
+        if error_id:
+            for entry in self._last_tracebacks:
+                if entry["error_id"] == error_id:
+                    return json.dumps(entry)
+            return json.dumps({"error": f"No traceback found for error_id={error_id!r}. "
+                                        f"Buffer holds last {len(self._last_tracebacks)} errors."})
+        count = min(args.get("count", 1), 20)
+        entries = list(self._last_tracebacks)[-count:]
+        return json.dumps({
+            "tracebacks": entries,
+            "total_stored": len(self._last_tracebacks),
+        })

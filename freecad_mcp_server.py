@@ -948,8 +948,8 @@ async def main():
                                 "enum": [
                                     # View operations
                                     "screenshot", "set_view", "fit_all", "zoom_in", "zoom_out",
-                                    # Document operations  
-                                    "create_document", "save_document", "list_objects",
+                                    # Document operations
+                                    "create_document", "save_document", "list_objects", "get_object_properties",
                                     # Selection operations
                                     "select_object", "clear_selection", "get_selection",
                                     # Object visibility
@@ -1301,6 +1301,178 @@ async def main():
                     ),
                 ),
                 types.Tool(
+                    name="geometric_verification",
+                    description=(
+                        "Self-verify generated geometry without human inspection. "
+                        "Four operations: "
+                        "verify_handedness — check a 3×3 rotation matrix has det ≈ +1 (right-handed); "
+                        "verify_orientation — check face normals point in an expected direction; "
+                        "verify_no_self_intersection — OCCT-level shape validity check; "
+                        "verify_topology — flexible face/edge/vertex/volume constraint check. "
+                        "All return {\"ok\": bool, \"details\": {...}, \"message\": str}. "
+                        "Call after any generator run involving rotations, normals, or topology constraints."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "description": "Verification operation to perform",
+                                "enum": [
+                                    "verify_handedness",
+                                    "verify_orientation",
+                                    "verify_no_self_intersection",
+                                    "verify_topology",
+                                ]
+                            },
+                            "matrix": {
+                                "description": (
+                                    "3×3 rotation matrix for verify_handedness. "
+                                    "Accepted forms: [[r0,r1,r2],[r3,r4,r5],[r6,r7,r8]] "
+                                    "or flat 9-element list."
+                                ),
+                                "oneOf": [
+                                    {"type": "array",
+                                     "items": {"type": "array",
+                                               "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+                                     "minItems": 3, "maxItems": 3},
+                                    {"type": "array",
+                                     "items": {"type": "number"},
+                                     "minItems": 9, "maxItems": 9},
+                                ]
+                            },
+                            "object_name": {
+                                "type": "string",
+                                "description": (
+                                    "Object name or label "
+                                    "(verify_orientation / verify_no_self_intersection / verify_topology)"
+                                )
+                            },
+                            "expected_axis": {
+                                "description": (
+                                    "Expected normal direction for verify_orientation. "
+                                    "Accepts [x,y,z] list or named string like '+Z', '-X'."
+                                ),
+                                "oneOf": [
+                                    {"type": "array", "items": {"type": "number"},
+                                     "minItems": 3, "maxItems": 3},
+                                    {"type": "string",
+                                     "enum": ["+X", "-X", "+Y", "-Y", "+Z", "-Z",
+                                              "X", "Y", "Z"]},
+                                ]
+                            },
+                            "mode": {
+                                "type": "string",
+                                "description": (
+                                    "Alignment mode for verify_orientation: "
+                                    "'dominant' (largest face, default), "
+                                    "'majority' (≥50% by count), 'all' (every face)."
+                                ),
+                                "enum": ["dominant", "majority", "all"]
+                            },
+                            "face_count": {
+                                "type": "integer",
+                                "description": "Expected face count for verify_topology"
+                            },
+                            "edge_count": {
+                                "type": "integer",
+                                "description": "Expected edge count for verify_topology"
+                            },
+                            "vertex_count": {
+                                "type": "integer",
+                                "description": "Expected vertex count for verify_topology"
+                            },
+                            "volume_range": {
+                                "type": "array",
+                                "items": {"type": "number"},
+                                "minItems": 2,
+                                "maxItems": 2,
+                                "description": "[min_mm3, max_mm3] volume range for verify_topology"
+                            },
+                        },
+                        "required": ["operation"]
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=True,
+                        destructiveHint=False,
+                        idempotentHint=True,
+                    ),
+                ),
+                types.Tool(
+                    name="fixture_operations",
+                    description=(
+                        "Snapshot-style geometric regression for generator output. "
+                        "Two operations: "
+                        "save_fixture — capture topology (face/edge/vertex counts, volume, bbox, "
+                        "is_solid, is_closed), STL export, optional screenshot, and fixture.md "
+                        "for an object under fixtures/<fixture_name>/ in the repo. Idempotent. "
+                        "compare_to_fixture — compare current shape topology against saved fixture, "
+                        "returns structured diff with ok boolean. "
+                        "Tolerances: face/edge/vertex counts exact; volume within 0.1%; "
+                        "bbox within 0.001 mm — all overridable. "
+                        "Canonical workflow: build generator output, save_fixture once, "
+                        "compare_to_fixture on every subsequent run. "
+                        "Use after the shingle generator, brick generator, or any parametric "
+                        "shape whose topology should be stable across sessions."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "description": "Operation to perform",
+                                "enum": ["save_fixture", "compare_to_fixture"],
+                            },
+                            "shape": {
+                                "type": "string",
+                                "description": (
+                                    "Name or label of the FreeCAD object to snapshot or compare."
+                                ),
+                            },
+                            "fixture_name": {
+                                "type": "string",
+                                "description": (
+                                    "Directory name under fixtures/ for this fixture. "
+                                    "Alphanumeric, underscores, hyphens, and dots only — no path separators. "
+                                    "Example: 'shingle_dormer_simple' or 'shingle_complex_roof'."
+                                ),
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": (
+                                    "Human-readable description written into fixture.md. "
+                                    "Explain when this fixture was captured and what it asserts. "
+                                    "Only used by save_fixture."
+                                ),
+                            },
+                            "tolerances": {
+                                "type": "object",
+                                "description": (
+                                    "Override default comparison tolerances for compare_to_fixture. "
+                                    "Keys: volume_rel_tol (float, default 0.001 = 0.1%), "
+                                    "bbox_abs_tol (float in mm, default 0.001)."
+                                ),
+                                "properties": {
+                                    "volume_rel_tol": {
+                                        "type": "number",
+                                        "description": "Volume relative tolerance, e.g. 0.001 for 0.1%",
+                                    },
+                                    "bbox_abs_tol": {
+                                        "type": "number",
+                                        "description": "Bounding box absolute tolerance in mm, e.g. 0.001",
+                                    },
+                                },
+                            },
+                        },
+                        "required": ["operation", "shape", "fixture_name"],
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=False,
+                        idempotentHint=True,
+                    ),
+                ),
+                types.Tool(
                     name="run_inspector",
                     description="Run FreeCAD Inspector DRC checks on the active document. "
                                 "Checks model validity (open shells, zero-volume solids, invalid geometry, "
@@ -1440,6 +1612,29 @@ async def main():
                             "operation": {
                                 "type": "string",
                                 "description": "Optional filter by operation name (e.g., 'execute_python', 'cam_operations')"
+                            }
+                        }
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=True,
+                        destructiveHint=False,
+                        idempotentHint=True,
+                    ),
+                ),
+                types.Tool(
+                    name="get_last_traceback",
+                    description="Retrieve the full Python traceback for a previous error. Error responses include an error_id field; pass it here to get the full stack trace. Omit error_id to get the most recent traceback.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "error_id": {
+                                "type": "string",
+                                "description": "The error_id from a previous error response (e.g. 'err-0003'). Omit to get the most recent."
+                            },
+                            "count": {
+                                "type": "integer",
+                                "description": "Number of recent tracebacks to return when no error_id is specified (default 1, max 20)",
+                                "default": 1
                             }
                         }
                     },
@@ -1779,7 +1974,7 @@ async def main():
             }
             return [types.TextContent(
                 type="text",
-                text=json.dumps(status, indent=2)
+                text=json.dumps(status)
             )]
             
         elif name == "test_echo":
@@ -1839,7 +2034,7 @@ async def main():
                     "removed": removed,
                     "count": len(removed),
                     "note": "Removed corrupt FreeCAD recovery files. Restart FreeCAD for a clean session.",
-                }, indent=2))]
+                }))]
 
             elif action == "validate_fcstd":
                 path = (arguments or {}).get("path", "")
@@ -1858,7 +2053,7 @@ async def main():
                         result = {"valid": False, "size_bytes": 0, "error": str(exc)}
                 else:
                     result = _crash_mod.validate_fcstd(path)
-                return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+                return [types.TextContent(type="text", text=json.dumps(result))]
 
             else:  # action == "status"
                 out: dict = {
@@ -1870,7 +2065,7 @@ async def main():
                     rec = _crash_mod.find_recovery_files()
                     out["recovery_files"] = rec
                     out["crash_loop_risk"] = any(not f["valid"] for f in rec)
-                return [types.TextContent(type="text", text=json.dumps(out, indent=2))]
+                return [types.TextContent(type="text", text=json.dumps(out))]
 
         # Handle continue_selection tool
         elif name == "continue_selection":
@@ -2050,7 +2245,7 @@ async def main():
                             entry[k] = info[k]
             return [types.TextContent(
                 type="text",
-                text=json.dumps({"instances": instances}, indent=2)
+                text=json.dumps({"instances": instances})
             )]
 
         elif name == "select_freecad_instance":

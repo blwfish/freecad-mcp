@@ -52,6 +52,8 @@ MCP tools for controlling FreeCAD, grouped by function.
 |---|---|
 | `measurement_operations` | Inspect object geometry: list faces (index, normal, centroid, area), bounding box, volume, surface area, center of mass, element counts, solid check, distance between objects. |
 | `spatial_query` | Analyze spatial relationships: interference/collision detection, clearance measurement, containment check, face-to-face relationship (parallel, coplanar), batch interference, alignment verification. |
+| `geometric_verification` | Self-verify generated geometry: rotation matrix handedness (det ≈ +1), face normal orientation, OCCT-level shape validity (no self-intersections), and flexible topology constraints (face/edge/vertex counts, volume range). All operations return `{"ok": bool, "details": {...}, "message": str}`. |
+| `fixture_operations` | Snapshot-style geometric regression for generator output. `save_fixture` captures topology summary (face/edge/vertex counts, volume, bbox, is_solid, is_closed), STL export, optional screenshot, and `fixture.md` under `fixtures/<fixture_name>/`. `compare_to_fixture` compares current shape topology against the saved fixture, returning a structured diff with an `ok` boolean. Tolerances: counts exact; volume within 0.1%; bbox within 0.001 mm — all overridable. |
 | `run_inspector` | Run design-rule checks on the active document via the FC-tools inspector. |
 | `view_control` | View management, screenshots, document operations (create, save, undo/redo), object listing, checkpoint/rollback, cross-document shape insertion, clip planes (section views). |
 
@@ -79,6 +81,7 @@ MCP tools for controlling FreeCAD, grouped by function.
 | `macro_operations` | List, read, and run macros from the user's FreeCAD macro directory. Lets the agent reuse existing automation scripts. |
 | `api_introspection` | Live signature and docstring lookup against FreeCAD's running module tree, with fuzzy search across core and workbenches. Use before `execute_python` to avoid wrong-signature errors. |
 | `get_debug_logs` | Retrieve structured operation logs from `/tmp/freecad_mcp_debug/`. Each log entry records before/after model state. |
+| `get_last_traceback` | Retrieve the full Python traceback for a previous error. Error responses include an `error_id`; pass it here to get the complete stack trace without bloating every response. |
 
 ---
 
