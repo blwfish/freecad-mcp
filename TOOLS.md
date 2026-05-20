@@ -52,6 +52,7 @@ MCP tools for controlling FreeCAD, grouped by function.
 |---|---|
 | `measurement_operations` | Inspect object geometry: list faces (index, normal, centroid, area), bounding box, volume, surface area, center of mass, element counts, solid check, distance between objects. |
 | `spatial_query` | Analyze spatial relationships: interference/collision detection, clearance measurement, containment check, face-to-face relationship (parallel, coplanar), batch interference, alignment verification. |
+| `geometric_verification` | Self-verify generated geometry: rotation matrix handedness (det ≈ +1), face normal orientation, OCCT-level shape validity (no self-intersections), and flexible topology constraints (face/edge/vertex counts, volume range). All operations return `{"ok": bool, "details": {...}, "message": str}`. |
 | `run_inspector` | Run design-rule checks on the active document via the FC-tools inspector. |
 | `view_control` | View management, screenshots, document operations (create, save, undo/redo), object listing, checkpoint/rollback, cross-document shape insertion, clip planes (section views). |
 

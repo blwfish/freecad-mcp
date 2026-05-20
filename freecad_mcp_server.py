@@ -1301,6 +1301,104 @@ async def main():
                     ),
                 ),
                 types.Tool(
+                    name="geometric_verification",
+                    description=(
+                        "Self-verify generated geometry without human inspection. "
+                        "Four operations: "
+                        "verify_handedness — check a 3×3 rotation matrix has det ≈ +1 (right-handed); "
+                        "verify_orientation — check face normals point in an expected direction; "
+                        "verify_no_self_intersection — OCCT-level shape validity check; "
+                        "verify_topology — flexible face/edge/vertex/volume constraint check. "
+                        "All return {\"ok\": bool, \"details\": {...}, \"message\": str}. "
+                        "Call after any generator run involving rotations, normals, or topology constraints."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "description": "Verification operation to perform",
+                                "enum": [
+                                    "verify_handedness",
+                                    "verify_orientation",
+                                    "verify_no_self_intersection",
+                                    "verify_topology",
+                                ]
+                            },
+                            "matrix": {
+                                "description": (
+                                    "3×3 rotation matrix for verify_handedness. "
+                                    "Accepted forms: [[r0,r1,r2],[r3,r4,r5],[r6,r7,r8]] "
+                                    "or flat 9-element list."
+                                ),
+                                "oneOf": [
+                                    {"type": "array",
+                                     "items": {"type": "array",
+                                               "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+                                     "minItems": 3, "maxItems": 3},
+                                    {"type": "array",
+                                     "items": {"type": "number"},
+                                     "minItems": 9, "maxItems": 9},
+                                ]
+                            },
+                            "object_name": {
+                                "type": "string",
+                                "description": (
+                                    "Object name or label "
+                                    "(verify_orientation / verify_no_self_intersection / verify_topology)"
+                                )
+                            },
+                            "expected_axis": {
+                                "description": (
+                                    "Expected normal direction for verify_orientation. "
+                                    "Accepts [x,y,z] list or named string like '+Z', '-X'."
+                                ),
+                                "oneOf": [
+                                    {"type": "array", "items": {"type": "number"},
+                                     "minItems": 3, "maxItems": 3},
+                                    {"type": "string",
+                                     "enum": ["+X", "-X", "+Y", "-Y", "+Z", "-Z",
+                                              "X", "Y", "Z"]},
+                                ]
+                            },
+                            "mode": {
+                                "type": "string",
+                                "description": (
+                                    "Alignment mode for verify_orientation: "
+                                    "'dominant' (largest face, default), "
+                                    "'majority' (≥50% by count), 'all' (every face)."
+                                ),
+                                "enum": ["dominant", "majority", "all"]
+                            },
+                            "face_count": {
+                                "type": "integer",
+                                "description": "Expected face count for verify_topology"
+                            },
+                            "edge_count": {
+                                "type": "integer",
+                                "description": "Expected edge count for verify_topology"
+                            },
+                            "vertex_count": {
+                                "type": "integer",
+                                "description": "Expected vertex count for verify_topology"
+                            },
+                            "volume_range": {
+                                "type": "array",
+                                "items": {"type": "number"},
+                                "minItems": 2,
+                                "maxItems": 2,
+                                "description": "[min_mm3, max_mm3] volume range for verify_topology"
+                            },
+                        },
+                        "required": ["operation"]
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=True,
+                        destructiveHint=False,
+                        idempotentHint=True,
+                    ),
+                ),
+                types.Tool(
                     name="run_inspector",
                     description="Run FreeCAD Inspector DRC checks on the active document. "
                                 "Checks model validity (open shells, zero-volume solids, invalid geometry, "

@@ -22,6 +22,7 @@ from .inspector_ops import InspectorOpsHandler
 from .macro_ops import MacroOpsHandler
 from .introspection_ops import IntrospectionOpsHandler
 from .sketch_builder_ops import SketchBuilderOpsHandler
+from .verification_ops import VerificationOpsHandler
 
 __all__ = [
     'BaseHandler',
@@ -45,4 +46,5 @@ __all__ = [
     'MacroOpsHandler',
     'IntrospectionOpsHandler',
     'SketchBuilderOpsHandler',
+    'VerificationOpsHandler',
 ]
