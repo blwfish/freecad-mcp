@@ -56,7 +56,7 @@ class MeshOpsHandler(BaseHandler):
                     error=Exception(f"Unsupported mesh format '{ext}'. Supported: {', '.join(sorted(self.MESH_FORMATS))}"),
                     duration=time.time() - start_time)
 
-            doc = self.get_document(create_if_missing=False)
+            doc = self.get_document()
             if not doc:
                 return self.log_and_return("import_mesh", args,
                     error=Exception("No active document. Create one first via view_control create_document."),
@@ -367,7 +367,7 @@ class MeshOpsHandler(BaseHandler):
             if ext in self.CAD_FORMATS:
                 import Part
 
-                doc = self.get_document(create_if_missing=False)
+                doc = self.get_document()
                 if not doc:
                     return self.log_and_return("import_file", args,
                         error=Exception("No active document. Create one first via view_control create_document."),

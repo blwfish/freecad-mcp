@@ -129,26 +129,11 @@ class TestGetDocument:
         mock_freecad.ActiveDocument = None
         assert base_handler.get_document() is None
 
-    def test_create_if_missing(self, base_handler, mock_freecad):
+    def test_returns_none_when_no_document(self, base_handler, mock_freecad):
+        """get_document() never auto-creates — callers must check for None."""
         mock_freecad.ActiveDocument = None
-        new_doc = MagicMock()
-        mock_freecad.newDocument.return_value = new_doc
-        result = base_handler.get_document(create_if_missing=True)
-        mock_freecad.newDocument.assert_called_once()
-        new_doc.recompute.assert_called_once()
-        assert result is new_doc
-
-    def test_create_if_missing_exception(self, base_handler, mock_freecad):
-        mock_freecad.ActiveDocument = None
-        mock_freecad.newDocument.side_effect = RuntimeError("creation failed")
-        result = base_handler.get_document(create_if_missing=True)
+        result = base_handler.get_document()
         assert result is None
-
-    def test_no_create_when_not_missing(self, base_handler, mock_freecad):
-        mock_doc = MagicMock()
-        mock_freecad.ActiveDocument = mock_doc
-        result = base_handler.get_document(create_if_missing=True)
-        assert result is mock_doc
         mock_freecad.newDocument.assert_not_called()
 
 
@@ -483,21 +468,12 @@ class TestCreateBodyIfNeeded:
         doc.addObject.assert_called_once_with("PartDesign::Body", "Body")
         assert result is new_body
 
-    def test_creates_document_if_needed(self, base_handler, mock_freecad):
+    def test_returns_none_when_no_document(self, base_handler, mock_freecad):
+        """No active document → None; no auto-create."""
         mock_freecad.ActiveDocument = None
-        new_doc = MagicMock()
-        new_doc.Objects = []
-        new_body = MagicMock()
-        new_doc.addObject.return_value = new_body
-        mock_freecad.newDocument.return_value = new_doc
-        result = base_handler.create_body_if_needed()
-        assert result is new_body
-
-    def test_returns_none_when_no_doc_possible(self, base_handler, mock_freecad):
-        mock_freecad.ActiveDocument = None
-        mock_freecad.newDocument.side_effect = RuntimeError("no display")
         result = base_handler.create_body_if_needed()
         assert result is None
+        mock_freecad.newDocument.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

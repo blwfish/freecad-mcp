@@ -297,5 +297,51 @@ class TestCreateConeDegenerateDimensions(unittest.TestCase):
         self.assertEqual(doc.Objects[-1].Radius2, 0)
 
 
+class TestPrimitivesNoDocument(unittest.TestCase):
+    """Primitives called with no active document must return an error string,
+    not crash (issue #16: FreeCAD.newDocument() on wrong thread kills FreeCAD).
+    """
+
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(PrimitivesHandler)
+        mock_FreeCAD.ActiveDocument = None
+
+    def test_box_no_document_returns_error(self):
+        result = self.handler.create_box({'length': 10, 'width': 10, 'height': 10})
+        self.assertIn("Error", result)
+        self.assertIn("create_document", result)
+
+    def test_cylinder_no_document_returns_error(self):
+        result = self.handler.create_cylinder({'radius': 5, 'height': 10})
+        self.assertIn("Error", result)
+        self.assertIn("create_document", result)
+
+    def test_sphere_no_document_returns_error(self):
+        result = self.handler.create_sphere({'radius': 5})
+        self.assertIn("Error", result)
+        self.assertIn("create_document", result)
+
+    def test_cone_no_document_returns_error(self):
+        result = self.handler.create_cone({'radius1': 5, 'height': 10})
+        self.assertIn("Error", result)
+        self.assertIn("create_document", result)
+
+    def test_torus_no_document_returns_error(self):
+        result = self.handler.create_torus({'radius1': 10, 'radius2': 3})
+        self.assertIn("Error", result)
+        self.assertIn("create_document", result)
+
+    def test_wedge_no_document_returns_error(self):
+        result = self.handler.create_wedge({})
+        self.assertIn("Error", result)
+        self.assertIn("create_document", result)
+
+    def test_no_document_does_not_call_newDocument(self):
+        """newDocument() must never be called from a primitive handler."""
+        self.handler.create_box({'length': 10, 'width': 10, 'height': 10})
+        mock_FreeCAD.newDocument.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()

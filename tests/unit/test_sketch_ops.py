@@ -434,5 +434,23 @@ class TestDeleteConstraint(unittest.TestCase):
         assert_success_contains(self, result, "Deleted constraint 3", "S")
 
 
+class TestCreateSketchNoDocument(unittest.TestCase):
+    """create_sketch with no active document must return an error, not crash."""
+
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(SketchOpsHandler)
+        mock_FreeCAD.ActiveDocument = None
+
+    def test_returns_error_string(self):
+        result = self.handler.create_sketch({'plane': 'XY', 'name': 'S'})
+        self.assertIn("Error", result)
+        self.assertIn("create_document", result)
+
+    def test_does_not_call_newDocument(self):
+        self.handler.create_sketch({'plane': 'XY', 'name': 'S'})
+        mock_FreeCAD.newDocument.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -20,7 +20,9 @@ class SketchOpsHandler(BaseHandler):
             plane = args.get('plane', 'XY')
             name = args.get('name', 'Sketch')
 
-            doc = self.get_document(create_if_missing=True)
+            doc = self.get_document()
+            if not doc:
+                return "Error creating sketch: No active document. Call view_control(operation='create_document') first."
 
             # Create sketch
             sketch = doc.addObject('Sketcher::SketchObject', name)
