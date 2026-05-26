@@ -93,32 +93,15 @@ class BaseHandler:
             return f"Error in {operation}: {error}"
         return result
 
-    def get_document(self, create_if_missing: bool = False) -> FreeCAD.Document:
-        """Get active document, optionally creating one if missing.
+    def get_document(self) -> FreeCAD.Document:
+        """Return the active FreeCAD document, or None if none is open.
 
-        Handlers are always invoked on the GUI thread (via _call_on_gui_thread
-        or inline in headless mode), so FreeCAD.newDocument() is safe to call
-        directly here.  An earlier version routed creation through
-        run_on_gui_thread, but that deadlocked when the handler was already
-        on the GUI thread.
-
-        Args:
-            create_if_missing: If True, create a new document if none exists
-
-        Returns:
-            Active FreeCAD document or None
+        Callers that need a document must check the return value and return
+        an error — never auto-create here.  Auto-creation calls
+        FreeCAD.newDocument() which triggers NSWindow init on macOS and must
+        only be done via view_control(operation='create_document').
         """
-        doc = FreeCAD.ActiveDocument
-        if not doc and create_if_missing:
-            try:
-                doc = FreeCAD.newDocument()
-                doc.recompute()
-            except Exception as e:
-                FreeCAD.Console.PrintError(
-                    f"get_document: failed to create document: {e}\n"
-                )
-                return None
-        return doc
+        return FreeCAD.ActiveDocument
 
     def get_object(self, object_name: str, doc: FreeCAD.Document = None):
         """Get an object by internal name or label from the document.
@@ -387,8 +370,6 @@ class BaseHandler:
         """
         if doc is None:
             doc = FreeCAD.ActiveDocument
-        if doc is None:
-            doc = self.get_document(create_if_missing=True)
         if doc is None:
             return None
 

@@ -16,7 +16,7 @@ class SpreadsheetOpsHandler(BaseHandler):
             name = args.get('spreadsheet_name', args.get('name', 'Spreadsheet'))
 
             # Don't auto-create document to avoid GUI threading issues
-            doc = self.get_document(create_if_missing=False)
+            doc = self.get_document()
             if not doc:
                 return "Error: No active document"
 

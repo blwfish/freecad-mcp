@@ -51,7 +51,9 @@ class PrimitivesHandler(BaseHandler):
             z = args.get('z', 0)
             name = args.get('name', 'Box')
 
-            doc = self.get_document(create_if_missing=True)
+            doc = self.get_document()
+            if not doc:
+                return "Error creating box: No active document. Call view_control(operation='create_document') first."
 
             box = doc.addObject("Part::Box", name)
             box.Label = name
@@ -77,7 +79,9 @@ class PrimitivesHandler(BaseHandler):
             z = args.get('z', 0)
             name = args.get('name', 'Cylinder')
 
-            doc = self.get_document(create_if_missing=True)
+            doc = self.get_document()
+            if not doc:
+                return "Error creating cylinder: No active document. Call view_control(operation='create_document') first."
 
             cylinder = doc.addObject("Part::Cylinder", name)
             cylinder.Label = name
@@ -101,7 +105,9 @@ class PrimitivesHandler(BaseHandler):
             z = args.get('z', 0)
             name = args.get('name', 'Sphere')
 
-            doc = self.get_document(create_if_missing=True)
+            doc = self.get_document()
+            if not doc:
+                return "Error creating sphere: No active document. Call view_control(operation='create_document') first."
 
             sphere = doc.addObject("Part::Sphere", name)
             sphere.Label = name
@@ -126,7 +132,9 @@ class PrimitivesHandler(BaseHandler):
             z = args.get('z', 0)
             name = args.get('name', 'Cone')
 
-            doc = self.get_document(create_if_missing=True)
+            doc = self.get_document()
+            if not doc:
+                return "Error creating cone: No active document. Call view_control(operation='create_document') first."
 
             cone = doc.addObject("Part::Cone", name)
             cone.Label = name
@@ -152,7 +160,9 @@ class PrimitivesHandler(BaseHandler):
             z = args.get('z', 0)
             name = args.get('name', 'Torus')
 
-            doc = self.get_document(create_if_missing=True)
+            doc = self.get_document()
+            if not doc:
+                return "Error creating torus: No active document. Call view_control(operation='create_document') first."
 
             torus = doc.addObject("Part::Torus", name)
             torus.Label = name
@@ -180,7 +190,9 @@ class PrimitivesHandler(BaseHandler):
             zmax = args.get('zmax', 10)
             name = args.get('name', 'Wedge')
 
-            doc = self.get_document(create_if_missing=True)
+            doc = self.get_document()
+            if not doc:
+                return "Error creating wedge: No active document. Call view_control(operation='create_document') first."
 
             wedge = doc.addObject("Part::Wedge", name)
             wedge.Label = name
