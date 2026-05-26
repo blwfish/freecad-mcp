@@ -185,16 +185,14 @@ class TestPrimitives:
             f"Sphere creation failed: {result}"
 
     def test_create_box_without_document(self):
-        """Creating a box with no active document should create one via GUI thread.
-
-        This is the exact scenario that caused the GIL deadlock before the fix.
+        """Creating a box with no active document must return a clear error,
+        not crash or deadlock (issue #16: FreeCAD.newDocument() on wrong thread).
         """
         # Close all documents first
         send_command("execute_python", {
             "code": "for name in list(FreeCAD.listDocuments().keys()): FreeCAD.closeDocument(name)"
         })
 
-        # This should NOT deadlock — it should create a document via GUI thread
         result = send_command("part_operations", {
             "operation": "box",
             "length": 10,
@@ -202,13 +200,10 @@ class TestPrimitives:
             "height": 10,
         }, timeout=15.0)
         result_str = str(result)
-        assert "Created box" in result_str or "error" not in result_str.lower(), \
-            f"Box creation without document failed (possible GIL deadlock): {result}"
-
-        # Cleanup
-        send_command("execute_python", {
-            "code": "for name in list(FreeCAD.listDocuments().keys()): FreeCAD.closeDocument(name)"
-        })
+        assert "create_document" in result_str, \
+            f"Expected 'create_document' hint in error, got: {result}"
+        assert "Created box" not in result_str, \
+            f"Box should not be created without a document: {result}"
 
 
 # ---------------------------------------------------------------------------
