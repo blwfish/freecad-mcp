@@ -21,6 +21,7 @@ classifiers = [
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.27.1",
+    "mcp-events>=0.1.0",
 ]
 
 [project.urls]

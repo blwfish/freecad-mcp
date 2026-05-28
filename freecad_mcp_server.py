@@ -15,6 +15,7 @@ import shutil
 import time
 import uuid
 from typing import Any
+from mcp_events import event_context, emit_event
 
 
 # =============================================================================
@@ -2170,83 +2171,104 @@ async def main():
             else:
                 response = await send_to_freecad(name, args)
 
-            # If FreeCAD returned a job_id, auto-poll until done (transparent to the agent).
-            # All dedicated handlers now use the async GUI-thread path so this fires
-            # for every op; progressive backoff keeps fast ops snappy.
-            try:
-                result = json.loads(response)
-                if isinstance(result, dict) and result.get("job_id") and result.get("status") == "submitted":
-                    job_id = result["job_id"]
-                    poll_resp = await poll_job_until_done(job_id, context=name)
-                    status = poll_resp.get("status")
-                    if status == "done":
-                        _complete_op()
-                        return [types.TextContent(type="text", text=json.dumps({
-                            "result": poll_resp.get("result"),
-                            "elapsed": poll_resp.get("elapsed"),
-                        }))]
-                    elif status == "timeout":
-                        return [types.TextContent(type="text", text=json.dumps({
-                            "error": poll_resp["error"],
-                            "job_id": job_id,
-                        }))]
-                    else:
-                        return [types.TextContent(type="text", text=json.dumps({
-                            "error": poll_resp.get("error"),
-                            "elapsed": poll_resp.get("elapsed"),
-                        }))]
-                        # status == "running" → keep polling
-            except (json.JSONDecodeError, Exception):
-                pass
+            # Process FreeCAD response inside an event context so soft failures
+            # (parse errors, image extraction errors) surface to the caller.
+            with event_context() as _acc:
+                # If FreeCAD returned a job_id, auto-poll until done (transparent to the agent).
+                # All dedicated handlers now use the async GUI-thread path so this fires
+                # for every op; progressive backoff keeps fast ops snappy.
+                try:
+                    result = json.loads(response)
+                    if isinstance(result, dict) and result.get("job_id") and result.get("status") == "submitted":
+                        job_id = result["job_id"]
+                        poll_resp = await poll_job_until_done(job_id, context=name)
+                        status = poll_resp.get("status")
+                        if status == "done":
+                            _complete_op()
+                            payload: dict = {
+                                "result": poll_resp.get("result"),
+                                "elapsed": poll_resp.get("elapsed"),
+                            }
+                        elif status == "timeout":
+                            payload = {
+                                "error": poll_resp["error"],
+                                "job_id": job_id,
+                            }
+                        else:
+                            # status == "error" or unexpected
+                            payload = {
+                                "error": poll_resp.get("error"),
+                                "elapsed": poll_resp.get("elapsed"),
+                            }
+                        if _acc.has_any("warn"):
+                            payload["events"] = _acc.to_envelope("warn")
+                        return [types.TextContent(type="text", text=json.dumps(payload))]
+                except (json.JSONDecodeError, Exception) as _e:
+                    emit_event("warn", "response_parse_failed",
+                               f"Could not parse FreeCAD response as JSON: {str(_e)[:200]}")
 
-            # Return image content when the response contains base64 image data
-            try:
-                result = json.loads(response)
-                if isinstance(result, dict) and result.get("image_data"):
-                    return [types.ImageContent(
-                        type="image",
-                        data=result["image_data"],
-                        mimeType=result.get("mime_type", "image/png"),
-                    )]
-            except (json.JSONDecodeError, Exception):
-                pass
+                # Return image content when the response contains base64 image data
+                try:
+                    result = json.loads(response)
+                    if isinstance(result, dict) and result.get("image_data"):
+                        return [types.ImageContent(
+                            type="image",
+                            data=result["image_data"],
+                            mimeType=result.get("mime_type", "image/png"),
+                        )]
+                except (json.JSONDecodeError, Exception) as _e:
+                    emit_event("warn", "image_extract_failed",
+                               f"Could not extract image data from FreeCAD response: {str(_e)[:200]}")
 
-            return [types.TextContent(
-                type="text",
-                text=response
-            )]
+                # Merge any accumulated events into the response if it is JSON
+                text = response
+                if _acc.has_any("warn"):
+                    try:
+                        parsed = json.loads(response)
+                        if isinstance(parsed, dict):
+                            parsed["events"] = _acc.to_envelope("warn")
+                            text = json.dumps(parsed)
+                    except (json.JSONDecodeError, Exception):
+                        pass
+                return [types.TextContent(type="text", text=text)]
             
         # ------------------------------------------------------------------
         # Instance management handlers
         # ------------------------------------------------------------------
 
         elif name == "list_freecad_instances":
-            instances = _ctx.list_all()
-            # Enrich each entry with active-doc / window-title info via a
-            # short round-trip. Run probes in parallel so 3 instances take
-            # ~1 round-trip's worth of time, not N's worth.
-            fetch_tasks = []
-            for entry in instances:
-                sp = entry.get("socket_path")
-                if sp and entry.get("available", True):
-                    fetch_tasks.append((entry, asyncio.to_thread(_fetch_instance_info, sp)))
-            for entry, task in fetch_tasks:
-                try:
-                    info = await task
-                except Exception:
-                    info = None
-                if info:
-                    entry["active_doc_label"] = info.get("active_doc_label")
-                    entry["active_doc_file"] = info.get("active_doc_file")
-                    entry["window_title"] = info.get("window_title")
-                    # Backfill uuid/version/gui if discovery didn't have them
-                    for k in ("uuid", "freecad_version", "gui"):
-                        if not entry.get(k) and info.get(k) is not None:
-                            entry[k] = info[k]
-            return [types.TextContent(
-                type="text",
-                text=json.dumps({"instances": instances})
-            )]
+            with event_context() as _acc:
+                instances = _ctx.list_all()
+                # Enrich each entry with active-doc / window-title info via a
+                # short round-trip. Run probes in parallel so 3 instances take
+                # ~1 round-trip's worth of time, not N's worth.
+                fetch_tasks = []
+                for entry in instances:
+                    sp = entry.get("socket_path")
+                    if sp and entry.get("available", True):
+                        fetch_tasks.append((entry, asyncio.to_thread(_fetch_instance_info, sp)))
+                for entry, task in fetch_tasks:
+                    try:
+                        info = await task
+                    except Exception as _e:
+                        info = None
+                        emit_event("warn", "instance_enrich_failed",
+                                   f"Could not enrich instance {entry.get('socket_path', '?')}: {str(_e)[:200]}")
+                    if info:
+                        entry["active_doc_label"] = info.get("active_doc_label")
+                        entry["active_doc_file"] = info.get("active_doc_file")
+                        entry["window_title"] = info.get("window_title")
+                        # Backfill uuid/version/gui if discovery didn't have them
+                        for k in ("uuid", "freecad_version", "gui"):
+                            if not entry.get(k) and info.get(k) is not None:
+                                entry[k] = info[k]
+                result_payload: dict = {"instances": instances}
+                if _acc.has_any("warn"):
+                    result_payload["events"] = _acc.to_envelope("warn")
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps(result_payload)
+                )]
 
         elif name == "select_freecad_instance":
             args = arguments or {}
