@@ -445,6 +445,10 @@ class CAMOpsHandler(BaseHandler):
             if not output_file:
                 output_file = f"/tmp/{job_name}.gcode"
 
+            path_err = self._validate_file_path(output_file)
+            if path_err:
+                return f"Error: {path_err}"
+
             # Set post-processor on job
             job.PostProcessor = post_processor
             if not hasattr(job, 'PostProcessorArgs') or not job.PostProcessorArgs:

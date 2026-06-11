@@ -45,6 +45,11 @@ class MeshOpsHandler(BaseHandler):
                     error=Exception("file_path parameter required"),
                     duration=time.time() - start_time)
 
+            path_err = self._validate_file_path(file_path)
+            if path_err:
+                return self.log_and_return("import_mesh", args,
+                    error=Exception(path_err), duration=time.time() - start_time)
+
             if not os.path.exists(file_path):
                 return self.log_and_return("import_mesh", args,
                     error=Exception(f"File not found: {file_path}"),
@@ -117,6 +122,11 @@ class MeshOpsHandler(BaseHandler):
                 return self.log_and_return("export_mesh", args,
                     error=Exception("file_path parameter required"),
                     duration=time.time() - start_time)
+
+            path_err = self._validate_file_path(file_path)
+            if path_err:
+                return self.log_and_return("export_mesh", args,
+                    error=Exception(path_err), duration=time.time() - start_time)
 
             ext = os.path.splitext(file_path)[1].lower()
             if ext not in self.MESH_FORMATS:
@@ -352,6 +362,11 @@ class MeshOpsHandler(BaseHandler):
                     error=Exception("file_path parameter required"),
                     duration=time.time() - start_time)
 
+            path_err = self._validate_file_path(file_path)
+            if path_err:
+                return self.log_and_return("import_file", args,
+                    error=Exception(path_err), duration=time.time() - start_time)
+
             if not os.path.exists(file_path):
                 return self.log_and_return("import_file", args,
                     error=Exception(f"File not found: {file_path}"),
@@ -435,6 +450,11 @@ class MeshOpsHandler(BaseHandler):
                 return self.log_and_return("export_file", args,
                     error=Exception("file_path parameter required"),
                     duration=time.time() - start_time)
+
+            path_err = self._validate_file_path(file_path)
+            if path_err:
+                return self.log_and_return("export_file", args,
+                    error=Exception(path_err), duration=time.time() - start_time)
 
             ext = os.path.splitext(file_path)[1].lower()
 

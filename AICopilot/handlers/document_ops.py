@@ -58,6 +58,9 @@ class DocumentOpsHandler(BaseHandler):
         """Open a document."""
         try:
             filename = args.get('filename', '')
+            path_err = self._validate_file_path(filename)
+            if path_err:
+                return f"Error: {path_err}"
             doc = FreeCAD.openDocument(filename)
             return f"Opened document: {doc.Name}"
         except Exception as e:
@@ -72,6 +75,9 @@ class DocumentOpsHandler(BaseHandler):
                 return "No active document to save"
 
             if filename:
+                path_err = self._validate_file_path(filename)
+                if path_err:
+                    return f"Error: {path_err}"
                 doc.saveAs(filename)
                 return f"Document saved as: {filename}"
             else:
