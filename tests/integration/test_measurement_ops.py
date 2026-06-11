@@ -192,9 +192,11 @@ class TestCheckSolid:
 
 class TestMeasureDistance:
     def test_measure_distance_two_boxes(self, clean_document):
-        """Center-to-center distance between two 10mm boxes 30mm apart = 30.00 mm.
+        """Minimum (face-to-face) distance between two 10mm boxes = 20.00 mm.
 
-        Box A center = (5, 5, 5); Box B center = (35, 5, 5); distance = 30.
+        measure_distance uses Shape.distToShape, i.e. the closest-point gap, not
+        center-to-center. Box A spans x[0,10], Box B spans x[30,40], so the gap
+        is 30 - 10 = 20 mm. (The handler reports 0 for touching/overlap.)
         """
         send_command("part_operations", {
             "operation": "box",
@@ -214,5 +216,5 @@ class TestMeasureDistance:
         assert_op_succeeded(result, "measure_distance")
         text = _text(result)
         assert "Distance" in text or "distance" in text
-        # Center-to-center: (5,5,5) → (35,5,5) = 30 mm
-        assert "30.00" in text, f"Expected distance 30.00 in: {text[:300]}"
+        # Min gap (face-to-face): x[0,10] → x[30,40] = 20 mm
+        assert "20.00" in text, f"Expected distance 20.00 in: {text[:300]}"
