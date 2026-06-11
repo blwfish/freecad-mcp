@@ -124,7 +124,10 @@ class TestCutObjects(unittest.TestCase):
         self.assertEqual(cut.Base, base)
         self.assertEqual(cut.Tool, tool)
 
-    def test_multiple_tools_assigned_as_list(self):
+    def test_multiple_tools_fused_then_cut(self):
+        """>1 tool: tools are fused into a Part::MultiFuse, which becomes the
+        single Cut.Tool. Assigning a list directly to Part::Cut.Tool raises
+        'Type must be App.DocumentObject or None, not list' in real FreeCAD."""
         base = make_box_object("Base")
         t1 = make_box_object("T1")
         t2 = make_box_object("T2")
@@ -135,9 +138,11 @@ class TestCutObjects(unittest.TestCase):
             'base': 'Base', 'tools': ['T1', 'T2'],
         })
 
-        cut = doc.Objects[-1]
+        cut = next(o for o in doc.Objects if o.TypeId == "Part::Cut")
+        fusion = next(o for o in doc.Objects if o.TypeId == "Part::MultiFuse")
         self.assertEqual(cut.Base, base)
-        self.assertEqual(list(cut.Tool), [t1, t2])
+        self.assertEqual(cut.Tool, fusion)
+        self.assertEqual(list(fusion.Shapes), [t1, t2])
 
     def test_cut_hides_base_and_tools(self):
         base = make_box_object("Base")

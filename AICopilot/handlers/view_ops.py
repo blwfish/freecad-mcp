@@ -195,7 +195,7 @@ class ViewOpsHandler(BaseHandler):
         """Zoom in on the view."""
         try:
             if FreeCADGui.ActiveDocument:
-                FreeCADGui.activeDocument().activeView().viewAxonometric()
+                FreeCADGui.activeDocument().activeView().zoomIn()
                 return "Zoomed in"
             else:
                 return "No active document"
@@ -206,7 +206,7 @@ class ViewOpsHandler(BaseHandler):
         """Zoom out on the view."""
         try:
             if FreeCADGui.ActiveDocument:
-                FreeCADGui.activeDocument().activeView().viewAxonometric()
+                FreeCADGui.activeDocument().activeView().zoomOut()
                 return "Zoomed out"
             else:
                 return "No active document"

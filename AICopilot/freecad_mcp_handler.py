@@ -1322,12 +1322,14 @@ class FreeCADSocketServer:
             # Document mutations — must run on GUI thread (recompute touches Qt)
             "rollback_to_checkpoint": self.document_ops.rollback_to_checkpoint,
             "insert_shape":           self.document_ops.insert_shape,
+            # save()/saveAs() emit modified/title signals the GUI observes; on
+            # macOS a save from the socket thread trips the main-thread assert.
+            "save_document":          self.document_ops.save_document,
         }
 
         # --- Operations safe to call from any thread ---
         safe_ops = {
             "create_document":      self.document_ops.create_document,
-            "save_document":        self.document_ops.save_document,
             "list_objects":         self.document_ops.list_objects,
             "get_object_properties": self.document_ops.get_object_properties,
             # checkpoint only reads names — thread-safe

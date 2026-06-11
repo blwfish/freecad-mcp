@@ -140,6 +140,26 @@ class TestCreateTool(unittest.TestCase):
         # attach_to_doc called with the active doc
         tool_bit.attach_to_doc.assert_called_once_with(doc=doc)
 
+    def test_zero_valued_params_not_dropped(self):
+        """A legitimately-supplied 0 must be written, not dropped by a falsy
+        check (flute_length=0 / number_of_flutes=0 are real values)."""
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+        tool_bit = MagicMock()
+        tool_bit.attach_to_doc = MagicMock(return_value=make_tool_bit_obj("Z", "endmill"))
+        mock_Path_Tool_Bit.ToolBit = MagicMock()
+        mock_Path_Tool_Bit.ToolBit.from_dict = MagicMock(return_value=tool_bit)
+
+        self.handler.create_tool({
+            'name': 'Z', 'tool_type': 'endmill', 'diameter': 6.0,
+            'flute_length': 0, 'shank_diameter': 0, 'number_of_flutes': 0,
+        })
+
+        params = mock_Path_Tool_Bit.ToolBit.from_dict.call_args.args[0]['parameter']
+        self.assertEqual(params['CuttingEdgeHeight']['value'], '0 mm')
+        self.assertEqual(params['ShankDiameter']['value'], '0 mm')
+        self.assertEqual(params['Flutes']['value'], 0)
+
     def test_v_bit_alias_normalized(self):
         """Both 'vbit' and 'v-bit' map to ShapeID 'vbit'."""
         doc = make_mock_doc()

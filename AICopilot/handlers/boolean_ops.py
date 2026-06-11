@@ -79,11 +79,18 @@ class BooleanOpsHandler(BaseHandler):
             # Safety: save before risky op
             self.save_before_risky_op(doc)
 
-            # Create cut and hide sources
+            # Create cut and hide sources. Part::Cut.Tool is a single reference
+            # (assigning a list raises "Type must be App.DocumentObject or None,
+            # not list"), so fuse multiple tools into one before cutting.
             cut = doc.addObject("Part::Cut", name)
             cut.Label = name
             cut.Base = base_obj
-            cut.Tool = tool_objs[0] if len(tool_objs) == 1 else tool_objs
+            if len(tool_objs) == 1:
+                cut.Tool = tool_objs[0]
+            else:
+                fusion = doc.addObject("Part::MultiFuse", f"{name}_Tools")
+                fusion.Shapes = tool_objs
+                cut.Tool = fusion
             self.recompute(doc)
             base_obj.Visibility = False
             for obj in tool_objs:
