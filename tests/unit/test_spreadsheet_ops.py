@@ -107,6 +107,7 @@ class TestGetCell(unittest.TestCase):
     def test_get_returns_cell_value_as_json(self):
         sheet = make_spreadsheet("Params")
         sheet._cells_data['B2'] = '42'  # pre-populate
+        sheet.getContents = MagicMock(return_value='42')  # stored expression
         doc = make_mock_doc([sheet])
         mock_FreeCAD.ActiveDocument = doc
 
@@ -114,10 +115,27 @@ class TestGetCell(unittest.TestCase):
             'spreadsheet_name': 'Params', 'cell': 'B2',
         })
 
-        # JSON shape: {"cell": "B2", "value": "42"}
+        # JSON shape now carries value, type, and the stored formula so a
+        # read→write round-trip can preserve expressions.
         payload = json.loads(result)
         self.assertEqual(payload['cell'], 'B2')
         self.assertEqual(payload['value'], '42')
+        self.assertEqual(payload['formula'], '42')
+        self.assertEqual(payload['type'], 'str')
+
+    def test_get_empty_cell_value_is_json_null(self):
+        """An empty cell must serialize as JSON null, not the string 'None'."""
+        sheet = make_spreadsheet("Params")
+        sheet.get = MagicMock(return_value=None)
+        sheet.getContents = MagicMock(return_value='')
+        doc = make_mock_doc([sheet])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.get_cell({
+            'spreadsheet_name': 'Params', 'cell': 'Z9',
+        })
+        payload = json.loads(result)
+        self.assertIsNone(payload['value'])
 
 
 class TestSetAlias(unittest.TestCase):
@@ -304,6 +322,42 @@ class TestListAliases(unittest.TestCase):
         self.assertEqual(payload['aliases'], {
             'A1': 'wallThickness', 'A2': 'height',
         })
+
+
+class TestCsvRoundTrip(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(SpreadsheetOpsHandler)
+
+    def test_import_keeps_quoted_field_with_comma_in_one_cell(self):
+        """A quoted field containing the delimiter must land in a single cell —
+        naive split(',') would break it across two cells."""
+        sheet = make_spreadsheet("S")
+        doc = make_mock_doc([sheet])
+        mock_FreeCAD.ActiveDocument = doc
+
+        self.handler.import_csv({
+            'spreadsheet_name': 'S', 'start_cell': 'A1',
+            'csv_data': '"Smith, John",42\n',
+        })
+
+        self.assertEqual(sheet._cells_data.get('A1'), 'Smith, John')
+        self.assertEqual(sheet._cells_data.get('B1'), '42')
+
+    def test_export_quotes_field_with_comma(self):
+        """csv.writer must quote a comma-containing field so the CSV re-imports
+        into the correct columns; the old delimiter.join did not."""
+        sheet = make_spreadsheet("S")
+        sheet._cells_data['A1'] = 'a,b'
+        sheet._cells_data['B1'] = 'plain'
+        doc = make_mock_doc([sheet])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.export_csv({
+            'spreadsheet_name': 'S', 'start_cell': 'A1', 'end_cell': 'B1',
+        })
+        payload = json.loads(result)
+        self.assertIn('"a,b"', payload['csv'])
 
 
 if __name__ == '__main__':

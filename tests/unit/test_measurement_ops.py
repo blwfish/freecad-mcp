@@ -232,14 +232,26 @@ class TestMeasureDistance(unittest.TestCase):
 
     def test_distance_between_two_boxes(self):
         a = make_part_object("A")
-        a.Shape.CenterOfMass = MagicMock()
-        a.Shape.CenterOfMass.distanceToPoint = MagicMock(return_value=42.5)
+        # distToShape returns [dist, points, geom_info]; [0] is the minimum
+        # surface-to-surface distance (not centroid distance).
+        a.Shape.distToShape = MagicMock(return_value=(42.5, [], []))
         b = make_part_object("B")
-        b.Shape.CenterOfMass = MagicMock()
         doc = make_mock_doc([a, b])
         mock_FreeCAD.ActiveDocument = doc
         result = self.handler.measure_distance({'object1': 'A', 'object2': 'B'})
         assert_success_contains(self, result, "42.5", "mm")
+        a.Shape.distToShape.assert_called_once_with(b.Shape)
+
+    def test_overlapping_reports_touching_not_centroid(self):
+        """Overlapping/touching parts must report ~0 surface distance and say so
+        — the old centroid-distance implementation returned a positive value."""
+        a = make_part_object("A")
+        a.Shape.distToShape = MagicMock(return_value=(0.0, [], []))
+        b = make_part_object("B")
+        doc = make_mock_doc([a, b])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.measure_distance({'object1': 'A', 'object2': 'B'})
+        self.assertIn("touching", result.lower())
 
 
 class TestGetSurfaceArea(unittest.TestCase):

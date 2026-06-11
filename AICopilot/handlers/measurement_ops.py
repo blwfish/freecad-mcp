@@ -32,13 +32,15 @@ class MeasurementOpsHandler(BaseHandler):
             if not obj2:
                 return f"Object not found: {object2}"
 
-            # Calculate distance between centers of mass
+            # Minimum surface-to-surface distance — NOT centroid distance, which
+            # reports a positive value for touching/overlapping parts. distToShape
+            # returns [dist, points, geom_info]; dist == 0 means touching/overlap.
             if hasattr(obj1, 'Shape') and hasattr(obj2, 'Shape'):
-                center1 = obj1.Shape.CenterOfMass
-                center2 = obj2.Shape.CenterOfMass
-                distance = center1.distanceToPoint(center2)
-
-                return f"Distance between {object1} and {object2}: {distance:.2f} mm"
+                distance = obj1.Shape.distToShape(obj2.Shape)[0]
+                if distance < 1e-7:
+                    return (f"Distance between {object1} and {object2}: "
+                            f"{distance:.4f} mm (touching or overlapping)")
+                return f"Distance between {object1} and {object2}: {distance:.3f} mm"
             else:
                 return "Objects must have Shape property for distance measurement"
 

@@ -509,6 +509,19 @@ class TestBatchInterference(unittest.TestCase):
         self.assertIn("SUB-TOL", result)
         self.assertIn("Collisions: 1", result)
 
+    def test_common_failure_counted_as_failed_not_clear(self):
+        """A common() failure on one pair must be reported as failed — not abort
+        the whole batch, and not be silently counted as a clear pair."""
+        box1 = make_box("A", 0, 0, 0)
+        box2 = make_box("B", 0, 0, 0)
+        box1.Shape.BoundBox.intersect = MagicMock(return_value=True)
+        box1.Shape.common = MagicMock(side_effect=RuntimeError("OCCT boom"))
+        self.fc.ActiveDocument = make_mock_doc([box1, box2])
+        result = self.handler.batch_interference({'objects': ['A', 'B']})
+        self.assertIn("Failed (geometry error): 1", result)
+        self.assertIn("Clear: 0", result)
+        self.assertIn("Collisions: 0", result)
+
 
 class TestAlignmentCheck(unittest.TestCase):
 
