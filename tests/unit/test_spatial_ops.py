@@ -309,6 +309,20 @@ class TestClearance(unittest.TestCase):
         result = self.handler.clearance({'object1': 'A', 'object2': 'B'})
         self.assertIn("TOUCHING", result)
 
+    def test_sub_linear_tolerance_reports_touching(self):
+        """A gap below OCCT's linear tolerance is contact — must report TOUCHING.
+        The old threshold was _VOL_TOL (1e-9 mm³) used as a distance, far tighter
+        than OCCT's resolution, so it misreported sub-tolerance contact as a gap."""
+        box1 = make_box("A", 0, 0, 0)
+        box2 = make_box("B", 10, 0, 0)
+        box1.Shape.distToShape = MagicMock(return_value=(
+            1e-8,  # < _OCCT_LIN_TOL (~1e-7) but > _VOL_TOL (1e-9)
+            [(FakeVector(10, 5, 5), FakeVector(10, 5, 5))]
+        ))
+        self.fc.ActiveDocument = make_mock_doc([box1, box2])
+        result = self.handler.clearance({'object1': 'A', 'object2': 'B'})
+        self.assertIn("TOUCHING", result)
+
     def test_multiple_point_pairs(self):
         box1 = make_box("A")
         box2 = make_box("B", 15, 0, 0)

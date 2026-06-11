@@ -159,6 +159,10 @@ class PartOpsHandler(BaseHandler):
         try:
             object_name = args.get('object_name', '')
             scale_factor = args.get('scale_factor', 1.5)
+            # Guard non-positive factors: <=0 inverts/zeroes the non-parametric
+            # transformGeometry path (parametric paths get clamped by FreeCAD).
+            if scale_factor <= 0:
+                return f"scale_factor must be > 0 (got {scale_factor})"
 
             doc = self.get_document()
             if not doc:

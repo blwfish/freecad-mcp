@@ -594,8 +594,9 @@ class TestShellSolid(unittest.TestCase):
         shell = doc.Objects[-1]
         self.assertEqual(shell.Value, 2)
         self.assertEqual(shell.Source, box)
-        # face_idx 5 → faces tuple has 4 (0-based)
-        self.assertEqual(shell.Faces, (4,))
+        # Part::Thickness.Faces is a LinkSubList: (object, ("Face5",)) with the
+        # 1-based FaceN name — not a raw 0-based int index.
+        self.assertEqual(shell.Faces, (box, ("Face5",)))
         assert_success_contains(self, result, "2mm", "1 face")
 
 
