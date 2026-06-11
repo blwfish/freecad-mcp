@@ -285,16 +285,19 @@ class PartDesignOpsHandler(BaseHandler):
             if not obj:
                 return f"Object not found: {object_name}"
 
+            # Guard before touching obj.Shape.Edges so a shapeless object gets a
+            # clear message, not an AttributeError from the success-line below.
+            if not hasattr(obj, 'Shape') or not obj.Shape.Edges:
+                return f"Object {object_name} has no edges to fillet"
+            n_edges = len(obj.Shape.Edges)
+
             fillet = doc.addObject("Part::Fillet", name)
             fillet.Base = obj
-
-            if hasattr(obj, 'Shape') and obj.Shape.Edges:
-                edge_list = [(i + 1, radius, radius) for i in range(len(obj.Shape.Edges))]
-                fillet.Edges = edge_list
+            fillet.Edges = [(i + 1, radius, radius) for i in range(n_edges)]
 
             self.recompute(doc)
 
-            return f"Created fillet: {fillet.Name} on all {len(obj.Shape.Edges)} edges with radius {radius}mm"
+            return f"Created fillet: {fillet.Name} on all {n_edges} edges with radius {radius}mm"
 
         except Exception as e:
             return f"Error creating auto fillet: {e}"
@@ -1121,8 +1124,18 @@ class PartDesignOpsHandler(BaseHandler):
             sketch_name = args.get('sketch_name', '')
             axis = args.get('axis', 'z')
             pitch = args.get('pitch', 2)
-            height = args.get('height', 10)
-            turns = args.get('turns', 5)
+            height = args.get('height')
+            turns = args.get('turns')
+            # A helix is pitch + (turns OR height). turns was read but never used,
+            # so height ignored it and the success message lied. If turns is given,
+            # it drives the height (height = pitch * turns); otherwise derive turns
+            # from height so the reported value is real.
+            if turns is not None:
+                height = pitch * turns
+            else:
+                if height is None:
+                    height = 10
+                turns = round(height / pitch, 2) if pitch else 0
             left_handed = args.get('left_handed', False)
             name = args.get('name', 'Helix')
 

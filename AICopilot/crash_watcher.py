@@ -38,7 +38,13 @@ def set_current_op(tool: str, args: dict) -> None:
     safe_args = {}
     for k, v in args.items():
         s = str(v)
-        safe_args[k] = (s[:_MAX_ARG_BYTES] + " … [truncated]") if len(s) > _MAX_ARG_BYTES else s
+        # _MAX_ARG_BYTES is a BYTE limit — truncate on the encoded bytes, not the
+        # character count, so multibyte UTF-8 args don't blow past it.
+        b = s.encode("utf-8")
+        if len(b) > _MAX_ARG_BYTES:
+            safe_args[k] = b[:_MAX_ARG_BYTES].decode("utf-8", errors="ignore") + " … [truncated]"
+        else:
+            safe_args[k] = s
 
     data = {
         "tool":       tool,

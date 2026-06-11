@@ -71,6 +71,27 @@ class TestExtrude(unittest.TestCase):
 
         assert_success_contains(self, result, "x")
 
+    def test_extrude_uppercase_direction_not_silently_z(self):
+        """'X' must extrude in X — extrude used to be case-sensitive and would
+        silently fall through to Z for any non-lowercase value."""
+        sketch = make_sketch("RectS", has_wires=True)
+        doc = make_mock_doc([sketch])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.extrude({
+            'profile_sketch': 'RectS', 'height': 5, 'direction': 'X',
+        })
+        assert_success_contains(self, result, "x")
+
+    def test_extrude_invalid_direction_errors(self):
+        """An unrecognized direction must error, not silently extrude in Z."""
+        sketch = make_sketch("RectS", has_wires=True)
+        doc = make_mock_doc([sketch])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.extrude({
+            'profile_sketch': 'RectS', 'height': 5, 'direction': 'diagonal',
+        })
+        self.assertIn("Invalid direction", result)
+
     def test_extrude_uses_face_path_when_only_faces(self):
         """When sketch has no Wires but has Faces, fall back to Shape.extrude."""
         sketch = make_sketch("S", has_wires=False, has_faces=True)

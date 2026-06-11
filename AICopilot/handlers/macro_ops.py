@@ -283,8 +283,9 @@ class MacroOpsHandler(BaseHandler):
         except ImportError:
             pass
 
-        old_stdout = sys.stdout
+        old_stdout, old_stderr = sys.stdout, sys.stderr
         sys.stdout = captured = io.StringIO()
+        sys.stderr = captured_err = io.StringIO()  # macro warnings/errors were dropped
         try:
             try:
                 code_obj = compile(source, path, "exec")
@@ -303,14 +304,19 @@ class MacroOpsHandler(BaseHandler):
                 })
         finally:
             sys.stdout = old_stdout
+            sys.stderr = old_stderr
 
         stdout_text = captured.getvalue().rstrip("\n")
+        stderr_text = captured_err.getvalue().rstrip("\n")
         result_value = namespace.get("result")
         result_repr = repr(result_value) if result_value is not None else ""
 
-        return json.dumps({
+        out = {
             "name": os.path.basename(path),
             "path": path,
             "stdout": stdout_text,
             "result": result_repr,
-        })
+        }
+        if stderr_text:
+            out["stderr"] = stderr_text
+        return json.dumps(out)

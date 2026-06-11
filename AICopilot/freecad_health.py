@@ -275,10 +275,14 @@ class FreeCADHealthMonitor:
         except Exception as e:
             crash_info["freecad_state"] = {"error": str(e)}
         
-        # Save crash log
+        # Save crash log — guard the write so a disk/permission error doesn't
+        # unwind the health-monitor loop and lose the crash record entirely.
         crash_file = self.crash_log_dir / f"crash_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        with open(crash_file, 'w') as f:
-            json.dump(crash_info, f, indent=2)
+        try:
+            with open(crash_file, 'w') as f:
+                json.dump(crash_info, f, indent=2)
+        except Exception as e:
+            self.logger.error(f"Failed to write crash log {crash_file}: {e}")
         
         # Add to crash history
         self.crash_history.append(crash_info)

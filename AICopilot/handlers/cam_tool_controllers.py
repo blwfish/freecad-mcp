@@ -280,7 +280,7 @@ class CAMToolControllersHandler(BaseHandler):
             updates = []
 
             if 'spindle_speed' in args:
-                controller.SpindleSpeed = args['spindle_speed']
+                controller.SpindleSpeed = float(args['spindle_speed'])  # coerce, like the add path
                 updates.append(f"spindle_speed: {args['spindle_speed']} RPM")
 
             if 'feed_rate' in args:

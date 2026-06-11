@@ -84,6 +84,16 @@ class TestSetCell(unittest.TestCase):
         })
         assert_error_contains(self, result, "not a spreadsheet")
 
+    def test_set_none_value_clears_not_literal_none(self):
+        """value=None must clear the cell, not write the string 'None'."""
+        sheet = make_spreadsheet("Params")
+        doc = make_mock_doc([sheet])
+        mock_FreeCAD.ActiveDocument = doc
+        self.handler.set_cell({
+            'spreadsheet_name': 'Params', 'cell': 'A1', 'value': None,
+        })
+        self.assertEqual(sheet._cells_data.get('A1'), '')
+
     def test_set_cell_round_trips(self):
         sheet = make_spreadsheet("Params")
         doc = make_mock_doc([sheet])

@@ -37,7 +37,8 @@ class CAMToolsHandler(BaseHandler):
                 return "Error: Path.Tool module not available. Requires FreeCAD 1.2+"
 
             name = args.get('name', '')
-            tool_type = args.get('tool_type', 'endmill')
+            # `or 'endmill'` so an explicit None doesn't crash on .lower() below.
+            tool_type = args.get('tool_type') or 'endmill'
             diameter = args.get('diameter', 6.0)
             flute_length = args.get('flute_length', None)
             shank_diameter = args.get('shank_diameter', None)

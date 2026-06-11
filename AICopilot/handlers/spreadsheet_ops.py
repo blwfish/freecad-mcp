@@ -52,7 +52,8 @@ class SpreadsheetOpsHandler(BaseHandler):
             if spreadsheet.TypeId != 'Spreadsheet::Sheet':
                 return f"Object {spreadsheet_name} is not a spreadsheet"
 
-            spreadsheet.set(cell, str(value))
+            # A null value clears the cell rather than writing the literal "None".
+            spreadsheet.set(cell, '' if value is None else str(value))
             self.recompute(doc)
 
             return f"Set {spreadsheet_name}.{cell} = {value}"
