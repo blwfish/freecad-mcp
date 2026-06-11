@@ -127,7 +127,7 @@ doc = FreeCAD.newDocument({doc_name!r})
 print('created', doc.Name)
 """)
         try:
-            result = _macro({"operation": "run", "name": "make_doc.FCMacro"})
+            result = _macro({"operation": "run", "name": "make_doc.FCMacro", "confirmed": True})
             assert "error" not in result, result
             assert "created" in result["stdout"]
 
@@ -153,7 +153,7 @@ import FreeCAD
 import Part
 print(Part is not None and FreeCAD is not None)
 """)
-        result = _macro({"operation": "run", "name": "uses_part.FCMacro"})
+        result = _macro({"operation": "run", "name": "uses_part.FCMacro", "confirmed": True})
         assert "error" not in result, result
         assert result["stdout"] == "True"
 
