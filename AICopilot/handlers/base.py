@@ -224,6 +224,29 @@ class BaseHandler:
                     f"this large may crash FreeCAD. Consider simplifying first.")
         return None
 
+    def feed_to_mm_min(self, value):
+        """Convert a FreeCAD feed property to a numeric value in mm/min.
+
+        CAM feed/rapid properties (HorizFeed, VertFeed, ...) are App::PropertySpeed
+        velocity Quantities whose base unit is mm/s. Reading the raw property and
+        string-splitting it is fragile — the formatted string's unit depends on the
+        user's unit schema (mm/s, m/s, ...), so a fixed ``* 60`` is wrong under any
+        non-default schema. ``Quantity.getValueAs('mm/min')`` is exact regardless.
+
+        Returns the mm/min value as a float, or None if it can't be interpreted.
+        """
+        if value is None:
+            return None
+        try:
+            q = value if hasattr(value, 'getValueAs') else FreeCAD.Units.Quantity(value)
+            return float(q.getValueAs('mm/min'))
+        except Exception:
+            # Last-resort fallback: assume the raw magnitude is already in mm/s.
+            try:
+                return float(str(value).split()[0]) * 60.0
+            except Exception:
+                return None
+
     def find_body(self, doc: FreeCAD.Document = None):
         """Find a PartDesign Body in the document.
 

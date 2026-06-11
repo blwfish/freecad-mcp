@@ -13,7 +13,24 @@ Version: 2.1.2 (matches freecad_mcp_handler v2.1.2)
 
 import socket
 import struct
+import sys
 from typing import Optional
+
+# Maximum message size for the length-prefixed protocol (single source of truth
+# on the bridge side). The handler (freecad_mcp_handler.py) embeds its own copy
+# because it runs inside FreeCAD and cannot import this module — keep them equal.
+MAX_MESSAGE_SIZE = 50 * 1024  # 50KB ≈ 15K tokens
+
+
+def _log(msg: str) -> None:
+    """Log to stderr only.
+
+    This process speaks the MCP protocol over *stdout*; any stray write to
+    stdout is parsed by the client as a protocol frame and corrupts the
+    transport. All framing diagnostics must go to stderr.
+    """
+    print(msg, file=sys.stderr, flush=True)
+
 
 def send_message(sock: socket.socket, message_str: str) -> bool:
     """Send a length-prefixed message over socket (client-side).
@@ -39,19 +56,26 @@ def send_message(sock: socket.socket, message_str: str) -> bool:
         # Encode message
         message_bytes = message_str.encode('utf-8')
         message_len = len(message_bytes)
-        
+
+        # Refuse to put an oversized frame on the wire: the peer will reject the
+        # body after reading the length prefix, desyncing every subsequent frame.
+        if message_len > MAX_MESSAGE_SIZE:
+            _log(f"❌ Refusing to send oversized message: {message_len} bytes "
+                 f"(limit {MAX_MESSAGE_SIZE}); sending it would desync the framing.")
+            return False
+
         # Create length prefix (4 bytes, big-endian unsigned int)
         length_prefix = struct.pack('>I', message_len)
-        
+
         # Send length + message atomically
         sock.sendall(length_prefix + message_bytes)
         return True
-        
+
     except (socket.error, BrokenPipeError, OSError) as e:
-        print(f"⚠️  Socket send error: {e}")
+        _log(f"⚠️  Socket send error: {e}")
         return False
     except Exception as e:
-        print(f"❌ Unexpected error in send_message: {e}")
+        _log(f"❌ Unexpected error in send_message: {e}")
         return False
 
 
@@ -73,53 +97,50 @@ def receive_message(sock: socket.socket, timeout: float = 30.0) -> Optional[str]
             response = json.loads(response_str)
             print(response['result'])
     """
+    old_timeout = sock.gettimeout()
     try:
         # Set socket timeout
-        old_timeout = sock.gettimeout()
         sock.settimeout(timeout)
-        
-        # Read the 4-byte length prefix
+
+        # Read the 4-byte length prefix (None => connection closed)
         length_bytes = _recv_exact(sock, 4)
-        if not length_bytes:
-            sock.settimeout(old_timeout)
+        if length_bytes is None:
             return None
-            
+
         # Unpack length
         message_len = struct.unpack('>I', length_bytes)[0]
-        
+
         # Validate length (prevent memory attacks and accidental token waste)
-        MAX_MESSAGE_SIZE = 50 * 1024  # 50KB = ~15K tokens (~7.5% of daily Pro budget)
         if message_len > MAX_MESSAGE_SIZE:
-            message_kb = message_len / 1024
             est_tokens = int(message_len / 3.5)
-            print(f"❌ Message too large: {message_kb:.1f}KB ({est_tokens:,} tokens)")
-            print(f"   Current limit: {MAX_MESSAGE_SIZE/1024:.0f}KB to prevent accidental token waste")
-            print(f"   To raise limit: Edit mcp_bridge_framing.py line ~214, change MAX_MESSAGE_SIZE")
-            print(f"   ⚠️  Be aware: This message would cost ~{est_tokens:,} tokens!")
-            sock.settimeout(old_timeout)
+            _log(f"❌ Message too large: {message_len/1024:.1f}KB ({est_tokens:,} tokens); "
+                 f"limit {MAX_MESSAGE_SIZE/1024:.0f}KB. To raise it, change MAX_MESSAGE_SIZE "
+                 f"in mcp_bridge_framing.py (and the matching copy in freecad_mcp_handler.py).")
             return None
-        
-        # Read the exact number of message bytes
+
+        # Read the exact number of message bytes. message_len may legitimately be
+        # 0 (an empty-body frame); _recv_exact returns b'' for that and None only
+        # on a closed connection, so distinguish with `is None` — never falsiness,
+        # which would misread a valid empty frame as a disconnect.
         message_bytes = _recv_exact(sock, message_len)
-        if not message_bytes:
-            sock.settimeout(old_timeout)
+        if message_bytes is None:
             return None
-            
-        # Restore original timeout
-        sock.settimeout(old_timeout)
-        
+
         # Decode and return
         return message_bytes.decode('utf-8')
-        
+
     except socket.timeout:
-        print("⚠️  Socket receive timeout")
+        _log("⚠️  Socket receive timeout")
         return None
     except UnicodeDecodeError as e:
-        print(f"❌ Message decode error: {e}")
+        _log(f"❌ Message decode error: {e}")
         return None
     except Exception as e:
-        print(f"❌ Receive error: {e}")
+        _log(f"❌ Receive error: {e}")
         return None
+    finally:
+        # Always restore the caller's timeout, even on an exception path.
+        sock.settimeout(old_timeout)
 
 
 def _recv_exact(sock: socket.socket, num_bytes: int) -> Optional[bytes]:

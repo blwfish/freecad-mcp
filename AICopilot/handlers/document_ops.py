@@ -99,30 +99,27 @@ class DocumentOpsHandler(BaseHandler):
             if not doc:
                 return "No active document"
 
-            limit = min(args.get('limit', 100), 500)  # Cap at 500
-            offset = args.get('offset', 0)
+            # Clamp pagination args. limit is a maximum: 0 legitimately means
+            # "count only" (returns no objects), negative collapses to 0 — but it
+            # must never become a negative slice bound. offset cannot be negative
+            # (a negative offset would otherwise skip from the end of the list).
+            raw_limit = args.get('limit', 100)
+            limit = max(0, min(int(100 if raw_limit is None else raw_limit), 500))
+            raw_offset = args.get('offset', 0)
+            offset = max(0, int(0 if raw_offset is None else raw_offset))
             type_filter = args.get('type_filter', None)
 
             total_count = len(doc.Objects)
+            # Objects matching the filter — this (not total_count) is what drives
+            # pagination, so the caller can compute pages and detect truncation.
+            matching = [obj for obj in doc.Objects
+                        if not (type_filter and type_filter not in obj.TypeId)]
+            filtered_total = len(matching)
+            page = matching[offset:offset + limit]
 
             objects = []
-            count = 0
-            skipped = 0
-
-            for obj in doc.Objects:
-                # Apply type filter if specified
-                if type_filter and type_filter not in obj.TypeId:
-                    continue
-
-                # Handle offset
-                if skipped < offset:
-                    skipped += 1
-                    continue
-
-                # Stop if we've reached the limit
-                if count >= limit:
-                    break
-
+            skipped_errors = 0
+            for obj in page:
                 # Safely access properties - some FeaturePython objects
                 # can trigger GUI updates when accessing Label
                 try:
@@ -138,20 +135,25 @@ class DocumentOpsHandler(BaseHandler):
                     try:
                         obj_info["property_count"] = len(obj.PropertiesList)
                     except Exception:
-                        pass
+                        obj_info["property_count"] = None
                     objects.append(obj_info)
-                    count += 1
                 except Exception as e:
+                    skipped_errors += 1
                     FreeCAD.Console.PrintWarning(f"[MCP] Skipping object during list_objects: {e}\n")
                     continue
 
             result = {
-                "total": total_count,
+                "total": total_count,            # objects in the document
+                "filtered_total": filtered_total,  # objects matching type_filter
                 "returned": len(objects),
                 "offset": offset,
                 "limit": limit,
+                # True when more matching objects exist beyond this page.
+                "has_more": offset + len(page) < filtered_total,
                 "objects": objects
             }
+            if skipped_errors:
+                result["skipped_errors"] = skipped_errors
 
             return json.dumps(result)
 

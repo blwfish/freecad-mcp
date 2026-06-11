@@ -623,8 +623,9 @@ class CAMOpsHandler(BaseHandler):
                 if hasattr(tc, 'SpindleSpeed'):
                     result += f"    Spindle Speed: {tc.SpindleSpeed} RPM\n"
                 if hasattr(tc, 'HorizFeed'):
-                    feed_mmpm = float(str(tc.HorizFeed).split()[0]) * 60
-                    result += f"    Feed Rate: {feed_mmpm:.0f} mm/min\n"
+                    feed_mmpm = self.feed_to_mm_min(tc.HorizFeed)
+                    if feed_mmpm is not None:
+                        result += f"    Feed Rate: {feed_mmpm:.0f} mm/min\n"
 
             if hasattr(operation, 'Base'):
                 result += f"  Base Object: {operation.Base}\n"

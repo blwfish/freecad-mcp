@@ -303,6 +303,53 @@ class TestListObjectsDegeneratePagination:
         assert result["returned"] == 100
         assert result["total"] - result["returned"] == 500
 
+    def _make_doc_mixed(self, mock_freecad, n_part, n_other):
+        """Document with n_part Part::Feature objects and n_other Part::Box."""
+        doc = MagicMock()
+        objs = []
+        for i in range(n_part):
+            obj = MagicMock()
+            obj.Name = f"Feat{i:04d}"
+            obj.Label = f"Feat{i:04d}"
+            obj.TypeId = "Part::Feature"
+            objs.append(obj)
+        for i in range(n_other):
+            obj = MagicMock()
+            obj.Name = f"Box{i:04d}"
+            obj.Label = f"Box{i:04d}"
+            obj.TypeId = "Part::Box"
+            objs.append(obj)
+        doc.Objects = objs
+        mock_freecad.ActiveDocument = doc
+        return doc
+
+    def test_filtered_total_reflects_type_filter(self, doc_handler, mock_freecad):
+        """With a type_filter active, filtered_total must count only matching
+        objects, not the whole document — otherwise a caller can't compute
+        page count. `total` still reports the document size."""
+        self._make_doc_mixed(mock_freecad, n_part=3, n_other=7)
+        result = json.loads(doc_handler.list_objects({"type_filter": "Box"}))
+        assert result["total"] == 10            # whole document
+        assert result["filtered_total"] == 7    # only Part::Box
+        assert result["returned"] == 7
+        assert result["has_more"] is False
+
+    def test_has_more_true_when_more_pages(self, doc_handler, mock_freecad):
+        """has_more must be True when matching objects extend past the page."""
+        self._make_doc(mock_freecad, n_objects=250)
+        result = json.loads(doc_handler.list_objects({"limit": 100, "offset": 0}))
+        assert result["returned"] == 100
+        assert result["filtered_total"] == 250
+        assert result["has_more"] is True
+
+    def test_has_more_false_on_last_page(self, doc_handler, mock_freecad):
+        """has_more must be False once the page reaches the end."""
+        self._make_doc(mock_freecad, n_objects=250)
+        result = json.loads(doc_handler.list_objects({"limit": 100, "offset": 200}))
+        assert result["returned"] == 50
+        assert result["offset"] == 200
+        assert result["has_more"] is False
+
 
 # ---------------------------------------------------------------------------
 # hide_object / show_object / delete_object

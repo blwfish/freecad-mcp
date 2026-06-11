@@ -191,6 +191,14 @@ def send_message(sock: socket.socket, message_str: str) -> bool:
     """Send a length-prefixed message over the socket."""
     try:
         message_bytes = message_str.encode('utf-8')
+        # Refuse to put an oversized frame on the wire: the peer rejects the body
+        # after the length prefix, desyncing every subsequent frame.
+        if len(message_bytes) > MAX_MESSAGE_SIZE:
+            FreeCAD.Console.PrintError(
+                f"Refusing to send oversized message: {len(message_bytes)} bytes "
+                f"(limit: {MAX_MESSAGE_SIZE}); would desync framing.\n"
+            )
+            return False
         length_prefix = struct.pack('>I', len(message_bytes))
         sock.sendall(length_prefix + message_bytes)
         return True
@@ -201,13 +209,12 @@ def send_message(sock: socket.socket, message_str: str) -> bool:
 
 def receive_message(sock: socket.socket, timeout: float = 30.0) -> Optional[str]:
     """Receive a length-prefixed message from the socket."""
+    old_timeout = sock.gettimeout()
     try:
-        old_timeout = sock.gettimeout()
         sock.settimeout(timeout)
 
         length_bytes = _recv_exact(sock, 4)
-        if not length_bytes:
-            sock.settimeout(old_timeout)
+        if length_bytes is None:
             return None
 
         message_len = struct.unpack('>I', length_bytes)[0]
@@ -216,12 +223,13 @@ def receive_message(sock: socket.socket, timeout: float = 30.0) -> Optional[str]
             FreeCAD.Console.PrintError(
                 f"Message too large: {message_len} bytes (limit: {MAX_MESSAGE_SIZE})\n"
             )
-            sock.settimeout(old_timeout)
             return None
 
+        # message_len may legitimately be 0 (empty-body frame); _recv_exact returns
+        # b'' for that and None only on a closed connection. Distinguish with
+        # `is None` so a valid empty frame is not misread as a disconnect.
         message_bytes = _recv_exact(sock, message_len)
-        sock.settimeout(old_timeout)
-        if not message_bytes:
+        if message_bytes is None:
             return None
 
         return message_bytes.decode('utf-8')
@@ -235,6 +243,9 @@ def receive_message(sock: socket.socket, timeout: float = 30.0) -> Optional[str]
     except Exception as e:
         FreeCAD.Console.PrintError(f"Receive error: {e}\n")
         return None
+    finally:
+        # Always restore the caller's timeout, even on an exception path.
+        sock.settimeout(old_timeout)
 
 
 def _recv_exact(sock: socket.socket, num_bytes: int) -> Optional[bytes]:
@@ -700,6 +711,7 @@ class FreeCADSocketServer:
                 return json.dumps({
                     "status": "error",
                     "error": task_result["error"],
+                    "error_id": task_result.get("error_id"),
                     "elapsed_s": round(job.get("elapsed", elapsed), 1),
                 })
             result_val = task_result.get("result", "done") if isinstance(task_result, dict) else str(task_result)
@@ -712,6 +724,7 @@ class FreeCADSocketServer:
             return json.dumps({
                 "status": "error",
                 "error": job.get("error", "unknown error"),
+                "error_id": job.get("error_id"),
                 "elapsed_s": round(job.get("elapsed", elapsed), 1),
             })
 
