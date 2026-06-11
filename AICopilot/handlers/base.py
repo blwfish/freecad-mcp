@@ -379,7 +379,8 @@ class BaseHandler:
             import tempfile as _tmp
             safe.append(os.path.realpath(_tmp.gettempdir()))
         else:
-            safe += ["/tmp", "/var/folders", "/var/tmp", "/Volumes"]
+            # Resolve each prefix so symlinks (e.g. /tmp -> /private/tmp on macOS) match.
+            safe += [os.path.realpath(p) for p in ("/tmp", "/var/folders", "/var/tmp", "/Volumes")]
 
         if any(resolved == s or resolved.startswith(s + os.sep) or resolved.startswith(s + "/")
                for s in safe):

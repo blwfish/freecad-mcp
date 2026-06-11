@@ -208,13 +208,13 @@ class TestRead:
 class TestRun:
     def test_run_captures_stdout(self, handler, macro_dir):
         _write_macro(macro_dir, "hi.FCMacro", "print('hello from macro')\n")
-        result = json.loads(handler.run({"name": "hi.FCMacro"}))
+        result = json.loads(handler.run({"name": "hi.FCMacro", "confirmed": True}))
         assert "error" not in result
         assert result["stdout"] == "hello from macro"
 
     def test_run_captures_result_variable(self, handler, macro_dir):
         _write_macro(macro_dir, "calc.FCMacro", "result = 42\n")
-        result = json.loads(handler.run({"name": "calc.FCMacro"}))
+        result = json.loads(handler.run({"name": "calc.FCMacro", "confirmed": True}))
         assert "error" not in result
         assert "42" in result["result"]
 
@@ -224,7 +224,7 @@ class TestRun:
             "uses_freecad.FCMacro",
             "print(FreeCAD is not None)\n",
         )
-        result = json.loads(handler.run({"name": "uses_freecad.FCMacro"}))
+        result = json.loads(handler.run({"name": "uses_freecad.FCMacro", "confirmed": True}))
         assert "error" not in result
         assert result["stdout"] == "True"
 
@@ -236,19 +236,19 @@ class TestRun:
             "check.FCMacro",
             "print('x' in dir())\n",
         )
-        json.loads(handler.run({"name": "set.FCMacro"}))
-        result = json.loads(handler.run({"name": "check.FCMacro"}))
+        json.loads(handler.run({"name": "set.FCMacro", "confirmed": True}))
+        result = json.loads(handler.run({"name": "check.FCMacro", "confirmed": True}))
         assert result["stdout"] == "False"
 
     def test_run_reports_syntax_error(self, handler, macro_dir):
         _write_macro(macro_dir, "broken.FCMacro", "def foo(:\n    pass\n")
-        result = json.loads(handler.run({"name": "broken.FCMacro"}))
+        result = json.loads(handler.run({"name": "broken.FCMacro", "confirmed": True}))
         assert "error" in result
         assert "SyntaxError" in result["error"]
 
     def test_run_reports_runtime_error(self, handler, macro_dir):
         _write_macro(macro_dir, "boom.FCMacro", "1/0\n")
-        result = json.loads(handler.run({"name": "boom.FCMacro"}))
+        result = json.loads(handler.run({"name": "boom.FCMacro", "confirmed": True}))
         assert "error" in result
         assert "ZeroDivisionError" in result["traceback"]
 
@@ -257,10 +257,10 @@ class TestRun:
         assert "error" in result
 
     def test_run_macro_not_found(self, handler, macro_dir):
-        result = json.loads(handler.run({"name": "ghost"}))
+        result = json.loads(handler.run({"name": "ghost", "confirmed": True}))
         assert "error" in result
         assert "not found" in result["error"].lower()
 
     def test_run_rejects_path_traversal(self, handler, macro_dir):
-        result = json.loads(handler.run({"name": "../etc/passwd"}))
+        result = json.loads(handler.run({"name": "../etc/passwd", "confirmed": True}))
         assert "error" in result
