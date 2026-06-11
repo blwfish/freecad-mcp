@@ -598,8 +598,16 @@ class SketchOpsHandler(BaseHandler):
             p2 = args.get('pos_id2', 0)
             value = args.get('value', None)
 
-            # Build constraint based on type
-            ct = constraint_type
+            # Build constraint based on type. Normalize case against the canonical
+            # vocabulary (single source of truth) so 'horizontal' / 'DISTANCEX'
+            # resolve instead of silently falling through to "Unknown" — the
+            # case-sensitive compares below are otherwise a syntactic seam.
+            _CANON = {n.lower(): n for n in (
+                'Horizontal', 'Vertical', 'Block', 'Perpendicular', 'Parallel',
+                'Tangent', 'Equal', 'Coincident', 'PointOnObject', 'Fix',
+                'Symmetric', 'Radius', 'Diameter', 'Distance', 'DistanceX',
+                'DistanceY', 'Angle')}
+            ct = _CANON.get(str(constraint_type).lower(), constraint_type)
 
             # --- Single-geometry, no value ---
             if ct in ('Horizontal', 'Vertical', 'Block'):

@@ -268,6 +268,47 @@ class TestAddPolygon(unittest.TestCase):
         # 6 line segments for hexagon
         self.assertEqual(s.addGeometry.call_count, 6)
 
+    def test_exactly_3_sides_makes_triangle(self):
+        """sides==3 is the boundary — must be accepted (the guard is `sides < 3`).
+        A `<`→`<=` mutant would silently kill triangles."""
+        s = _make_real_sketch_mock("S")
+        doc = make_mock_doc([s])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.add_polygon({
+            'sketch_name': 'S', 'sides': 3, 'radius': 5,
+        })
+        assert_success_contains(self, result, "3")
+        self.assertEqual(s.addGeometry.call_count, 3)
+
+
+class TestAddSlot(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(SketchOpsHandler)
+
+    def test_length_equals_width_rejected(self):
+        """length == width → half_len == 0 → a degenerate (circular) slot. The
+        guard is `half_len <= 0`, so equal is rejected; pins which side of the
+        boundary `<=` falls on."""
+        s = _make_real_sketch_mock("S")
+        doc = make_mock_doc([s])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.add_slot({
+            'sketch_name': 'S', 'length': 6, 'width': 6,
+        })
+        self.assertIn("must be greater", result)
+        self.assertFalse(s.addGeometry.called)
+
+    def test_length_just_over_width_succeeds(self):
+        s = _make_real_sketch_mock("S")
+        doc = make_mock_doc([s])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.add_slot({
+            'sketch_name': 'S', 'length': 7, 'width': 6,
+        })
+        self.assertNotIn("must be greater", result)
+        self.assertTrue(s.addGeometry.called)
+
 
 # ---------------------------------------------------------------------------
 # add_constraint — dispatch table
@@ -300,6 +341,22 @@ class TestAddConstraint(unittest.TestCase):
 
         assert_success_contains(self, result, "Horizontal")
         # Sketcher.Constraint('Horizontal', 0)
+        sc_call = mock_Sketcher.Constraint.call_args
+        self.assertEqual(sc_call.args, ('Horizontal', 0))
+
+    def test_constraint_type_is_case_insensitive(self):
+        """'horizontal' must resolve to the canonical 'Horizontal' rather than
+        falling through to 'Unknown constraint type' (syntactic-seam fix)."""
+        s = _make_real_sketch_mock("S")
+        doc = make_mock_doc([s])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.add_constraint({
+            'sketch_name': 'S', 'constraint_type': 'horizontal',
+            'geo_id1': 0,
+        })
+
+        self.assertNotIn("Unknown", result)
         sc_call = mock_Sketcher.Constraint.call_args
         self.assertEqual(sc_call.args, ('Horizontal', 0))
 
