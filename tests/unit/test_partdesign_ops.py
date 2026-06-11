@@ -285,6 +285,19 @@ class TestChamferEdges(unittest.TestCase):
         doc.addObject.assert_called_with("Part::Chamfer", "Chamfer")
         assert_success_contains(self, result, "all 12")
 
+    def test_auto_select_all_no_edges_errors(self):
+        """A zero-edge object must get a clear message, not a false 'all 0 edges'
+        success or an AttributeError (mirrors _create_fillet_auto)."""
+        box = make_box_object("B")
+        box.Shape.Edges = []
+        doc = make_mock_doc([box])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.chamfer_edges({
+            'object_name': 'B', 'distance': 0.5, 'auto_select_all': True,
+        })
+        self.assertIn("no edges to chamfer", result)
+        doc.addObject.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Hole wizard

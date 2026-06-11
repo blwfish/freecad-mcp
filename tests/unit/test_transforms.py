@@ -138,8 +138,9 @@ class TestCopyObject(unittest.TestCase):
         })
 
         assert_success_contains(self, result, "copy", "20")
-        # copyObject was called once
-        doc.copyObject.assert_called_once_with(box)
+        # copyObject was called once, with_dependencies=True so parametric/
+        # body-backed objects copy their dep chain instead of referencing the source
+        doc.copyObject.assert_called_once_with(box, True)
         # The new copy's Label is set to the requested name
         copy = doc.copyObject.return_value
         # Our make_mock_doc uses side_effect, not return_value;

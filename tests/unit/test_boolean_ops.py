@@ -8,6 +8,7 @@ shape parameter assembly, source visibility hiding, and error paths
 """
 
 import unittest
+from unittest.mock import MagicMock
 
 from tests.unit._freecad_mocks import (
     mock_FreeCAD,
@@ -63,6 +64,28 @@ class TestFuseObjects(unittest.TestCase):
         # Sources hidden after fuse
         self.assertFalse(a.Visibility)
         self.assertFalse(b.Visibility)
+
+    def test_fuse_null_result_keeps_sources_visible(self):
+        """If the boolean yields a null shape (non-manifold/coincident geometry),
+        the sources must stay visible and the handler must report failure — not
+        hide them behind an empty result."""
+        a = make_box_object("A")
+        b = make_box_object("B")
+        doc = make_mock_doc([a, b])
+        mock_FreeCAD.ActiveDocument = doc
+        base_add = doc.addObject.side_effect
+
+        def add_null(type_id, name=None):
+            obj = base_add(type_id, name)
+            obj.Shape.isNull = MagicMock(return_value=True)
+            return obj
+        doc.addObject.side_effect = add_null
+
+        result = self.handler.fuse_objects({'objects': ['A', 'B'], 'name': 'Union'})
+
+        self.assertIn("empty/invalid", result)
+        self.assertTrue(a.Visibility)   # sources NOT hidden on failure
+        self.assertTrue(b.Visibility)
 
     def test_fuse_three_objects(self):
         a = make_box_object("A")

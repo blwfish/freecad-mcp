@@ -260,7 +260,10 @@ class PartDesignOpsHandler(BaseHandler):
             else:
                 fillet = doc.addObject("Part::Fillet", name)
                 fillet.Base = obj
-                edge_list = [(edge_idx, radius, radius) for edge_idx in edges]
+                # Bounds-check like _create_fillet_with_selection — an out-of-range
+                # index otherwise produces a cryptic OCCT recompute error.
+                n_edges = len(obj.Shape.Edges) if hasattr(obj, 'Shape') else 0
+                edge_list = [(idx, radius, radius) for idx in edges if 1 <= idx <= n_edges]
                 fillet.Edges = edge_list
 
             self.recompute(doc)
@@ -399,16 +402,21 @@ class PartDesignOpsHandler(BaseHandler):
             if not obj:
                 return f"Object not found: {object_name}"
 
+            # Guard before touching obj.Shape.Edges so a shapeless object gets a
+            # clear message, not an AttributeError from the success line below —
+            # mirrors _create_fillet_auto. (Without this, zero-edge objects also
+            # report a false "all 0 edges" success.)
+            if not hasattr(obj, 'Shape') or not obj.Shape.Edges:
+                return f"Object {object_name} has no edges to chamfer"
+            n_edges = len(obj.Shape.Edges)
+
             chamfer = doc.addObject("Part::Chamfer", name)
             chamfer.Base = obj
-
-            if hasattr(obj, 'Shape') and obj.Shape.Edges:
-                edge_list = [(i + 1, distance) for i in range(len(obj.Shape.Edges))]
-                chamfer.Edges = edge_list
+            chamfer.Edges = [(i + 1, distance) for i in range(n_edges)]
 
             self.recompute(doc)
 
-            return f"Created chamfer: {chamfer.Name} on all {len(obj.Shape.Edges)} edges with distance {distance}mm"
+            return f"Created chamfer: {chamfer.Name} on all {n_edges} edges with distance {distance}mm"
 
         except Exception as e:
             return f"Error creating auto chamfer: {e}"

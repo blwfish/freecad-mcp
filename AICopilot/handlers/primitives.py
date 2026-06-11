@@ -1,38 +1,41 @@
 # Primitive shape creation handlers for FreeCAD MCP
 #
 # ───────────────────────────────────────────────────────────────────────────
-# KNOWN GAP — primitives-validation
+# primitives-validation — status
 #
-# Every handler in this module reads dimensions via `args.get('length', 10)`
-# style fallbacks and passes them straight through to Part::Box / ::Cylinder
-# / etc. without validating sign, magnitude, or key spelling.  Three concrete
-# symptoms (each pinned by a test in tests/unit/test_primitives.py —
-# TestCreateBoxDegenerateDimensions, TestCreateCylinderDegenerateDimensions,
-# and the missing-key class):
+# (b) DONE: zero/negative dimensions are now rejected with the parameter name
+#     in the error (see _validate_positive and the per-handler checks). A null
+#     Part::Box/::Cylinder no longer silently lands in the document to crash a
+#     downstream OCCT Boolean. The Test*DegenerateDimensions classes in
+#     tests/unit/test_primitives.py assert the rejection.
 #
-#   1. create_box(length=0, width=0, height=0) returns "Created box (0x0x0mm)"
-#      — a null shape sits in the document and crashes downstream OCCT Booleans.
-#   2. create_box(length=-10, ...) propagates a negative dimension; FreeCAD
-#      silently clamps or produces an invalid shape.
-#   3. Missing `length` falls back to 10mm.  An LLM that types `'lenght'`
-#      gets a 10mm box silently.  This is the most common real-world hit
-#      because LLMs misspell parameter names constantly.  Pinned by
-#      test_missing_dimension_uses_default in TestCreateBoxDegenerateDimensions.
-#
-# WHEN MODIFYING THIS MODULE: grep for `TODO(primitives-validation)` to find
-# the call sites, and decide whether your change should also close the gap.
-# A proper fix would (a) reject unknown args keys with a clear error listing
-# the accepted parameters, and (b) reject zero/negative dimensions with the
-# parameter name in the error.  The Test*DegenerateDimensions classes in
-# tests/unit/test_primitives.py will fail when you do this — that's the
-# signal that you should flip them to assert the new validation behavior,
-# not silently delete them.
+# (a) STILL OPEN: unknown/misspelled arg keys ('lenght' → silent 10mm default)
+#     are NOT yet rejected. This needs the *full* injected-key envelope first:
+#     _dispatch_part_operations forwards the entire args dict (it carries
+#     `operation`, and the cyber confirm-gate can add `confirmed`, plus any
+#     async/internal `_`-prefixed keys). A naive allow-list that omits one of
+#     those would reject every primitive call. Enumerate the envelope before
+#     adding strict key validation; until then a misspelled dimension key still
+#     silently takes the default.
 # ───────────────────────────────────────────────────────────────────────────
 
 import FreeCAD
 import FreeCADGui
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from .base import BaseHandler
+
+
+def _validate_positive(prim: str, **dims) -> Optional[str]:
+    """Return an 'Error creating <prim>: ...' string if any named dimension is
+    not a number > 0; otherwise None. Names the offending parameter so the MCP
+    caller (often an LLM) can correct it."""
+    for name, val in dims.items():
+        try:
+            if float(val) <= 0:
+                return f"Error creating {prim}: {name} must be > 0 (got {val})"
+        except (TypeError, ValueError):
+            return f"Error creating {prim}: {name} must be a number (got {val!r})"
+    return None
 
 
 class PrimitivesHandler(BaseHandler):
@@ -41,8 +44,6 @@ class PrimitivesHandler(BaseHandler):
     def create_box(self, args: Dict[str, Any]) -> str:
         """Create a box with specified dimensions."""
         try:
-            # TODO(primitives-validation): no sign/key/zero check — see module
-            # header for the gap and the pinning test class to flip on fix.
             length = args.get('length', 10)
             width = args.get('width', 10)
             height = args.get('height', 10)
@@ -50,6 +51,10 @@ class PrimitivesHandler(BaseHandler):
             y = args.get('y', 0)
             z = args.get('z', 0)
             name = args.get('name', 'Box')
+
+            err = _validate_positive('box', length=length, width=width, height=height)
+            if err:
+                return err
 
             doc = self.get_document()
             if not doc:
@@ -79,6 +84,10 @@ class PrimitivesHandler(BaseHandler):
             z = args.get('z', 0)
             name = args.get('name', 'Cylinder')
 
+            err = _validate_positive('cylinder', radius=radius, height=height)
+            if err:
+                return err
+
             doc = self.get_document()
             if not doc:
                 return "Error creating cylinder: No active document. Call view_control(operation='create_document') first."
@@ -104,6 +113,10 @@ class PrimitivesHandler(BaseHandler):
             y = args.get('y', 0)
             z = args.get('z', 0)
             name = args.get('name', 'Sphere')
+
+            err = _validate_positive('sphere', radius=radius)
+            if err:
+                return err
 
             doc = self.get_document()
             if not doc:
@@ -132,6 +145,19 @@ class PrimitivesHandler(BaseHandler):
             z = args.get('z', 0)
             name = args.get('name', 'Cone')
 
+            # height must be positive; radii non-negative and not both zero —
+            # radius2=0 is a valid pointed cone, radius1==radius2 a valid cylinder.
+            err = _validate_positive('cone', height=height)
+            if err:
+                return err
+            try:
+                if float(radius1) < 0 or float(radius2) < 0:
+                    return f"Error creating cone: radii must be >= 0 (got R1={radius1}, R2={radius2})"
+                if float(radius1) == 0 and float(radius2) == 0:
+                    return "Error creating cone: at least one of radius1/radius2 must be > 0"
+            except (TypeError, ValueError):
+                return f"Error creating cone: radii must be numbers (got R1={radius1!r}, R2={radius2!r})"
+
             doc = self.get_document()
             if not doc:
                 return "Error creating cone: No active document. Call view_control(operation='create_document') first."
@@ -159,6 +185,10 @@ class PrimitivesHandler(BaseHandler):
             y = args.get('y', 0)
             z = args.get('z', 0)
             name = args.get('name', 'Torus')
+
+            err = _validate_positive('torus', radius1=radius1, radius2=radius2)
+            if err:
+                return err
 
             doc = self.get_document()
             if not doc:

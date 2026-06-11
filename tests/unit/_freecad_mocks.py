@@ -277,14 +277,19 @@ def make_mock_doc(objects: Optional[Iterable[Any]] = None, name: str = "TestDoc"
         obj.TypeId = type_id
         obj.Placement = _Placement()
         obj.Visibility = True
+        # A freshly created object reports a valid, non-null shape by default so
+        # handlers that verify the result before hiding sources (boolean ops) see
+        # success. Tests wanting a failed op override obj.Shape.isNull explicitly.
+        obj.Shape.isNull = MagicMock(return_value=False)
+        obj.Shape.isValid = MagicMock(return_value=True)
         doc.Objects.append(obj)
         return obj
 
     doc.getObject = _get_object
     doc.getObjectsByLabel = _get_objects_by_label
     doc.addObject = MagicMock(side_effect=_add_object)
-    doc.copyObject = MagicMock(side_effect=lambda o: _add_object(getattr(o, 'TypeId', 'Part::Feature'),
-                                                                  f"{o.Name}_copy"))
+    doc.copyObject = MagicMock(side_effect=lambda o, with_deps=False: _add_object(
+        getattr(o, 'TypeId', 'Part::Feature'), f"{o.Name}_copy"))
     doc.removeObject = MagicMock()
     doc.recompute = MagicMock()
     doc.FileName = ''
@@ -312,6 +317,7 @@ def _make_shape(volume=1000.0, faces=6, edges=12, vertices=8,
     shape.BoundBox = bb
 
     shape.isValid = MagicMock(return_value=is_valid)
+    shape.isNull = MagicMock(return_value=not is_valid)
     shape.isClosed = MagicMock(return_value=is_closed)
     shape.check = MagicMock()
     shape.copy = MagicMock(return_value=shape)
