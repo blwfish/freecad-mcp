@@ -78,8 +78,21 @@ class SpreadsheetOpsHandler(BaseHandler):
                 return f"Object {spreadsheet_name} is not a spreadsheet"
 
             value = spreadsheet.get(cell)
+            # getContents returns the stored expression/formula (e.g. "=A1+B1");
+            # spreadsheet.get() evaluates it away. Surface both so a read→write
+            # round-trip doesn't silently replace a live formula with a literal,
+            # and emit JSON null (not the string "None") for an empty cell.
+            try:
+                formula = spreadsheet.getContents(cell)
+            except Exception:
+                formula = None
 
-            return json.dumps({"cell": cell, "value": str(value)})
+            return json.dumps({
+                "cell": cell,
+                "value": None if value is None else str(value),
+                "type": type(value).__name__ if value is not None else None,
+                "formula": formula,
+            })
 
         except Exception as e:
             return f"Error getting cell: {e}"
@@ -354,33 +367,22 @@ class SpreadsheetOpsHandler(BaseHandler):
                 except Exception:
                     pass
 
-            # Alternative method using getAlias on known cells
-            # Scan full sheet dimensions if XML parsing fails.
-            # Ask the spreadsheet for its own row/column count; fall back to
-            # a large-but-finite ceiling so the loop terminates even if the
-            # spreadsheet API is unavailable.
-            if not aliases:
-                import string
+            # Fallback if XML parsing yielded nothing: ask the sheet for its
+            # non-empty cells and check each for an alias. getUsedCells() covers
+            # the exact populated extent regardless of column — far better than
+            # scanning a guessed A-Z grid (which silently missed columns past Z).
+            if not aliases and callable(getattr(spreadsheet, 'getUsedCells', None)):
                 try:
-                    max_row = spreadsheet.rows() if callable(getattr(spreadsheet, 'rows', None)) else 10000
-                    max_col = spreadsheet.columns() if callable(getattr(spreadsheet, 'columns', None)) else 26
+                    used_cells = list(spreadsheet.getUsedCells())
                 except Exception:
-                    max_row, max_col = 10000, 26
-                cols = list(string.ascii_uppercase[:max_col])
-                last_hit_row = 0
-                for row in range(1, max_row + 1):
-                    # Stop scanning if no alias found in 50 consecutive rows
-                    if row > last_hit_row + 50 and row > 1:
-                        break
-                    for col in cols:
-                        cell = f"{col}{row}"
-                        try:
-                            alias = spreadsheet.getAlias(cell)
-                            if alias:
-                                aliases[cell] = alias
-                                last_hit_row = row
-                        except Exception:
-                            pass
+                    used_cells = []
+                for cell in used_cells:
+                    try:
+                        alias = spreadsheet.getAlias(cell)
+                        if alias:
+                            aliases[cell] = alias
+                    except Exception:
+                        pass
 
             return json.dumps({
                 "spreadsheet": spreadsheet_name,
@@ -436,15 +438,18 @@ class SpreadsheetOpsHandler(BaseHandler):
 
             start_col_num = col_to_num(start_col)
 
-            lines = csv_data.strip().split('\n')
+            # csv.reader handles quoted fields, embedded delimiters and embedded
+            # newlines correctly; naive line.split(delimiter) silently breaks cell
+            # boundaries whenever a field contains the delimiter or a newline.
+            import csv as _csv
+            import io as _io
             cells_set = 0
-
-            for row_idx, line in enumerate(lines):
-                values = line.split(delimiter)
+            reader = _csv.reader(_io.StringIO(csv_data), delimiter=delimiter)
+            for row_idx, values in enumerate(reader):
                 for col_idx, value in enumerate(values):
                     col_letter = num_to_col(start_col_num + col_idx)
                     cell = f"{col_letter}{start_row + row_idx}"
-                    spreadsheet.set(cell, value.strip())
+                    spreadsheet.set(cell, value)
                     cells_set += 1
 
             self.recompute(doc)
@@ -459,7 +464,7 @@ class SpreadsheetOpsHandler(BaseHandler):
         try:
             spreadsheet_name = args.get('spreadsheet_name', '')
             start_cell = args.get('start_cell', 'A1')
-            end_cell = args.get('end_cell', 'J100')
+            end_cell = args.get('end_cell')   # None => auto-detect the used range
             delimiter = args.get('delimiter', ',')
 
             doc = self.get_document()
@@ -489,6 +494,18 @@ class SpreadsheetOpsHandler(BaseHandler):
                     num //= 26
                 return col
 
+            # Default to the sheet's actual used range, not a hardcoded J100 box
+            # that silently drops any data beyond column J / row 100.
+            if not end_cell:
+                end_cell = 'J100'
+                try:
+                    if callable(getattr(spreadsheet, 'getUsedRange', None)):
+                        ur = spreadsheet.getUsedRange()
+                        if ur and len(ur) == 2 and ur[1]:
+                            end_cell = ur[1]
+                except Exception:
+                    pass
+
             match_start = re.match(r'([A-Z]+)(\d+)', start_cell.upper())
             match_end = re.match(r'([A-Z]+)(\d+)', end_cell.upper())
 
@@ -500,23 +517,44 @@ class SpreadsheetOpsHandler(BaseHandler):
             start_row = int(match_start.group(2))
             end_row = int(match_end.group(2))
 
-            csv_lines = []
+            # csv.writer quotes/escapes fields containing the delimiter, quotes or
+            # newlines; the old delimiter.join produced structurally broken CSV.
+            import csv as _csv
+            import io as _io
+            buf = _io.StringIO()
+            writer = _csv.writer(buf, delimiter=delimiter)
+            errors = []
             for row in range(start_row, end_row + 1):
                 row_values = []
                 for col_num in range(start_col_num, end_col_num + 1):
                     cell = f"{num_to_col(col_num)}{row}"
                     try:
                         value = spreadsheet.get(cell)
-                        row_values.append(str(value) if value is not None else "")
-                    except Exception:
+                        row_values.append("" if value is None else str(value))
+                    except Exception as e:
                         row_values.append("")
-                csv_lines.append(delimiter.join(row_values))
+                        errors.append(f"{cell}: {e}")
+                writer.writerow(row_values)
+            csv_data = buf.getvalue()
 
-            csv_data = '\n'.join(csv_lines)
+            # Flag if the sheet has populated cells beyond the exported range.
+            truncated = False
+            try:
+                if callable(getattr(spreadsheet, 'getUsedRange', None)):
+                    ur = spreadsheet.getUsedRange()
+                    if ur and len(ur) == 2 and ur[1]:
+                        m = re.match(r'([A-Z]+)(\d+)', ur[1].upper())
+                        if m and (col_to_num(m.group(1)) > end_col_num
+                                  or int(m.group(2)) > end_row):
+                            truncated = True
+            except Exception:
+                pass
 
             return json.dumps({
                 "spreadsheet": spreadsheet_name,
                 "range": f"{start_cell}:{end_cell}",
+                "truncated": truncated,
+                "errors": errors,
                 "csv": csv_data
             })
 

@@ -361,6 +361,7 @@ class SpatialOpsHandler(BaseHandler):
             names = list(shapes.keys())
             collisions = []
             clear_pairs = 0
+            failed_pairs = []  # pairs where the geometry op raised — never silently "clear"
 
             for i in range(len(names)):
                 for j in range(i + 1, len(names)):
@@ -369,8 +370,14 @@ class SpatialOpsHandler(BaseHandler):
                     if not shapes[n1].BoundBox.intersect(shapes[n2].BoundBox):
                         clear_pairs += 1
                         continue
-                    common = shapes[n1].common(shapes[n2])
-                    vol = common.Volume
+                    # common() can raise on degenerate geometry — wrap per-pair so
+                    # one bad pair doesn't abort the whole batch.
+                    try:
+                        common = shapes[n1].common(shapes[n2])
+                        vol = common.Volume
+                    except Exception:
+                        failed_pairs.append((n1, n2))
+                        continue
                     if vol > _VOL_TOL:
                         collisions.append((n1, n2, vol))
                     else:
@@ -383,13 +390,19 @@ class SpatialOpsHandler(BaseHandler):
                             else:
                                 clear_pairs += 1
                         except Exception:
-                            clear_pairs += 1
+                            # A distToShape failure is NOT a clear pair — count it
+                            # as failed so collisions+clear+failed == total_pairs.
+                            failed_pairs.append((n1, n2))
 
             total_pairs = len(names) * (len(names) - 1) // 2
             lines = [f"Batch interference: {len(names)} objects, {total_pairs} pairs checked"]
             lines.extend(warnings)
             lines.append(f"  Collisions: {len(collisions)}")
             lines.append(f"  Clear: {clear_pairs}")
+            if failed_pairs:
+                lines.append(f"  Failed (geometry error): {len(failed_pairs)}")
+                for n1, n2 in failed_pairs:
+                    lines.append(f"    {n1} ↔ {n2}: interference check errored")
 
             if collisions:
                 lines.append(f"  Colliding pairs:")
