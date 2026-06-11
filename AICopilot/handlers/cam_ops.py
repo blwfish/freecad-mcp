@@ -1063,7 +1063,12 @@ class CAMOpsHandler(BaseHandler):
         start_time = time.time()
         try:
             result = self.post_process(args)
-            # Log this as export_gcode even though it delegates to post_process
+            # post_process returns a plain string; if it's an error, log it as a
+            # failure rather than recording a failed export as a success.
+            if isinstance(result, str) and result.lstrip().startswith("Error"):
+                return self.log_and_return("export_gcode", args,
+                                           error=Exception(result),
+                                           duration=time.time() - start_time)
             return self.log_and_return("export_gcode", args, result=result, duration=time.time() - start_time)
         except Exception as e:
             return self.log_and_return("export_gcode", args, error=e, duration=time.time() - start_time)

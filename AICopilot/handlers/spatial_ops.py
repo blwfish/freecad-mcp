@@ -9,6 +9,7 @@
 
 import json
 import math
+import re
 import FreeCAD
 from typing import Dict, Any, List, Tuple
 from .base import BaseHandler
@@ -260,10 +261,18 @@ class SpatialOpsHandler(BaseHandler):
             if not face1_id or not face2_id:
                 return "Both face1 and face2 are required (e.g., 'Face1', 'Face6')"
 
-            # Extract face index from "FaceN" string
+            # Extract face index from an anchored "FaceN" string — the old
+            # replace('Face','') turned 'Face1Face2' into '12' and silently
+            # accessed the wrong face.
+            def _face_idx(fid):
+                m = re.match(r'^\s*Face(\d+)\s*$', fid, re.IGNORECASE)
+                return int(m.group(1)) - 1 if m else None
             try:
-                idx1 = int(face1_id.replace('Face', '')) - 1
-                idx2 = int(face2_id.replace('Face', '')) - 1
+                idx1 = _face_idx(face1_id)
+                idx2 = _face_idx(face2_id)
+                if idx1 is None or idx2 is None:
+                    return (f"Invalid face id; expected 'FaceN' "
+                            f"(got {face1_id!r}, {face2_id!r})")
                 f1 = s1.Faces[idx1]
                 f2 = s2.Faces[idx2]
             except (ValueError, IndexError) as e:

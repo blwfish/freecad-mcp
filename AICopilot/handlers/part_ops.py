@@ -13,7 +13,9 @@ class PartOpsHandler(BaseHandler):
         try:
             profile_sketch = args.get('profile_sketch', '')
             height = args.get('height', 10)
-            direction = args.get('direction', 'z')
+            # Normalize case — 'X'/'Y'/'Z' must not silently fall through to Z
+            # (revolve already lowercases; extrude didn't).
+            direction = str(args.get('direction', 'z')).lower()
 
             doc = self.get_document()
             if not doc:
@@ -28,8 +30,10 @@ class PartOpsHandler(BaseHandler):
                 vec = FreeCAD.Vector(height, 0, 0)
             elif direction == 'y':
                 vec = FreeCAD.Vector(0, height, 0)
-            else:
+            elif direction == 'z':
                 vec = FreeCAD.Vector(0, 0, height)
+            else:
+                return f"Invalid direction {direction!r}; use 'x', 'y', or 'z'"
 
             if hasattr(sketch, 'Shape'):
                 shape = sketch.Shape

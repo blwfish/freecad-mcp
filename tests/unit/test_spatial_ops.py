@@ -387,6 +387,18 @@ class TestFaceRelationship(unittest.TestCase):
         result = self.handler.face_relationship({'object1': 'A', 'object2': 'B'})
         self.assertIn("face1 and face2 are required", result)
 
+    def test_malformed_face_id_rejected(self):
+        """'Face1Face2' must be rejected, not silently parsed to face 12 by the
+        old unanchored replace('Face','') logic."""
+        box1 = make_box("A", 0, 0, 0, 10, 10, 10)
+        box2 = make_box("B", 15, 0, 0, 10, 10, 10)
+        self.fc.ActiveDocument = make_mock_doc([box1, box2])
+        result = self.handler.face_relationship({
+            'object1': 'A', 'object2': 'B',
+            'face1': 'Face1Face2', 'face2': 'Face1'
+        })
+        self.assertIn("Invalid face id", result)
+
     def test_parallel_faces(self):
         box1 = make_box("A", 0, 0, 0, 10, 10, 10)
         box2 = make_box("B", 15, 0, 0, 10, 10, 10)

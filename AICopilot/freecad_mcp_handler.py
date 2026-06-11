@@ -754,6 +754,9 @@ class FreeCADSocketServer:
             "status": "error",
             "error": f"Cancelled by user after {elapsed}s",
             "elapsed": elapsed,
+            # TTL cleanup measures retention from "finished" (see ASYNC_JOB_TTL);
+            # without it a cancelled job is retained relative to its start time.
+            "finished": time.time(),
         })
 
         # Attempt to set the FreeCAD cancellation flag (works for PartDesign/Thickness ops;
@@ -787,7 +790,8 @@ class FreeCADSocketServer:
             jid: {
                 "status": j["status"],
                 "elapsed_s": round(now - j["started"], 1),
-                "tool": j.get("tool", "?"),
+                # async jobs carry 'label', sync ones 'tool' — fall back so neither shows '?'
+                "tool": j.get("tool") or j.get("label") or "?",
             }
             for jid, j in self._async_jobs.items()
         }
@@ -1700,6 +1704,7 @@ class FreeCADSocketServer:
             latest_log = max(log_files, key=os.path.getmtime)
 
             entries = []
+            skipped_malformed = 0
             with open(latest_log, "r") as f:
                 lines = f.readlines()
                 for line in lines[-count:]:
@@ -1709,13 +1714,17 @@ class FreeCADSocketServer:
                             continue
                         entries.append(entry)
                     except json.JSONDecodeError:
+                        skipped_malformed += 1
                         continue
 
-            return json.dumps({
+            result = {
                 "result": f"Retrieved {len(entries)} log entries from {os.path.basename(latest_log)}",
                 "log_file": latest_log,
                 "entries": entries,
-            })
+            }
+            if skipped_malformed:
+                result["skipped_malformed"] = skipped_malformed
+            return json.dumps(result)
 
         except Exception as e:
             return json.dumps({"error": f"Failed to retrieve debug logs: {e}"})

@@ -940,6 +940,17 @@ class TestListJobs:
         assert result["jobs"]["j2"]["status"] == "done"
         assert result["jobs"]["j1"]["tool"] == "execute_python_async"
 
+    def test_label_used_when_tool_field_absent(self, server):
+        """Async jobs carry 'label' not 'tool' — list_jobs must fall back to it
+        instead of showing '?'."""
+        server._async_jobs["j3"] = {
+            "status": "running",
+            "started": time.time() - 1,
+            "label": "build_sketch",
+        }
+        result = json.loads(server._list_jobs({}))
+        assert result["jobs"]["j3"]["tool"] == "build_sketch"
+
 
 class TestCleanupStaleAsyncJobs:
     """Tests for _cleanup_stale_async_jobs."""
