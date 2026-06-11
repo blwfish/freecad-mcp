@@ -8,6 +8,12 @@ from .base import BaseHandler
 class MeasurementOpsHandler(BaseHandler):
     """Handler for measurement and analysis operations."""
 
+    _ALLOWED_OPERATIONS = frozenset({
+        "measure_distance", "get_volume", "get_bounding_box", "get_mass_properties",
+        "get_surface_area", "get_center_of_mass", "count_elements", "list_faces",
+        "check_solid",
+    })
+
     def measure_distance(self, args: Dict[str, Any]) -> str:
         """Measure distance between two objects."""
         try:

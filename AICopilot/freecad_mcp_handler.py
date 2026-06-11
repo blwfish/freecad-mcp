@@ -1139,17 +1139,22 @@ class FreeCADSocketServer:
         return json.dumps({"job_id": job_id, "status": "submitted"})
 
     def _dispatch_to_handler(self, handler, args: Dict[str, Any], tool_name: str) -> str:
-        """Generic dispatch: look up args['operation'] as a method on handler."""
+        """Generic dispatch: look up args['operation'] against handler._ALLOWED_OPERATIONS."""
         operation = args.get("operation", "")
 
-        # Reject private/dunder methods to prevent access to internal APIs
-        if not operation or operation.startswith("_"):
-            return json.dumps({"error": f"Invalid operation: {operation}"})
+        if not operation:
+            return json.dumps({"error": f"Missing operation for {tool_name}"})
+
+        allowed = getattr(handler, "_ALLOWED_OPERATIONS", None)
+        if allowed is None:
+            return json.dumps({"error": f"Handler for {tool_name} has no _ALLOWED_OPERATIONS registry"})
+
+        if operation not in allowed:
+            return json.dumps({"error": f"Unknown {tool_name} operation: {operation}"})
 
         method = getattr(handler, operation, None)
-
         if not method or not callable(method):
-            return json.dumps({"error": f"Unknown {tool_name} operation: {operation}"})
+            return json.dumps({"error": f"Operation {operation} not callable on {tool_name} handler"})
 
         return self._call_on_gui_thread_async(method, args, f"{tool_name} {operation}")
 

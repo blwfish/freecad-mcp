@@ -9,6 +9,17 @@ from .base import BaseHandler
 class CAMOpsHandler(BaseHandler):
     """Handler for CAM (Path) workbench operations."""
 
+    _ALLOWED_OPERATIONS = frozenset({
+        "create_job", "setup_stock", "profile", "pocket", "drilling", "adaptive",
+        "face", "helix", "slot", "engrave", "vcarve", "deburr", "surface",
+        "surface_stl", "waterline", "pocket_3d", "thread_milling", "dogbone",
+        "lead_in_out", "ramp_entry", "tag", "axis_map", "drag_knife", "z_correct",
+        "create_tool", "tool_controller", "simulate", "post_process", "inspect",
+        "list_operations", "get_operation", "configure_operation", "delete_operation",
+        "configure_job", "inspect_job", "job_status", "simulate_job",
+        "export_gcode", "delete_job",
+    })
+
     def create_job(self, args: Dict[str, Any]) -> str:
         """Create a new CAM Job."""
         try:

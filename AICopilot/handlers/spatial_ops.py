@@ -30,6 +30,11 @@ _VOL_TOL = 1e-9   # mm³
 class SpatialOpsHandler(BaseHandler):
     """Handler for spatial relationship queries between objects."""
 
+    _ALLOWED_OPERATIONS = frozenset({
+        "interference_check", "clearance", "containment", "face_relationship",
+        "batch_interference", "alignment_check",
+    })
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------

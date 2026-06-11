@@ -94,6 +94,11 @@ class VerificationOpsHandler(BaseHandler):
     parsed form is {"ok": bool, "details": {...}, "message": str}.
     """
 
+    _ALLOWED_OPERATIONS = frozenset({
+        "verify_handedness", "verify_orientation", "verify_no_self_intersection",
+        "verify_topology",
+    })
+
     # ------------------------------------------------------------------
     # verify_handedness
     # ------------------------------------------------------------------

@@ -13,6 +13,11 @@ class CAMToolControllersHandler(BaseHandler):
     like spindle speed, feed rate, etc.
     """
 
+    _ALLOWED_OPERATIONS = frozenset({
+        "add_tool_controller", "list_tool_controllers", "get_tool_controller",
+        "update_tool_controller", "remove_tool_controller",
+    })
+
     def add_tool_controller(self, args: Dict[str, Any]) -> str:
         """Add a tool controller to a CAM job.
 

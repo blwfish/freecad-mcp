@@ -83,6 +83,8 @@ def _first_nonblank_line(content: str, max_len: int = 120) -> str:
 class MacroOpsHandler(BaseHandler):
     """Handler for FreeCAD macro discovery and execution."""
 
+    _ALLOWED_OPERATIONS = frozenset({"list", "read", "run"})
+
     # ------------------------------------------------------------------
     # list
     # ------------------------------------------------------------------

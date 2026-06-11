@@ -262,6 +262,8 @@ class FixtureOpsHandler(BaseHandler):
     string with {"ok": bool, "details": {...}, "message": str}.
     """
 
+    _ALLOWED_OPERATIONS = frozenset({"save_fixture", "compare_to_fixture"})
+
     # ------------------------------------------------------------------
     # save_fixture
     # ------------------------------------------------------------------
