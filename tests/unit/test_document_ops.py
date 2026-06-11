@@ -292,6 +292,23 @@ class TestListObjectsDegeneratePagination:
         result = json.loads(doc_handler.list_objects({"limit": 501}))
         assert result["limit"] == 500
 
+    def test_cap_actually_limits_returned_objects(self, doc_handler, mock_freecad):
+        """The cap must limit the OUTPUT, not just the echoed `limit` field.
+        With 501 objects and limit=500, exactly 500 come back and has_more is
+        True. The other cap tests use 10 objects, so dropping min(...,500) on the
+        slice would pass unnoticed there — this is the test that catches it."""
+        self._make_doc(mock_freecad, n_objects=501)
+        result = json.loads(doc_handler.list_objects({"limit": 500}))
+        assert result["returned"] == 500
+        assert result["has_more"] is True
+
+    def test_limit_499_returns_499(self, doc_handler, mock_freecad):
+        """Off-by-one below the cap: limit=499 returns 499 of 600."""
+        self._make_doc(mock_freecad, n_objects=600)
+        result = json.loads(doc_handler.list_objects({"limit": 499}))
+        assert result["returned"] == 499
+        assert result["has_more"] is True
+
     def test_truncation_detectable_via_total_minus_returned(self, doc_handler, mock_freecad):
         """When total > returned, the caller should be able to detect
         truncation.  The handler doesn't return a `truncated` flag, but

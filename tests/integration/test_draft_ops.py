@@ -74,7 +74,11 @@ class TestDraftClone:
         })
         result_str = str(result)
         assert "Unknown" not in result_str
-        assert "error" not in result_str.lower() or "clone" in result_str.lower()
+        # A successful clone names the created object. Assert that positively and
+        # that there's no error — the old `... or "clone" in ...` was a tautology
+        # (a success string always contains "clone"), so it never caught failure.
+        assert "clone" in result_str.lower()
+        assert "error" not in result_str.lower()
 
     def test_clone_missing_object(self, clean_document):
         result = send_command("draft_operations", {

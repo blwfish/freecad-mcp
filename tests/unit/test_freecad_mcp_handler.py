@@ -993,6 +993,61 @@ class TestCleanupStaleAsyncJobs:
         server._cleanup_stale_async_jobs()
         assert "err1" not in server._async_jobs
 
+    def test_exactly_at_ttl_is_kept(self, server):
+        """age == TTL is NOT removed — the check is strict `>`. Pins which side
+        of the boundary the `>`/`>=` choice falls on. Time is mocked so the
+        boundary is deterministic (real time would drift age just past TTL)."""
+        import freecad_mcp_handler as ss_mod
+        from unittest.mock import patch
+        T = 1_000_000.0
+        server._async_jobs["b"] = {"status": "done", "started": T - ss_mod.ASYNC_JOB_TTL}
+        with patch.object(ss_mod.time, "time", return_value=T):
+            server._cleanup_stale_async_jobs()
+        assert "b" in server._async_jobs
+
+    def test_one_second_over_ttl_is_removed(self, server):
+        import freecad_mcp_handler as ss_mod
+        from unittest.mock import patch
+        T = 1_000_000.0
+        server._async_jobs["b"] = {"status": "done", "started": T - ss_mod.ASYNC_JOB_TTL - 1}
+        with patch.object(ss_mod.time, "time", return_value=T):
+            server._cleanup_stale_async_jobs()
+        assert "b" not in server._async_jobs
+
+
+class TestTracebackRingBuffer:
+    """Round-trip + boundary coverage for _store_traceback / _get_last_traceback
+    (the error_id mechanism that get_last_traceback depends on)."""
+
+    def test_store_then_retrieve_by_id(self, server):
+        eid = server._store_traceback("Traceback: boom")
+        assert eid == "err-0001"
+        out = json.loads(server._get_last_traceback({"error_id": eid}))
+        assert out["error_id"] == eid
+        assert out["traceback"] == "Traceback: boom"
+
+    def test_unknown_error_id_returns_error(self, server):
+        server._store_traceback("x")
+        out = json.loads(server._get_last_traceback({"error_id": "err-9999"}))
+        assert "No traceback found" in out["error"]
+
+    def test_ring_buffer_evicts_past_20(self, server):
+        for i in range(25):
+            server._store_traceback(f"tb{i}")
+        # Oldest (err-0001) evicted; newest (err-0025) retained; size capped at 20.
+        assert "error" in json.loads(server._get_last_traceback({"error_id": "err-0001"}))
+        newest = json.loads(server._get_last_traceback({"error_id": "err-0025"}))
+        assert newest["traceback"] == "tb24"
+        assert json.loads(server._get_last_traceback({}))["total_stored"] == 20
+
+    def test_count_zero_returns_all_not_none(self, server):
+        """count=0 hits the `[-0:]` == `[0:]` slice → returns ALL stored, not
+        zero. Pins a surprising boundary (the author likely meant 'none')."""
+        for i in range(3):
+            server._store_traceback(f"tb{i}")
+        out = json.loads(server._get_last_traceback({"count": 0}))
+        assert len(out["tracebacks"]) == 3
+
 
 # ---------------------------------------------------------------------------
 # _run_on_gui_thread edge cases
