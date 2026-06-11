@@ -157,27 +157,15 @@ class TestCreateTorus(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Degenerate-dimension tests
 #
-# All existing primitives tests use round positive numbers
-# (length=25/15/10, radius=5/10).  None cover what happens when the
-# user (or an LLM-generated tool call) passes zero, negative, or
-# missing dimensions.  The handlers don't validate — they pass the
-# values straight through to Part::Box / Part::Cylinder / etc.  That
-# means:
-#
-#   - create_box(length=0, width=0, height=0) returns "Created box:
-#     ...(0x0x0mm)" with no error.  Downstream OCCT will produce a
-#     null shape that crashes any subsequent Boolean operation.
-#   - create_cylinder(radius=-5) propagates a negative radius into a
-#     Part::Cylinder, which FreeCAD silently clamps or produces an
-#     invalid shape from.
-#   - Missing 'length' falls back to default=10.  An LLM that mis-spells
-#     the key gets a 10mm default it didn't ask for, with no warning.
-#
-# These tests pin the current behavior (no validation, returns success
-# string) so a future change to add validation is intentional, not
-# accidental.  They also serve as the "what does the consumer get to
-# work with?" check — the response string is the *only* signal the
-# MCP client receives about what was created.
+# Zero/negative dimensions are now REJECTED (primitives-validation part (b)):
+#   - create_box(length=0, ...) errors naming the offending param instead of
+#     dropping a null Part::Box that crashes downstream OCCT Booleans.
+#   - create_cylinder(radius<=0 / height<=0) errors likewise.
+#   - Cone keeps its valid degenerate cases (radius2=0 pointed cone,
+#     radius1==radius2 cylinder) — see TestCreateConeDegenerateDimensions.
+#   - An OMITTED key still takes its default (length absent → 10mm); only the
+#     value validation is enforced. A *misspelled* key ('lenght') is NOT yet
+#     caught — that's part (a), still open (see primitives.py module header).
 # ---------------------------------------------------------------------------
 
 class TestCreateBoxDegenerateDimensions(unittest.TestCase):
@@ -185,10 +173,10 @@ class TestCreateBoxDegenerateDimensions(unittest.TestCase):
         reset_mocks()
         self.handler = make_handler(PrimitivesHandler)
 
-    def test_zero_dimensions_passed_through(self):
-        """length=0/width=0/height=0 produces a zero-volume Part::Box
-        with no error.  Downstream OCCT Booleans will fail; the caller
-        gets a success string with "0x0x0mm" as the only signal."""
+    def test_zero_dimensions_rejected(self):
+        """length=0/width=0/height=0 is rejected — a zero-volume Part::Box is a
+        null shape that crashes downstream OCCT Booleans, so the handler must
+        error (naming the offending param), not report success."""
         doc = make_mock_doc()
         mock_FreeCAD.ActiveDocument = doc
 
@@ -196,19 +184,14 @@ class TestCreateBoxDegenerateDimensions(unittest.TestCase):
             'length': 0, 'width': 0, 'height': 0,
         })
 
-        # No validation — the response says "Created" not "Error".
-        self.assertIn("Created box", result)
-        self.assertIn("0x0x0", result)
-        box = doc.Objects[-1]
-        self.assertEqual(box.Length, 0)
-        self.assertEqual(box.Width, 0)
-        self.assertEqual(box.Height, 0)
+        self.assertIn("Error", result)
+        self.assertIn("length", result)   # names the offending parameter
+        # No degenerate object was created.
+        doc.addObject.assert_not_called()
 
-    def test_negative_dimension_passed_through(self):
-        """Negative length is propagated to Part::Box.  FreeCAD will
-        either clamp or produce a degenerate shape — either way, the
-        handler's return value reflects what the caller asked for, so
-        a careful caller can detect the issue from the response string."""
+    def test_negative_dimension_rejected(self):
+        """Negative length is rejected rather than propagated into a degenerate
+        Part::Box."""
         doc = make_mock_doc()
         mock_FreeCAD.ActiveDocument = doc
 
@@ -216,9 +199,9 @@ class TestCreateBoxDegenerateDimensions(unittest.TestCase):
             'length': -10, 'width': 5, 'height': 5,
         })
 
-        self.assertIn("Created box", result)
-        self.assertIn("-10", result)
-        self.assertEqual(doc.Objects[-1].Length, -10)
+        self.assertIn("Error", result)
+        self.assertIn("length", result)
+        doc.addObject.assert_not_called()
 
     def test_missing_dimension_uses_default(self):
         """Missing 'length' defaults to 10mm.  An LLM that omits a key
@@ -241,27 +224,27 @@ class TestCreateCylinderDegenerateDimensions(unittest.TestCase):
         reset_mocks()
         self.handler = make_handler(PrimitivesHandler)
 
-    def test_zero_radius_passed_through(self):
-        """radius=0 yields a degenerate cylinder.  No error from the
-        handler."""
+    def test_zero_radius_rejected(self):
+        """radius=0 is a degenerate cylinder — rejected with the param named."""
         doc = make_mock_doc()
         mock_FreeCAD.ActiveDocument = doc
 
         result = self.handler.create_cylinder({'radius': 0, 'height': 10})
 
-        self.assertIn("Created cylinder", result)
-        self.assertEqual(doc.Objects[-1].Radius, 0)
+        self.assertIn("Error", result)
+        self.assertIn("radius", result)
+        doc.addObject.assert_not_called()
 
-    def test_zero_height_passed_through(self):
-        """height=0 yields a flat disk (or null shape, depending on
-        FreeCAD version).  Handler returns success."""
+    def test_zero_height_rejected(self):
+        """height=0 (flat disk / null shape) is rejected with the param named."""
         doc = make_mock_doc()
         mock_FreeCAD.ActiveDocument = doc
 
         result = self.handler.create_cylinder({'radius': 5, 'height': 0})
 
-        self.assertIn("Created cylinder", result)
-        self.assertEqual(doc.Objects[-1].Height, 0)
+        self.assertIn("Error", result)
+        self.assertIn("height", result)
+        doc.addObject.assert_not_called()
 
 
 class TestCreateConeDegenerateDimensions(unittest.TestCase):

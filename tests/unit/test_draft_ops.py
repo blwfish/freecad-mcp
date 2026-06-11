@@ -319,6 +319,14 @@ class TestShapeString(unittest.TestCase):
             result = self.handler.shape_string({'string': 'Hi'})
         assert_error_contains(self, result, "no font", ".ttf")
 
+    def test_empty_string_rejected(self):
+        """Whitespace-only string is rejected up front (otherwise it yields an
+        empty compound or an opaque swallowed error)."""
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.shape_string({'string': '   '})
+        self.assertIn("non-empty string", result)
+
     def test_creates_shapestring_via_make_shapestring(self):
         """Happy path: find_font returns a path, Draft.make_shapestring
         produces an object, handler labels it and returns success.

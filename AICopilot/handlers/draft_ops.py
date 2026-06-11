@@ -175,6 +175,8 @@ class DraftOpsHandler(BaseHandler):
         """
         try:
             string = args.get('string', 'Text')
+            if not str(string).strip():
+                return "Error: shape_string requires a non-empty string"
             font_file = args.get('font_file', '')
             size = float(args.get('size', 10.0))
             tracking = float(args.get('tracking', 0))

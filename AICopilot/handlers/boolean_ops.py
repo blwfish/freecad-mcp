@@ -41,6 +41,12 @@ class BooleanOpsHandler(BaseHandler):
             fusion.Label = name
             fusion.Shapes = objs
             self.recompute(doc)
+            # Verify the boolean produced a real shape BEFORE hiding the sources —
+            # OCCT can yield a null shape (non-manifold/coincident geometry) without
+            # raising, which would otherwise leave the user with a hidden, empty result.
+            if not getattr(fusion, 'Shape', None) or fusion.Shape.isNull():
+                return (f"Fusion produced an empty/invalid shape — sources left visible "
+                        f"(check for non-manifold or coincident geometry)")
             for obj in objs:
                 obj.Visibility = False
 
@@ -92,6 +98,9 @@ class BooleanOpsHandler(BaseHandler):
                 fusion.Shapes = tool_objs
                 cut.Tool = fusion
             self.recompute(doc)
+            if not getattr(cut, 'Shape', None) or cut.Shape.isNull():
+                return (f"Cut produced an empty/invalid shape — sources left visible "
+                        f"(the tools may fully consume the base, or geometry is degenerate)")
             base_obj.Visibility = False
             for obj in tool_objs:
                 obj.Visibility = False
@@ -134,6 +143,11 @@ class BooleanOpsHandler(BaseHandler):
             common.Label = name
             common.Shapes = objs
             self.recompute(doc)
+            # An empty intersection is a legitimate geometric answer (no overlap),
+            # but hiding the sources and reporting success would hide that fact.
+            if not getattr(common, 'Shape', None) or common.Shape.isNull():
+                return (f"Intersection is empty — the objects do not overlap; "
+                        f"sources left visible")
             for obj in objs:
                 obj.Visibility = False
 

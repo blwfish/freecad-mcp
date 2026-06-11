@@ -224,6 +224,22 @@ class OCLSurfaceProxy:
                 f"[OCLSurface] execute() failed: {e}\n"
                 f"{traceback.format_exc()}\n"
             )
+            # A swallowed failure used to leave the previous/empty Path in place,
+            # so the recompute "succeeded" and the MCP caller saw 'done' with a
+            # stale toolpath. Clear the Path and record the error so failure is
+            # detectable. Each step is guarded so the handler itself never throws.
+            try:
+                import Path
+                obj.Path = Path.Path()
+            except Exception:
+                pass
+            try:
+                if not hasattr(obj, "ExecuteError"):
+                    obj.addProperty("App::PropertyString", "ExecuteError",
+                                    "OCL", "Last execute() error (empty = OK)")
+                obj.ExecuteError = str(e)
+            except Exception:
+                pass
 
     def _do_execute(self, obj):
         """Inner execute — raises on error so the outer handler can log it."""

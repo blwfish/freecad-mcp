@@ -100,8 +100,10 @@ class TransformsHandler(BaseHandler):
             if not obj:
                 return f"Object not found: {object_name}"
 
-            # Create copy
-            copy = doc.copyObject(obj)
+            # Create copy. with_dependencies=True so parametric/body-backed
+            # objects copy their dependency chain instead of referencing the
+            # original's (which silently couples the "copy" to the source).
+            copy = doc.copyObject(obj, True)
             copy.Label = name
             copy.Placement.Base = FreeCAD.Vector(
                 obj.Placement.Base.x + x,

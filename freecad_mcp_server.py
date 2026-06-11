@@ -445,7 +445,7 @@ def _diagnose_crash(error: Exception = None) -> str:
 
 # Initialize debugging infrastructure (optional - works without it)
 try:
-    from freecad_debug import init_debugger, debug_deccorator
+    from freecad_debug import init_debugger, debug_decorator
     from freecad_health import init_monitor
     import logging
     
