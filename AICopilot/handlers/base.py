@@ -357,6 +357,38 @@ class BaseHandler:
 
         return "\n".join(issues)
 
+    # Prefixes considered outside any user-writable area on common platforms.
+    # Allowlist approach: only home dir, /tmp, and platform-specific temp dirs
+    # are permitted for file I/O operations.
+    @staticmethod
+    def _validate_file_path(path: str) -> "Optional[str]":
+        """Return an error string if path is outside safe user-writable locations, else None.
+
+        Safe locations: user home directory, /tmp/, /var/folders/ (macOS),
+        /var/tmp/, and /Volumes/ (macOS external/network drives).
+        On Windows: home dir and the system temp directory.
+        """
+        import sys as _sys
+        if not path:
+            return "file path is required"
+        resolved = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+        home = os.path.realpath(os.path.expanduser("~"))
+
+        safe: list = [home]
+        if _sys.platform == "win32":
+            import tempfile as _tmp
+            safe.append(os.path.realpath(_tmp.gettempdir()))
+        else:
+            safe += ["/tmp", "/var/folders", "/var/tmp", "/Volumes"]
+
+        if any(resolved == s or resolved.startswith(s + os.sep) or resolved.startswith(s + "/")
+               for s in safe):
+            return None
+        return (
+            f"Path is outside allowed directories (home dir, /tmp, /Volumes). "
+            f"Resolved path: {resolved}"
+        )
+
     def create_body_if_needed(self, doc: FreeCAD.Document = None):
         """Create a PartDesign Body if one doesn't exist.
 
