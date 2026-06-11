@@ -144,7 +144,7 @@ See [AGENT-INSTALL.md](AGENT-INSTALL.md) for full technical details, architectur
 
 ## Security
 
-This tool grants your AI agent full access to FreeCAD's Python environment, including the filesystem and OS. This is by design. See [SECURITY.md](SECURITY.md) for the full security model and how to report vulnerabilities.
+This tool grants your AI agent full access to FreeCAD's Python environment, including the filesystem and OS — this is by design. It also means the agent reads document content (object labels, macro source, spreadsheet values) directly into its reasoning context, so **treat FreeCAD files from untrusted sources the same way you'd treat untrusted code**. See [SECURITY.md](SECURITY.md) for the full security model, practical mitigations, and how to report vulnerabilities.
 
 ## Issues
 
