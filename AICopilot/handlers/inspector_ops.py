@@ -90,7 +90,8 @@ class InspectorOpsHandler(BaseHandler):
             profile_params   — dict of parameter overrides for process rules
             objects          — list of object names to check; default = all in doc
             doc_name         — document name; default = active document
-            include_model    — bool, default True: always run model validity+robustness
+        (model validity + robustness checks always run; process rules are added
+         only when profile_process is supplied.)
 
         Returns JSON:
             {
@@ -157,6 +158,20 @@ class InspectorOpsHandler(BaseHandler):
 
         # Build rule list — always include model rules; add process rules if profile given
         rules = _default_rules(profile)
+
+        # An unrecognized profile_process silently contributes ZERO process rules
+        # (the runner has no branch for it), so the DRC would quietly skip every
+        # process check while still reporting success. Detect that by comparing
+        # against the model-only rule set — behaviour-based, so it stays correct
+        # if the supported-process list changes upstream.
+        if profile is not None and len(rules) <= len(_default_rules(None)):
+            return json.dumps({
+                "error": (
+                    f"Unknown profile_process {process!r}: it adds no process-specific "
+                    f"rules, so only model checks would run. Use a supported process "
+                    f"(e.g. laser, resin, cnc_3axis) or omit profile_process."
+                )
+            })
 
         # Run
         result = run_drc(objects=objects, doc=doc, profile=profile, rules=rules)

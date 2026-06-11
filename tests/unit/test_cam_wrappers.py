@@ -466,5 +466,64 @@ class TestCreateJob(unittest.TestCase):
         mock_Path_Main_Job.Create.assert_called_once()
 
 
+class TestCreateToolShapes(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(CAMToolsHandler)
+
+    def test_radius_and_taperedballnose_accepted(self):
+        """Shipped FC 1.2 shapes the map previously rejected as unknown."""
+        for shape in ("radius", "taperedballnose"):
+            doc = make_mock_doc()
+            mock_FreeCAD.ActiveDocument = doc
+            tool_bit = MagicMock()
+            tool_bit.attach_to_doc = MagicMock(return_value=make_tool_bit_obj("T", shape))
+            mock_Path_Tool_Bit.ToolBit = MagicMock()
+            mock_Path_Tool_Bit.ToolBit.from_dict = MagicMock(return_value=tool_bit)
+            result = self.handler.create_tool({'name': 'T', 'tool_type': shape, 'diameter': 6})
+            self.assertNotIn("Unknown tool type", result)
+            tool_dict = mock_Path_Tool_Bit.ToolBit.from_dict.call_args.args[0]
+            self.assertEqual(tool_dict['shape'], shape)
+
+
+class TestUpdateTool(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(CAMToolsHandler)
+
+    def test_material_writable(self):
+        """Material is settable at creation but previously had no update path."""
+        tool = make_tool_bit_obj("EM6", "endmill", 6)
+        doc = make_mock_doc([tool])
+        mock_FreeCAD.ActiveDocument = doc
+        self.handler.update_tool({'tool_name': 'EM6', 'material': 'HSS'})
+        self.assertEqual(tool.Material, 'HSS')
+
+
+class TestUpdateToolController(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(CAMToolControllersHandler)
+
+    def test_rapids_and_spindle_dir_writable(self):
+        """SpindleDir/HorizRapid/VertRapid are readable via get_tool_controller
+        but previously had no write path. Rapids use the same mm/min->mm/s
+        convention as feeds."""
+        controller = MagicMock()
+        controller.Name = "TC1"
+        controller.Label = "TC1"
+        doc = make_mock_doc([controller])
+        mock_FreeCAD.ActiveDocument = doc
+
+        self.handler.update_tool_controller({
+            'job_name': 'Job', 'controller_name': 'TC1',
+            'spindle_dir': 'Forward', 'horiz_rapid': 3000, 'vert_rapid': 1500,
+        })
+
+        self.assertEqual(controller.SpindleDir, 'Forward')
+        self.assertAlmostEqual(controller.HorizRapid, 50.0)   # 3000 / 60
+        self.assertAlmostEqual(controller.VertRapid, 25.0)    # 1500 / 60
+
+
 if __name__ == '__main__':
     unittest.main()

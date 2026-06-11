@@ -136,6 +136,24 @@ class DocumentOpsHandler(BaseHandler):
                         obj_info["property_count"] = len(obj.PropertiesList)
                     except Exception:
                         obj_info["property_count"] = None
+                    # Visibility (ViewObject is None in headless mode), recompute
+                    # State (carries 'Invalid'/'Touched' flags), and the dependency
+                    # graph (InList/OutList — the deletion-safety edges). Each is
+                    # guarded and set to null when unavailable rather than omitted.
+                    try:
+                        obj_info["visible"] = bool(obj.ViewObject.Visibility)
+                    except Exception:
+                        obj_info["visible"] = None
+                    try:
+                        obj_info["state"] = list(obj.State)
+                    except Exception:
+                        obj_info["state"] = None
+                    try:
+                        obj_info["in_list"] = [o.Name for o in obj.InList]
+                        obj_info["out_list"] = [o.Name for o in obj.OutList]
+                    except Exception:
+                        obj_info["in_list"] = None
+                        obj_info["out_list"] = None
                     objects.append(obj_info)
                 except Exception as e:
                     skipped_errors += 1

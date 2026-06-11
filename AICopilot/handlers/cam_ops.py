@@ -573,6 +573,9 @@ class CAMOpsHandler(BaseHandler):
                     result += f"     Side: {op.Side}\n"
                 if hasattr(op, 'Direction'):
                     result += f"     Direction: {op.Direction}\n"
+                # Disabled operations emit no G-code — surface this so it isn't silent.
+                if hasattr(op, 'Active'):
+                    result += f"     Active: {op.Active}\n"
 
             return self.log_and_return("list_operations", args, result=result, duration=time.time() - start_time)
 
@@ -613,6 +616,10 @@ class CAMOpsHandler(BaseHandler):
 
             result = f"Operation: {operation.Label}\n"
             result += f"  Type: {operation.TypeId}\n"
+            # Active flag is critical: a disabled operation is silently skipped
+            # during post-processing and emits NO G-code.
+            if hasattr(operation, 'Active'):
+                result += f"  Active: {operation.Active}\n"
 
             # Show all relevant properties
             if hasattr(operation, 'ToolController') and operation.ToolController:
@@ -647,6 +654,12 @@ class CAMOpsHandler(BaseHandler):
                 result += f"  Safe Height: {operation.SafeHeight}\n"
             if hasattr(operation, 'ClearanceHeight'):
                 result += f"  Clearance Height: {operation.ClearanceHeight}\n"
+            # Operation-specific params (drilling, adaptive) — present only on
+            # the relevant op types; emit whichever exist rather than dropping them.
+            for prop, label in (("PeckDepth", "Peck Depth"), ("DwellTime", "Dwell Time"),
+                                ("RetractHeight", "Retract Height"), ("Tolerance", "Tolerance")):
+                if hasattr(operation, prop):
+                    result += f"  {label}: {getattr(operation, prop)}\n"
 
             return self.log_and_return("get_operation", args, result=result, duration=time.time() - start_time)
 

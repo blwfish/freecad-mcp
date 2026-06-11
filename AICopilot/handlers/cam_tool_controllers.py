@@ -295,8 +295,23 @@ class CAMToolControllersHandler(BaseHandler):
                 controller.ToolNumber = args['tool_number']
                 updates.append(f"tool_number: T{args['tool_number']}")
 
+            # These are readable via get_tool_controller but previously had no
+            # write path, so they were frozen after creation. Rapids are velocity
+            # Quantities (mm/s base), same mm/min->mm/s convention as feeds.
+            if 'spindle_dir' in args:
+                controller.SpindleDir = args['spindle_dir']
+                updates.append(f"spindle_dir: {args['spindle_dir']}")
+
+            if 'horiz_rapid' in args:
+                controller.HorizRapid = args['horiz_rapid'] / 60.0  # mm/min -> mm/s
+                updates.append(f"horiz_rapid: {args['horiz_rapid']} mm/min")
+
+            if 'vert_rapid' in args:
+                controller.VertRapid = args['vert_rapid'] / 60.0  # mm/min -> mm/s
+                updates.append(f"vert_rapid: {args['vert_rapid']} mm/min")
+
             if not updates:
-                error = Exception("No parameters to update. Provide spindle_speed, feed_rate, vertical_feed_rate, or tool_number.")
+                error = Exception("No parameters to update. Provide spindle_speed, feed_rate, vertical_feed_rate, tool_number, spindle_dir, horiz_rapid, or vert_rapid.")
                 return self.log_and_return("update_tool_controller", args, error=error, duration=time.time() - start_time)
 
             self.recompute(doc)
