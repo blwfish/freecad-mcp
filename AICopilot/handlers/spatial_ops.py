@@ -153,7 +153,10 @@ class SpatialOpsHandler(BaseHandler):
             lines = [f"Clearance: {n1} vs {n2}"]
             lines.append(f"  Minimum distance: {min_dist:.4f} mm")
 
-            if min_dist < _VOL_TOL:
+            # Touching is a LINEAR condition — compare against the linear OCCT
+            # tolerance, not _VOL_TOL (1e-9 mm³), which as a distance threshold is
+            # far tighter than OCCT's own resolution and misreports contact as a gap.
+            if min_dist < _OCCT_LIN_TOL:
                 lines.append(f"  Status: TOUCHING (zero clearance)")
             else:
                 lines.append(f"  Status: {min_dist:.4f} mm gap")
@@ -170,7 +173,7 @@ class SpatialOpsHandler(BaseHandler):
                     lines.append(f"    ... and {len(point_pairs) - 4} more")
 
             # Determine dominant gap direction from first pair
-            if point_pairs and min_dist > _VOL_TOL:
+            if point_pairs and min_dist > _OCCT_LIN_TOL:
                 p1, p2 = point_pairs[0]
                 dx = abs(p2.x - p1.x)
                 dy = abs(p2.y - p1.y)

@@ -238,6 +238,15 @@ class TestScaleObject(unittest.TestCase):
         })
         assert_error_contains(self, result, "not found")
 
+    def test_scale_factor_non_positive_rejected(self):
+        """scale_factor <= 0 inverts/zeroes geometry on the non-parametric path."""
+        doc = make_mock_doc([])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.scale_object({
+            'object_name': 'X', 'scale_factor': 0,
+        })
+        self.assertIn("scale_factor must be > 0", result)
+
 
 class TestSection(unittest.TestCase):
     def setUp(self):

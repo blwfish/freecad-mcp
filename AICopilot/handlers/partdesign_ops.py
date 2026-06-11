@@ -999,11 +999,13 @@ class PartDesignOpsHandler(BaseHandler):
             shell.Join = 2
 
             if hasattr(obj, 'Shape') and obj.Shape.Faces:
-                faces_to_remove = []
-                for face_idx in face_indices:
-                    if 1 <= face_idx <= len(obj.Shape.Faces):
-                        faces_to_remove.append(face_idx - 1)
-                shell.Faces = tuple(faces_to_remove)
+                # Part::Thickness.Faces is an App::PropertyLinkSubList — it takes
+                # (object, ("Face1", ...)) with 1-based FaceN sub-names, NOT raw
+                # integer indices (the sibling _create_thickness_with_selection
+                # does it this way). Passing ints silently produces a wrong/closed
+                # shell.
+                valid = [fi for fi in face_indices if 1 <= fi <= len(obj.Shape.Faces)]
+                shell.Faces = (obj, tuple(f"Face{fi}" for fi in valid))
 
             self.recompute(doc)
 
