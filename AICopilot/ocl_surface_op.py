@@ -57,6 +57,8 @@ def _load_stl(stl_file, ocl):
         if len(raw) < 4:
             raise ValueError(f"Truncated STL file: {stl_file}")
         n_tris = struct.unpack("<I", raw)[0]
+        if n_tris == 0:
+            raise ValueError(f"STL file has no triangles: {stl_file}")
 
         for _ in range(n_tris):
             f.read(12)  # normal vector (ignored — OCL recomputes)
@@ -249,6 +251,17 @@ class OCLSurfaceProxy:
         safe_z      = float(obj.SafeHeight)
         cut_feed    = float(obj.CutFeed)
         plunge_feed = float(obj.PlungeFeed)
+
+        # Guard the native-OCL inputs: zero/negative values either hang or crash
+        # the underlying C++. StepOver <= 0 makes the scan-line loop never advance
+        # (infinite loop on the GUI thread); setSampling(0) divides by zero;
+        # BallCutter(0, ...) is undefined.
+        if tool_dia <= 0:
+            raise ValueError(f"ToolDiameter must be > 0 (got {tool_dia})")
+        if stepover <= 0:
+            raise ValueError(f"StepOver must be > 0 (got {stepover})")
+        if sampling <= 0:
+            raise ValueError(f"SampleInterval must be > 0 (got {sampling})")
 
         t0 = time.time()
 

@@ -77,11 +77,13 @@ class CAMToolsHandler(BaseHandler):
             parameters = {
                 "Diameter": {"type": "Length", "value": f"{diameter} mm"},
             }
-            if flute_length:
+            # `is not None`, not truthiness: a legitimately-supplied 0 must not be
+            # silently dropped from the tool definition.
+            if flute_length is not None:
                 parameters["CuttingEdgeHeight"] = {"type": "Length", "value": f"{flute_length} mm"}
-            if shank_diameter:
+            if shank_diameter is not None:
                 parameters["ShankDiameter"] = {"type": "Length", "value": f"{shank_diameter} mm"}
-            if number_of_flutes:
+            if number_of_flutes is not None:
                 parameters["Flutes"] = {"type": "Integer", "value": number_of_flutes}
             if material:
                 parameters["Material"] = {"type": "String", "value": material}

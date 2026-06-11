@@ -392,6 +392,22 @@ class TestPolarPattern(unittest.TestCase):
         self.assertEqual(doc.copyObject.call_count, 5)  # 6 - 1
         assert_success_contains(self, result, "6 instances", "Z", "360")
 
+    def test_count_zero_rejected(self):
+        """count<1 must be rejected before the `angle / count` division —
+        count=0 would otherwise raise ZeroDivisionError (swallowed as a
+        contextless generic error) and create no copies."""
+        feat = make_part_object("F")
+        feat.Label = "F"
+        doc = make_mock_doc([feat])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.polar_pattern({
+            'feature_name': 'F', 'axis': 'z', 'angle': 360, 'count': 0,
+        })
+
+        self.assertIn("count", result)
+        self.assertEqual(doc.copyObject.call_count, 0)
+
 
 class TestMirrorFeature(unittest.TestCase):
     def setUp(self):

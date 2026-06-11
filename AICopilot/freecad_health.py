@@ -35,6 +35,7 @@ import json
 import os
 import signal
 import socket
+import struct
 import subprocess
 import time
 from datetime import datetime
@@ -119,19 +120,27 @@ class FreeCADHealthMonitor:
             
             try:
                 sock.connect(str(self.socket_path))
-                # Try a simple ping/echo test
-                test_msg = json.dumps({"method": "test_echo", "params": {"message": "ping"}})
-                sock.sendall(test_msg.encode() + b'\n')
-                
-                # Wait for response
-                response = sock.recv(4096)
-                if response:
-                    if not self.lean_logging:
-                        self.logger.debug("Socket is responsive")
-                    return True, None
-                else:
-                    return False, "Socket connected but no response"
-                    
+                # The handler speaks length-prefixed framing (4-byte big-endian
+                # length + UTF-8 JSON) and dispatches on {"tool", "args"}. A
+                # newline-delimited {"method": ...} message is misframed — the
+                # handler reads the first 4 bytes as a huge length and blocks —
+                # so this check must use the real wire protocol. Any framed reply
+                # (even "Unknown tool") proves the socket is responsive.
+                request = json.dumps(
+                    {"tool": "test_echo", "args": {"message": "ping"}}
+                ).encode("utf-8")
+                sock.sendall(struct.pack(">I", len(request)) + request)
+
+                header = self._recv_exact(sock, 4)
+                if header is None:
+                    return False, "Socket connected but closed without responding"
+                resp_len = struct.unpack(">I", header)[0]
+                if self._recv_exact(sock, resp_len) is None:
+                    return False, "Socket connected but response truncated"
+                if not self.lean_logging:
+                    self.logger.debug("Socket is responsive")
+                return True, None
+
             except socket.timeout:
                 return False, "Socket connection timeout"
             except ConnectionRefusedError:
@@ -141,7 +150,18 @@ class FreeCADHealthMonitor:
                 
         except Exception as e:
             return False, f"Socket check failed: {e}"
-    
+
+    @staticmethod
+    def _recv_exact(sock: socket.socket, num_bytes: int) -> Optional[bytes]:
+        """Read exactly num_bytes from sock, or None if it closes early."""
+        buf = bytearray()
+        while len(buf) < num_bytes:
+            chunk = sock.recv(min(num_bytes - len(buf), 65536))
+            if not chunk:
+                return None
+            buf.extend(chunk)
+        return bytes(buf)
+
     def check_freecad_process(self) -> Tuple[bool, Optional[int]]:
         """
         Check if FreeCAD process is running.

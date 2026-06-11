@@ -538,6 +538,8 @@ class PartDesignOpsHandler(BaseHandler):
             if not feature:
                 return f"Feature not found: {feature_name}"
 
+            if count < 1:
+                return f"count must be >= 1 (got {count})"
             angle_step = angle / count
 
             axis_vector = FreeCAD.Vector(0, 0, 1)

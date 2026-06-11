@@ -9,6 +9,7 @@ Run with: python3 -m pytest tests/unit/test_freecad_health.py -v
 
 import json
 import os
+import struct
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch, call
@@ -122,7 +123,8 @@ class TestCheckSocketResponsive:
 
         mock_sock = MagicMock()
         mock_socket_cls.return_value = mock_sock
-        mock_sock.recv.return_value = b'{"status": "ok"}'
+        body = b'{"result": "pong"}'
+        mock_sock.recv.side_effect = [struct.pack(">I", len(body)), body]
 
         responsive, error = m.check_socket_responsive(timeout=1.0)
         assert responsive is True
@@ -130,6 +132,12 @@ class TestCheckSocketResponsive:
         mock_sock.settimeout.assert_called_once_with(1.0)
         mock_sock.connect.assert_called_once_with(str(sock_path))
         mock_sock.close.assert_called_once()
+        # The request must be length-prefixed framing with a {"tool", "args"}
+        # body — not the old newline-delimited {"method": ...} message.
+        sent = mock_sock.sendall.call_args[0][0]
+        assert struct.unpack(">I", sent[:4])[0] == len(sent) - 4
+        assert b'"tool"' in sent and b"test_echo" in sent
+        assert not sent.endswith(b"\n")
 
     @patch("freecad_health.socket.socket")
     def test_timeout(self, mock_socket_cls, tmp_path):
@@ -170,11 +178,11 @@ class TestCheckSocketResponsive:
 
         mock_sock = MagicMock()
         mock_socket_cls.return_value = mock_sock
-        mock_sock.recv.return_value = b""
+        mock_sock.recv.return_value = b""  # closes before sending the length prefix
 
         responsive, error = m.check_socket_responsive()
         assert responsive is False
-        assert error == "Socket connected but no response"
+        assert error == "Socket connected but closed without responding"
 
     @patch("freecad_health.socket.socket")
     def test_general_exception(self, mock_socket_cls, tmp_path):
@@ -196,7 +204,8 @@ class TestCheckSocketResponsive:
 
         mock_sock = MagicMock()
         mock_socket_cls.return_value = mock_sock
-        mock_sock.recv.return_value = b'{"ok": true}'
+        body = b'{"ok": true}'
+        mock_sock.recv.side_effect = [struct.pack(">I", len(body)), body]
 
         responsive, _ = m.check_socket_responsive()
         assert responsive is True
