@@ -1549,6 +1549,13 @@ async def main():
                                 "description": "List action: include dotfiles (default false).",
                                 "default": False,
                             },
+                            "confirmed": {
+                                "type": "boolean",
+                                "description": "Run action: must be true to execute. Omit to receive a "
+                                               "confirmation_required response — use that to inform the user "
+                                               "and obtain explicit approval before re-calling with true.",
+                                "default": False,
+                            },
                         },
                         "required": ["operation"],
                     },

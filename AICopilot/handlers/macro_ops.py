@@ -213,11 +213,15 @@ class MacroOpsHandler(BaseHandler):
         """Execute a macro by name in a FreeCAD-aware namespace.
 
         Args:
-            name — macro filename (e.g. "foo.FCMacro" or bare "foo")
+            name      — macro filename (e.g. "foo.FCMacro" or bare "foo")
+            confirmed — must be True to proceed; omitting it returns a
+                        confirmation_required response so the agent can
+                        obtain explicit user approval before executing.
 
         Returns JSON:
             {"name": "...", "path": "...", "stdout": "...", "result": "..."}
         or  {"error": "...", "traceback": "..."}
+        or  {"status": "confirmation_required", ...}
 
         The macro runs with a fresh namespace pre-loaded with FreeCAD, FreeCADGui,
         App, Gui, Part, and Vector. Variables do NOT persist across calls.
@@ -233,6 +237,20 @@ class MacroOpsHandler(BaseHandler):
         path = _resolve_macro_path(macro_dir, name)
         if not path:
             return json.dumps({"error": f"Macro not found: {name}"})
+
+        # Require explicit confirmation before executing — macros run as Python
+        # with full OS access. The agent must inform the user and re-call with
+        # confirmed=True only after receiving explicit approval.
+        if not args.get("confirmed"):
+            return json.dumps({
+                "status": "confirmation_required",
+                "message": (
+                    f"Macro '{name}' will be executed as Python with full OS access. "
+                    "Inform the user and obtain their explicit approval before proceeding. "
+                    "Re-call with confirmed=true once the user approves."
+                ),
+                "path": path,
+            })
 
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as f:
