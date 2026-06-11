@@ -49,6 +49,7 @@ import glob
 import json
 import os
 import platform
+import re
 import subprocess
 import time
 import zipfile
@@ -156,10 +157,13 @@ def _find_macos_crash_report(max_age_s: int = 180) -> Optional[str]:
     if platform.system() != "Darwin":
         return None
 
+    # FreeCAD* matches both the GUI (FreeCAD-*) and headless (FreeCADCmd-*)
+    # process names. .ips is the macOS 12+ JSON format; .crash is legacy plaintext.
     patterns = [
         os.path.expanduser("~/Library/Logs/DiagnosticReports/FreeCAD*.crash"),
         os.path.expanduser("~/Library/Logs/DiagnosticReports/FreeCAD*.ips"),
         "/Library/Logs/DiagnosticReports/FreeCAD*.crash",
+        "/Library/Logs/DiagnosticReports/FreeCAD*.ips",
     ]
     candidates = []
     for pat in patterns:
@@ -180,28 +184,102 @@ def _find_macos_crash_report(max_age_s: int = 180) -> Optional[str]:
 
 
 def _parse_crash_report(content: str, path: str) -> str:
-    """Extract the signal, exception, and crashed-thread backtrace."""
-    lines = content.splitlines()
-    meta, thread0, in_thread0 = [], [], False
+    """Extract the signal, exception, and crashed-thread backtrace.
 
+    macOS 12+ writes .ips reports (a JSON header line + a JSON body); older
+    macOS wrote plaintext .crash. Detect the format and dispatch — the previous
+    plaintext-only parser produced empty output on every modern .ips.
+    """
+    if content.lstrip().startswith("{"):
+        try:
+            nl = content.index("\n")
+            header = json.loads(content[:nl])
+            body = json.loads(content[nl + 1:])
+            return _parse_ips_report(header, body, path)
+        except Exception:
+            pass  # not valid .ips JSON — fall through to legacy plaintext
+    return _parse_crash_report_legacy(content, path)
+
+
+def _parse_ips_report(header: dict, body: dict, path: str) -> str:
+    """Parse a macOS 12+ .ips (JSON) crash report into a readable summary."""
+    out = [f"[{Path(path).name}]"]
+
+    app = header.get("app_name") or body.get("procName", "?")
+    ver = header.get("app_version") or ""
+    out.append(f"Process: {app} {ver}".rstrip())
+    if header.get("os_version"):
+        out.append(f"OS: {header['os_version']}")
+
+    exc = body.get("exception") or {}
+    if exc:
+        line = f"Exception: {exc.get('type', '')}".rstrip()
+        if exc.get("signal"):
+            line += f" ({exc['signal']})"
+        out.append(line)
+        if exc.get("subtype"):
+            out.append(f"  Subtype: {exc['subtype']}")
+    term = body.get("termination") or {}
+    if term.get("indicator"):
+        out.append(f"Termination: {term['indicator']}")
+
+    images = body.get("usedImages") or []
+
+    def _image_name(idx):
+        if isinstance(idx, int) and 0 <= idx < len(images):
+            img = images[idx]
+            return img.get("name") or os.path.basename(img.get("path", "")) or f"image#{idx}"
+        return f"image#{idx}"
+
+    threads = body.get("threads") or []
+    # The crashed thread is rarely thread 0 — use faultingThread / the triggered flag.
+    crashed = body.get("faultingThread")
+    if not isinstance(crashed, int):
+        crashed = next((i for i, t in enumerate(threads) if t.get("triggered")), None)
+
+    if isinstance(crashed, int) and 0 <= crashed < len(threads):
+        frames = threads[crashed].get("frames") or []
+        out.append(f"\nCrashed thread {crashed} (first 20 of {len(frames)} frames):")
+        for n, fr in enumerate(frames[:20]):
+            name = _image_name(fr.get("imageIndex"))
+            if fr.get("symbol"):
+                out.append(f"  {n:<3} {name}  {fr['symbol']} + {fr.get('symbolLocation', 0)}")
+            else:
+                out.append(f"  {n:<3} {name} + {fr.get('imageOffset', '?')}")
+    return "\n".join(out)
+
+
+def _parse_crash_report_legacy(content: str, path: str) -> str:
+    """Parse a legacy plaintext .crash report (macOS 11 and earlier)."""
+    lines = content.splitlines()
+    meta = []
+    crashed_thread = 0
     for line in lines:
         for prefix in ("Exception Type:", "Exception Codes:", "Exception Subtype:",
                        "Termination Signal:", "Termination Reason:", "Crashed Thread:"):
             if line.startswith(prefix):
                 meta.append(line)
+                if prefix == "Crashed Thread:":
+                    m = re.search(r"Crashed Thread:\s*(\d+)", line)
+                    if m:
+                        crashed_thread = int(m.group(1))
 
-        if line.startswith("Thread 0 Crashed:") or line.startswith("Thread 0 name:"):
-            in_thread0 = True
-        if in_thread0:
-            thread0.append(line)
-            if line == "" and len(thread0) > 3:
-                break          # end of thread 0 block
+    # Collect the ACTUAL crashed thread's frames, not a hardcoded Thread 0.
+    frames = []
+    in_block = False
+    for line in lines:
+        if line.startswith(f"Thread {crashed_thread} Crashed:"):
+            in_block = True
+            continue
+        if in_block:
+            if line.strip() == "":
+                break
+            frames.append(line)
 
-    summary = f"[{Path(path).name}]\n"
-    summary += "\n".join(meta)
-    if thread0:
-        summary += "\n\nCrashed thread (first 20 frames):\n"
-        summary += "\n".join(thread0[:20])
+    summary = f"[{Path(path).name}]\n" + "\n".join(meta)
+    if frames:
+        summary += (f"\n\nCrashed thread {crashed_thread} (first 20 frames):\n"
+                    + "\n".join(frames[:20]))
     return summary
 
 
