@@ -142,7 +142,7 @@ class TestImportMesh(unittest.TestCase):
         self.assertIn("file_path parameter required", result)
 
     def test_file_not_found(self):
-        result = self.handler.import_mesh({'file_path': '/nonexistent/file.stl'})
+        result = self.handler.import_mesh({'file_path': '/tmp/nonexistent_freecad_test.stl'})
         self.assertIn("File not found", result)
 
     def test_unsupported_format(self):
@@ -478,7 +478,7 @@ class TestImportFile(unittest.TestCase):
         self.assertIn("file_path parameter required", result)
 
     def test_file_not_found(self):
-        result = self.handler.import_file({'file_path': '/no/such/file.step'})
+        result = self.handler.import_file({'file_path': '/tmp/no_such_freecad_test.step'})
         self.assertIn("File not found", result)
 
     def test_unsupported_format(self):

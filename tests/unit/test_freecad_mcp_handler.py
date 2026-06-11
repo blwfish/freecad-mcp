@@ -380,8 +380,9 @@ class TestExecuteTool:
 
 class TestDispatchToHandler:
     def test_valid_operation(self, server):
-        """Should look up the operation as a method and call it via async GUI path."""
+        """Should look up the operation via _ALLOWED_OPERATIONS and call it via async GUI path."""
         handler = MagicMock()
+        handler._ALLOWED_OPERATIONS = frozenset({"create_spreadsheet"})
         handler.create_spreadsheet = MagicMock(return_value="Spreadsheet created")
 
         with patch.object(server, '_call_on_gui_thread_async',
@@ -394,7 +395,9 @@ class TestDispatchToHandler:
         assert result["result"] == "Spreadsheet created"
 
     def test_unknown_operation(self, server):
-        handler = MagicMock(spec=[])  # No attributes
+        """Operations not in _ALLOWED_OPERATIONS are rejected."""
+        handler = MagicMock()
+        handler._ALLOWED_OPERATIONS = frozenset({"list"})
         result = server._dispatch_to_handler(
             handler, {"operation": "nonexistent"}, "test_tool"
         )
@@ -402,10 +405,20 @@ class TestDispatchToHandler:
         assert "Unknown test_tool operation: nonexistent" in parsed["error"]
 
     def test_missing_operation(self, server):
-        handler = MagicMock(spec=[])
+        handler = MagicMock()
+        handler._ALLOWED_OPERATIONS = frozenset({"list"})
         result = server._dispatch_to_handler(handler, {}, "test_tool")
         parsed = json.loads(result)
-        assert "Invalid operation" in parsed["error"]
+        assert "Missing operation" in parsed["error"]
+
+    def test_no_registry_rejected(self, server):
+        """Handlers without _ALLOWED_OPERATIONS are rejected at dispatch time."""
+        handler = MagicMock(spec=[])  # no _ALLOWED_OPERATIONS
+        result = server._dispatch_to_handler(
+            handler, {"operation": "anything"}, "test_tool"
+        )
+        parsed = json.loads(result)
+        assert "_ALLOWED_OPERATIONS" in parsed["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -1314,37 +1327,38 @@ class TestExecuteToolWrapper:
 class TestDispatchToHandlerExtended:
     """Additional tests for _dispatch_to_handler edge cases."""
 
-    def test_private_method_rejected(self, server):
-        """Operations starting with _ should be rejected."""
+    def test_private_method_not_in_registry_rejected(self, server):
+        """Operations not in _ALLOWED_OPERATIONS are rejected (including _ prefixed)."""
         handler = MagicMock()
+        handler._ALLOWED_OPERATIONS = frozenset({"list"})
         result = json.loads(
             server._dispatch_to_handler(handler, {"operation": "_secret"}, "test_tool")
         )
-        assert "Invalid operation" in result["error"]
+        assert "Unknown test_tool operation: _secret" in result["error"]
 
-    def test_dunder_method_rejected(self, server):
+    def test_dunder_method_not_in_registry_rejected(self, server):
         handler = MagicMock()
+        handler._ALLOWED_OPERATIONS = frozenset({"list"})
         result = json.loads(
             server._dispatch_to_handler(handler, {"operation": "__init__"}, "test_tool")
         )
-        assert "Invalid operation" in result["error"]
+        assert "Unknown test_tool operation: __init__" in result["error"]
 
-    def test_non_callable_rejected(self, server):
-        """If the attribute exists but isn't callable, reject it."""
-        handler = MagicMock()
-        handler.some_attr = "not a function"
+    def test_non_callable_in_registry_rejected(self, server):
+        """An op in the registry that resolves to a non-callable is rejected."""
+        class FakeHandler:
+            _ALLOWED_OPERATIONS = frozenset({"some_attr"})
+            some_attr = "not a function"
+
         result = json.loads(
-            server._dispatch_to_handler(handler, {"operation": "some_attr"}, "test_tool")
+            server._dispatch_to_handler(FakeHandler(), {"operation": "some_attr"}, "test_tool")
         )
-        # MagicMock auto-creates attributes as MagicMock (callable), so we
-        # need to set it to a non-callable explicitly
-        handler.configure_mock(**{"some_attr": "string_value"})
-        type(handler).some_attr = PropertyMock(return_value="string_value")
-        # Actually, MagicMock getattr returns MagicMock. Use a simple object instead.
+        assert "not callable" in result["error"]
 
     def test_handler_exception_returns_error(self, server):
         """If the handler method raises, should return a formatted error."""
         handler = MagicMock()
+        handler._ALLOWED_OPERATIONS = frozenset({"do_thing"})
         handler.do_thing = MagicMock(side_effect=ValueError("bad arg"))
 
         def run_inline(method, args, label):
