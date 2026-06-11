@@ -9,6 +9,10 @@ from .base import BaseHandler
 class DraftOpsHandler(BaseHandler):
     """Handler for Draft workbench operations."""
 
+    _ALLOWED_OPERATIONS = frozenset({
+        "clone", "array", "polar_array", "path_array", "shape_string", "text", "point_array",
+    })
+
     def clone(self, args: Dict[str, Any]) -> str:
         """Create a Draft clone of an object (parametric copy that updates with original)."""
         try:

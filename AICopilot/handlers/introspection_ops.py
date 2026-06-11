@@ -284,6 +284,8 @@ def _feedback_boost(feedback: Dict[str, Any], query: str, path: str) -> float:
 class IntrospectionOpsHandler(BaseHandler):
     """Live API introspection for FreeCAD's module tree, with feedback-ranked search."""
 
+    _ALLOWED_OPERATIONS = frozenset({"inspect", "search", "record_useful"})
+
     # ------------------------------------------------------------------
     # inspect
     # ------------------------------------------------------------------

@@ -9,6 +9,10 @@ from .base import BaseHandler
 class CAMToolsHandler(BaseHandler):
     """Handler for CAM tool library operations (CRUD)."""
 
+    _ALLOWED_OPERATIONS = frozenset({
+        "create_tool", "list_tools", "get_tool", "update_tool", "delete_tool",
+    })
+
     def create_tool(self, args: Dict[str, Any]) -> str:
         """Create a new tool in the tool library.
 

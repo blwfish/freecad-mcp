@@ -22,6 +22,11 @@ class MeshOpsHandler(BaseHandler):
     - Mesh simplification (decimation)
     """
 
+    _ALLOWED_OPERATIONS = frozenset({
+        "import_mesh", "export_mesh", "mesh_to_solid", "get_mesh_info",
+        "import_file", "export_file", "validate_mesh", "simplify_mesh",
+    })
+
     MESH_FORMATS = {'.stl', '.obj', '.ply', '.off', '.amf', '.3mf'}
     CAD_FORMATS = {'.step', '.stp', '.iges', '.igs', '.brep', '.brp'}
 

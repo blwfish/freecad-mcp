@@ -9,6 +9,12 @@ from .base import BaseHandler
 class SpreadsheetOpsHandler(BaseHandler):
     """Handler for Spreadsheet workbench operations."""
 
+    _ALLOWED_OPERATIONS = frozenset({
+        "create_spreadsheet", "set_cell", "get_cell", "set_alias", "get_alias",
+        "clear_cell", "set_cell_range", "get_cell_range", "bind_property",
+        "list_aliases", "import_csv", "export_csv",
+    })
+
     def create_spreadsheet(self, args: Dict[str, Any]) -> str:
         """Create a new spreadsheet in the active document."""
         try:
