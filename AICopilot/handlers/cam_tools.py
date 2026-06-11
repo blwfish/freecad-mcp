@@ -61,7 +61,11 @@ class CAMToolsHandler(BaseHandler):
                 'slittingsaw': 'slittingsaw',
                 'reamer': 'reamer',
                 'tap': 'tap',
-                'threadmill': 'threadmill'
+                'threadmill': 'threadmill',
+                # Shipped FC 1.2 shapes the map previously rejected; stem == the
+                # shipped <name>.fcstd file, matching the working 'endmill' entry.
+                'radius': 'radius',
+                'taperedballnose': 'taperedballnose',
             }
 
             shape_id = shape_map.get(tool_type.lower())
@@ -188,6 +192,14 @@ class CAMToolsHandler(BaseHandler):
                 result += f"  Number of Flutes: {tool.Flutes}\n"
             if hasattr(tool, 'Length'):
                 result += f"  Total Length: {tool.Length}\n"
+            # Material + shape-specific geometry (present only on certain bit
+            # shapes); emit whichever exist instead of dropping them silently.
+            for prop, label in (("Material", "Material"), ("TipAngle", "Tip Angle"),
+                                ("CuttingEdgeAngle", "Cutting Edge Angle"),
+                                ("FlatRadius", "Flat Radius"), ("CornerRadius", "Corner Radius"),
+                                ("NeckDiameter", "Neck Diameter"), ("NeckLength", "Neck Length")):
+                if hasattr(tool, prop):
+                    result += f"  {label}: {getattr(tool, prop)}\n"
 
             return self.log_and_return("get_tool", args, result=result, duration=time.time() - start_time)
 
@@ -243,8 +255,12 @@ class CAMToolsHandler(BaseHandler):
                 tool.Flutes = args['number_of_flutes']
                 updates.append(f"flutes: {args['number_of_flutes']}")
 
+            if 'material' in args:
+                tool.Material = args['material']
+                updates.append(f"material: {args['material']}")
+
             if not updates:
-                error = Exception("No parameters to update. Provide diameter, flute_length, shank_diameter, or number_of_flutes.")
+                error = Exception("No parameters to update. Provide diameter, flute_length, shank_diameter, number_of_flutes, or material.")
                 return self.log_and_return("update_tool", args, error=error, duration=time.time() - start_time)
 
             self.recompute(doc)

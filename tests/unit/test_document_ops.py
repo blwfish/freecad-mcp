@@ -350,6 +350,16 @@ class TestListObjectsDegeneratePagination:
         assert result["offset"] == 200
         assert result["has_more"] is False
 
+    def test_objects_carry_visibility_state_and_dependency_graph(self, doc_handler, mock_freecad):
+        """Each object must surface visibility, recompute State, and the
+        InList/OutList dependency graph (guarded; null when unavailable) so
+        callers don't need a per-object get_object_properties round-trip."""
+        self._make_doc(mock_freecad, n_objects=1)
+        result = json.loads(doc_handler.list_objects({}))
+        obj = result["objects"][0]
+        for key in ("visible", "state", "in_list", "out_list"):
+            assert key in obj, f"missing {key} in list_objects entry"
+
 
 # ---------------------------------------------------------------------------
 # hide_object / show_object / delete_object
