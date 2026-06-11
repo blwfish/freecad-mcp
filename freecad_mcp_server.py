@@ -1000,7 +1000,11 @@ async def main():
                             "source_object": {"type": "string", "description": "Object name in source document"},
                             "x": {"type": "number", "description": "X placement offset (mm)", "default": 0},
                             "y": {"type": "number", "description": "Y placement offset (mm)", "default": 0},
-                            "z": {"type": "number", "description": "Z placement offset (mm)", "default": 0}
+                            "z": {"type": "number", "description": "Z placement offset (mm)", "default": 0},
+                            # list_objects pagination parameters
+                            "limit": {"type": "integer", "description": "list_objects: max objects to return (1-500, default 100)", "default": 100},
+                            "offset": {"type": "integer", "description": "list_objects: number of (filtered) objects to skip for pagination", "default": 0},
+                            "type_filter": {"type": "string", "description": "list_objects: only return objects whose TypeId contains this substring"}
                         },
                         "required": ["operation"]
                     },
@@ -2122,11 +2126,11 @@ async def main():
             status = poll_resp.get("status")
             if status == "done":
                 _complete_op()
-                return [types.TextContent(type="text", text=json.dumps({"result": poll_resp.get("result"), "elapsed": poll_resp.get("elapsed")}))]
+                return [types.TextContent(type="text", text=json.dumps({"result": poll_resp.get("result"), "elapsed": poll_resp.get("elapsed_s")}))]
             elif status == "timeout":
                 return [types.TextContent(type="text", text=json.dumps({"error": poll_resp["error"], "job_id": job_id}))]
             else:
-                return [types.TextContent(type="text", text=json.dumps({"error": poll_resp.get("error"), "elapsed": poll_resp.get("elapsed")}))]
+                return [types.TextContent(type="text", text=json.dumps({"error": poll_resp.get("error"), "error_id": poll_resp.get("error_id"), "elapsed": poll_resp.get("elapsed_s")}))]
 
         # macOS screenshot: run screencapture in the bridge process (which inherits
         # Screen Recording permission from the terminal), never touching FreeCAD's
@@ -2163,7 +2167,8 @@ async def main():
         elif name in ["partdesign_operations", "sketch_operations", "part_operations",
                       "view_control", "cam_operations", "cam_tools", "cam_tool_controllers",
                       "cam_machines", "mesh_operations", "measurement_operations",
-                      "spatial_query",
+                      "spatial_query", "geometric_verification", "fixture_operations",
+                      "run_inspector", "get_last_traceback",
                       "spreadsheet_operations", "draft_operations", "get_debug_logs",
                       "macro_operations", "api_introspection",
                       "execute_python_async", "poll_job", "list_jobs",
@@ -2204,7 +2209,7 @@ async def main():
                             _complete_op()
                             payload: dict = {
                                 "result": poll_resp.get("result"),
-                                "elapsed": poll_resp.get("elapsed"),
+                                "elapsed": poll_resp.get("elapsed_s"),
                             }
                         elif status == "timeout":
                             payload = {
@@ -2215,7 +2220,8 @@ async def main():
                             # status == "error" or unexpected
                             payload = {
                                 "error": poll_resp.get("error"),
-                                "elapsed": poll_resp.get("elapsed"),
+                                "error_id": poll_resp.get("error_id"),
+                                "elapsed": poll_resp.get("elapsed_s"),
                             }
                         if _acc.has_any("warn"):
                             payload["events"] = _acc.to_envelope("warn")

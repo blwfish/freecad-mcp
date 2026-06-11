@@ -823,6 +823,35 @@ class TestPollJob:
         # Job should be removed after retrieval
         assert "err2" not in server._async_jobs
 
+    def test_done_with_error_in_result_forwards_error_id(self, server):
+        """A task result carrying error_id must forward it so the client can
+        call get_last_traceback. Regression: _poll_job used to drop error_id,
+        making the traceback-retrieval feature dead for async errors."""
+        server._async_jobs["e_id1"] = {
+            "status": "done",
+            "started": time.time() - 1,
+            "result": {"error": "boom", "error_id": "err-0007"},
+            "elapsed": 0.5,
+            "tool": "test",
+        }
+        result = json.loads(server._poll_job({"job_id": "e_id1"}))
+        assert result["status"] == "error"
+        assert result["error_id"] == "err-0007"
+
+    def test_error_job_forwards_error_id(self, server):
+        """An error-status job with a stored error_id must forward it."""
+        server._async_jobs["e_id2"] = {
+            "status": "error",
+            "started": time.time() - 2,
+            "error": "crashed",
+            "error_id": "err-0042",
+            "elapsed": 1.0,
+            "tool": "test",
+        }
+        result = json.loads(server._poll_job({"job_id": "e_id2"}))
+        assert result["status"] == "error"
+        assert result["error_id"] == "err-0042"
+
     def test_done_job_non_dict_result(self, server):
         """If result is not a dict, should stringify it."""
         server._async_jobs["nd1"] = {

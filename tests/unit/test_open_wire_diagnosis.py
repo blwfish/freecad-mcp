@@ -330,6 +330,44 @@ class TestVerifySketchOpenWireDiagnosis:
         assert len(calls) == 1, "should have called _diagnose_open_wires once"
         assert "Open wire" in result or "open" in result.lower()
 
+    def _make_no_shape_sketch(self):
+        """Sketch that produced no Shape (e.g. fully disconnected geometry)."""
+        sketch = MagicMock()
+        sketch.Name = "Sketch"
+        sketch.TypeId = "Sketcher::SketchObject"
+        sketch.GeometryCount = 2
+        sketch.ConstraintCount = 0
+        sketch.solve = MagicMock(return_value=0)
+        sketch.Shape = None  # falsy -> the "no valid shape" branch
+        sketch.getConstruction = MagicMock(return_value=False)
+        sketch.getOpenVertices = MagicMock(return_value=[])
+        sketch.detectMissingPointOnPointConstraints = MagicMock(return_value=0)
+        return sketch
+
+    def test_no_shape_returns_invalid_not_error(self):
+        """When the sketch has no Shape, verify_sketch must reach the INVALID
+        verdict rather than raising UnboundLocalError on closed_wires/open_wires
+        (which the outer except would mask as 'Error verifying sketch')."""
+        handler = make_sketch_handler()
+        sketch = self._make_no_shape_sketch()
+
+        mock_doc = MagicMock()
+        mock_doc.getObject = MagicMock(return_value=sketch)
+        mock_doc.getObjectsByLabel = MagicMock(return_value=[sketch])
+
+        with patch.object(base_module, 'FreeCAD') as mock_fc, \
+             patch.object(sketch_ops_module, 'FreeCAD') as mock_fc2:
+            mock_fc.ActiveDocument = mock_doc
+            mock_fc2.ActiveDocument = mock_doc
+            mock_fc.Vector = FakeVectorFactory
+            mock_fc2.Vector = FakeVectorFactory
+
+            result = handler.verify_sketch({'sketch_name': 'Sketch'})
+
+        assert "Error verifying sketch" not in result
+        assert "INVALID" in result
+        assert "No valid shape" in result
+
 
 # ---------------------------------------------------------------------------
 # Tests: pad failure injects diagnosis

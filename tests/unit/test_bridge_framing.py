@@ -15,7 +15,7 @@ import os
 # Add project root to path so we can import mcp_bridge_framing
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from mcp_bridge_framing import send_message, receive_message, _recv_exact
+from mcp_bridge_framing import send_message, receive_message, _recv_exact, MAX_MESSAGE_SIZE
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +106,54 @@ class TestSendMessage:
             raw = peer.recv(4096)
             length = struct.unpack(">I", raw[:4])[0]
             assert length == 0
+        finally:
+            client.close()
+            peer.close()
+
+    def test_send_exactly_max_succeeds(self):
+        """A body of exactly MAX_MESSAGE_SIZE bytes is allowed — the cap is a
+        strict greater-than, so the boundary value must still transmit.
+
+        MAX_MESSAGE_SIZE (50 KiB) is far larger than the socket send buffer
+        (~8 KiB on macOS AF_UNIX), so the peer must be drained concurrently or
+        sendall() would block forever waiting for buffer space.
+        """
+        client, peer = make_socketpair()
+        received = bytearray()
+
+        def drain():
+            while True:
+                chunk = peer.recv(65536)
+                if not chunk:
+                    break
+                received.extend(chunk)
+
+        t = threading.Thread(target=drain)
+        t.start()
+        try:
+            payload = "x" * MAX_MESSAGE_SIZE  # ASCII => 1 byte/char
+            assert send_message(client, payload) is True
+        finally:
+            client.close()        # EOF unblocks the drain thread
+            t.join(timeout=5)
+            peer.close()
+
+        assert len(received) == 4 + MAX_MESSAGE_SIZE  # length prefix + body
+        length = struct.unpack(">I", received[:4])[0]
+        assert length == MAX_MESSAGE_SIZE
+
+    def test_send_oversized_refused(self):
+        """One byte over the cap must be refused (return False) and nothing put
+        on the wire — sending it would let the peer reject the body and desync
+        every subsequent frame."""
+        client, peer = make_socketpair()
+        try:
+            big = "x" * (MAX_MESSAGE_SIZE + 1)
+            assert send_message(client, big) is False
+            # Nothing should have been transmitted.
+            peer.setblocking(False)
+            with pytest.raises((BlockingIOError, socket.error)):
+                peer.recv(4096)
         finally:
             client.close()
             peer.close()
@@ -322,21 +370,13 @@ class TestMaxMessageSizeThreshold:
             client.close()
             peer.close()
 
-    @pytest.mark.xfail(
-        reason=(
-            "Bug: receive_message can't distinguish a 0-length frame from a "
-            "closed connection.  In receive_message, after _recv_exact(sock, 0) "
-            "returns b'', `if not message_bytes: return None` fires and the "
-            "empty string is lost.  send_message happily encodes empty strings "
-            "(see test_send_empty_string), making this an asymmetric protocol "
-            "bug.  Test pinned at xfail so a future fix flips it to pass."
-        ),
-        strict=True,
-    )
     def test_zero_length_is_accepted(self):
-        """Length == 0 should be a valid empty message — the sender-side
-        test already covers framing of empty strings, so the receive side
-        ought to round-trip them.  Currently it returns None instead."""
+        """Length == 0 is a valid empty message and must round-trip.
+
+        receive_message distinguishes a 0-length frame (_recv_exact returns b'')
+        from a closed connection (_recv_exact returns None) by testing `is None`,
+        not falsiness — so the empty string is preserved rather than misread as a
+        disconnect. (Previously an xfail; fixed in the framing hardening pass.)"""
         client, peer = make_socketpair()
         try:
             peer.sendall(struct.pack(">I", 0))

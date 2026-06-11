@@ -86,6 +86,31 @@ def extract_handler_routable_names(src: str) -> set:
     return names
 
 
+def extract_bridge_dispatched_names(src: str) -> set:
+    """Pull every tool name the BRIDGE's handle_call_tool actually dispatches.
+
+    The bridge decides what to do with each tool in an if/elif chain on
+    ``name`` *before* anything reaches the FreeCAD-side handler. A tool can be
+    registered in handle_list_tools AND routable in the handler yet still be
+    unreachable, because this chain has no branch for it and it falls through
+    to the ``Unknown tool`` else. That is exactly how geometric_verification,
+    fixture_operations, run_inspector and get_last_traceback shipped dead in
+    PR #21 — extract_handler_routable_names found them (the handler routes
+    them), so the handler-side completeness test passed while the tools were
+    unreachable. Sources:
+      * ``name == "x"`` / ``elif name == "x"`` comparisons
+      * names inside an ``elif name in ["a", "b", ...]`` list (possibly
+        spanning several lines)
+    """
+    names = set()
+    for m in re.finditer(r'\bname\s*==\s*["\']([a-zA-Z_][a-zA-Z0-9_]*)["\']', src):
+        names.add(m.group(1))
+    for block in re.finditer(r'\bname\s+in\s*\[(.*?)\]', src, re.DOTALL):
+        for m in re.finditer(r'["\']([a-zA-Z_][a-zA-Z0-9_]*)["\']', block.group(1)):
+            names.add(m.group(1))
+    return names
+
+
 class TestDispatchCompleteness(unittest.TestCase):
     """Fail fast if any registered MCP tool lacks a handler dispatch."""
 
@@ -95,6 +120,7 @@ class TestDispatchCompleteness(unittest.TestCase):
         cls.handler_src = _read(HANDLER_PY)
         cls.server_tools = extract_server_tool_names(cls.server_src)
         cls.handler_tools = extract_handler_routable_names(cls.handler_src)
+        cls.bridge_dispatched = extract_bridge_dispatched_names(cls.server_src)
 
     def test_server_has_tools(self):
         """Sanity: the parser must find a reasonable number of tools."""
@@ -128,6 +154,39 @@ class TestDispatchCompleteness(unittest.TestCase):
               "If the tool is intentionally bridge-only (no FreeCAD call), "
               "add it to BRIDGE_ONLY_TOOLS in this test."
         )
+
+    def test_every_server_tool_is_dispatched_by_bridge(self):
+        """Each registered MCP tool must have a branch in the BRIDGE's
+        handle_call_tool dispatch, not just a route in the handler.
+
+        Regression for PR #21: geometric_verification, fixture_operations,
+        run_inspector and get_last_traceback were registered and handler-
+        routable, but the bridge's if/elif chain had no branch for them, so
+        every call fell through to 'Unknown tool'. The handler-side test above
+        could not catch this — only the bridge dispatch can.
+        """
+        undispatched = (self.server_tools
+                        - self.bridge_dispatched)
+        self.assertEqual(
+            undispatched, set(),
+            f"\nMCP tool(s) advertised in handle_list_tools() with no branch in "
+            f"the bridge's handle_call_tool dispatch (they return 'Unknown "
+            f"tool'):\n  " + "\n  ".join(sorted(undispatched))
+            + "\n\nFix: add the name to the smart-dispatcher `elif name in [...]` "
+              "list (for socket-routed tools) or give it its own `elif name == "
+              "...` branch in freecad_mcp_server.py."
+        )
+
+    def test_previously_dead_tools_now_dispatched(self):
+        """Canary: the four tools that were unreachable in PR #21 must stay
+        dispatched by the bridge."""
+        for tool in ("geometric_verification", "fixture_operations",
+                     "run_inspector", "get_last_traceback"):
+            self.assertIn(
+                tool, self.bridge_dispatched,
+                f"{tool} is advertised but not dispatched by the bridge — the "
+                f"PR #21 dead-tool regression has recurred."
+            )
 
     def test_no_orphan_bridge_only_entries(self):
         """Items on the BRIDGE_ONLY_TOOLS list should still exist as MCP tools.

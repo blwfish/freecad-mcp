@@ -125,15 +125,17 @@ class SketchOpsHandler(BaseHandler):
             else:
                 results.append("Over-constrained or conflicting constraints")
 
-            # Check for open wires
+            # Check for open wires.
+            # closed_wires/open_wires must be bound before the verdict logic below,
+            # which references them even when the sketch produced no Shape.
+            closed_wires = 0
+            open_wires = 0
             if hasattr(sketch, 'Shape') and sketch.Shape:
                 shape = sketch.Shape
                 wire_count = len(shape.Wires)
                 results.append(f"Wires: {wire_count}")
 
                 # Check if wires are closed
-                closed_wires = 0
-                open_wires = 0
                 for wire in shape.Wires:
                     if wire.isClosed():
                         closed_wires += 1
@@ -459,25 +461,30 @@ class SketchOpsHandler(BaseHandler):
             cx1 = x - half_len
             cx2 = x + half_len
 
-            # Top line: left to right
+            # Slot outline as one counter-clockwise loop so both end caps bulge
+            # OUTWARD. FreeCAD's ArcOfCircle sweeps CCW (increasing angle) from the
+            # first parameter to the second, so the start/end angles below keep each
+            # arc on the outer side; endpoints chain via the Coincident(gA,2,gB,1)
+            # constraints added afterwards.
+            # Bottom line: left to right
             g0 = sketch.addGeometry(Part.LineSegment(
-                FreeCAD.Vector(cx1, y + r, 0),
-                FreeCAD.Vector(cx2, y + r, 0)
+                FreeCAD.Vector(cx1, y - r, 0),
+                FreeCAD.Vector(cx2, y - r, 0)
             ))
-            # Right arc: 90° to -90° (top to bottom)
+            # Right arc: -90° to 90° (bottom to top, bulging right/outward)
             g1 = sketch.addGeometry(Part.ArcOfCircle(
                 Part.Circle(FreeCAD.Vector(cx2, y, 0), FreeCAD.Vector(0, 0, 1), r),
-                math.radians(90), math.radians(-90)
+                math.radians(-90), math.radians(90)
             ))
-            # Bottom line: right to left
+            # Top line: right to left
             g2 = sketch.addGeometry(Part.LineSegment(
-                FreeCAD.Vector(cx2, y - r, 0),
-                FreeCAD.Vector(cx1, y - r, 0)
+                FreeCAD.Vector(cx2, y + r, 0),
+                FreeCAD.Vector(cx1, y + r, 0)
             ))
-            # Left arc: -90° to 90° (bottom to top)
+            # Left arc: 90° to 270° (top to bottom, bulging left/outward)
             g3 = sketch.addGeometry(Part.ArcOfCircle(
                 Part.Circle(FreeCAD.Vector(cx1, y, 0), FreeCAD.Vector(0, 0, 1), r),
-                math.radians(-90), math.radians(90)
+                math.radians(90), math.radians(270)
             ))
 
             # Coincident constraints to close the shape

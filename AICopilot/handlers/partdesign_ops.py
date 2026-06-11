@@ -657,10 +657,12 @@ class PartDesignOpsHandler(BaseHandler):
             groove.Profile = sketch
             groove.Angle = angle
 
+            # Map the requested revolution axis to the sketch's local axes:
+            #   x -> H_Axis (horizontal), y -> V_Axis (vertical), z -> N_Axis (normal).
             if axis.lower() == 'x':
-                groove.ReferenceAxis = (sketch, ['N_Axis'])
+                groove.ReferenceAxis = (sketch, ['H_Axis'])
             elif axis.lower() == 'y':
-                groove.ReferenceAxis = (sketch, ['N_Axis'])
+                groove.ReferenceAxis = (sketch, ['V_Axis'])
             else:
                 groove.ReferenceAxis = (sketch, ['N_Axis'])
 

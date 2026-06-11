@@ -148,9 +148,10 @@ class CAMToolControllersHandler(BaseHandler):
             for i, tc in enumerate(controllers, 1):
                 tool_name = tc.Tool.Label if hasattr(tc, 'Tool') and tc.Tool else 'None'
                 speed = tc.SpindleSpeed if hasattr(tc, 'SpindleSpeed') else 'N/A'
-                # FC 1.2 stores feed in mm/s; display as mm/min
-                feed_mms = tc.HorizFeed if hasattr(tc, 'HorizFeed') else None
-                feed = f"{float(str(feed_mms).split()[0]) * 60:.0f}" if feed_mms is not None else 'N/A'
+                # FC 1.2 stores feed as a velocity Quantity (base unit mm/s); convert
+                # to mm/min exactly rather than string-splitting the formatted value.
+                feed_val = self.feed_to_mm_min(tc.HorizFeed) if hasattr(tc, 'HorizFeed') else None
+                feed = f"{feed_val:.0f}" if feed_val is not None else 'N/A'
                 tool_num = tc.ToolNumber if hasattr(tc, 'ToolNumber') else 'N/A'
 
                 result += f"  {i}. {tc.Label} (T{tool_num})\n"
@@ -219,14 +220,16 @@ class CAMToolControllersHandler(BaseHandler):
                 result += f"  Spindle Speed: {controller.SpindleSpeed} RPM\n"
             if hasattr(controller, 'SpindleDir'):
                 result += f"  Spindle Direction: {controller.SpindleDir}\n"
-            if hasattr(controller, 'HorizFeed'):
-                result += f"  Horizontal Feed: {controller.HorizFeed} mm/min\n"
-            if hasattr(controller, 'VertFeed'):
-                result += f"  Vertical Feed: {controller.VertFeed} mm/min\n"
-            if hasattr(controller, 'HorizRapid'):
-                result += f"  Horizontal Rapid: {controller.HorizRapid} mm/min\n"
-            if hasattr(controller, 'VertRapid'):
-                result += f"  Vertical Rapid: {controller.VertRapid} mm/min\n"
+            # Feed/rapid properties are velocity Quantities in mm/s; convert to
+            # mm/min exactly so the value matches the displayed unit label.
+            for prop, label in (("HorizFeed", "Horizontal Feed"),
+                                ("VertFeed", "Vertical Feed"),
+                                ("HorizRapid", "Horizontal Rapid"),
+                                ("VertRapid", "Vertical Rapid")):
+                if hasattr(controller, prop):
+                    v = self.feed_to_mm_min(getattr(controller, prop))
+                    result += (f"  {label}: {v:.0f} mm/min\n" if v is not None
+                               else f"  {label}: N/A\n")
 
             return self.log_and_return("get_tool_controller", args, result=result, duration=time.time() - start_time)
 
