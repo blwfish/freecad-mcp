@@ -47,9 +47,7 @@ class DocumentOpsHandler(BaseHandler):
                 except queue.Empty:
                     return "Timeout waiting for document creation"
             else:
-                doc = FreeCAD.newDocument(name)
-                doc.recompute()
-                return f"Document '{name}' created successfully"
+                return "Error: no GUI thread dispatcher available — cannot safely create document"
 
         except Exception as e:
             return f"Error in create_document: {e}"

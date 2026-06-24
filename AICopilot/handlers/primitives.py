@@ -9,20 +9,27 @@
 #     downstream OCCT Boolean. The Test*DegenerateDimensions classes in
 #     tests/unit/test_primitives.py assert the rejection.
 #
-# (a) STILL OPEN: unknown/misspelled arg keys ('lenght' → silent 10mm default)
-#     are NOT yet rejected. This needs the *full* injected-key envelope first:
-#     _dispatch_part_operations forwards the entire args dict (it carries
-#     `operation`, and the cyber confirm-gate can add `confirmed`, plus any
-#     async/internal `_`-prefixed keys). A naive allow-list that omits one of
-#     those would reject every primitive call. Enumerate the envelope before
-#     adding strict key validation; until then a misspelled dimension key still
-#     silently takes the default.
+# (a) DONE: unknown/misspelled arg keys ('lenght' → was silent 10mm default)
+#     are now rejected via _check_unknown_keys. The injected-key envelope is:
+#     `operation` (always), `_continue_selection` + `_operation_id` (continuation
+#     path only). These are tolerated by _INJECTED_KEYS; everything else unknown
+#     returns an explicit error naming the offending keys.
 # ───────────────────────────────────────────────────────────────────────────
 
 import FreeCAD
 import FreeCADGui
 from typing import Dict, Any, Optional
 from .base import BaseHandler
+
+
+_INJECTED_KEYS = frozenset({"operation", "_continue_selection", "_operation_id"})
+
+
+def _check_unknown_keys(primitive: str, args: dict, allowed: frozenset) -> Optional[str]:
+    unknown = set(args) - allowed - _INJECTED_KEYS
+    if unknown:
+        return f"Error creating {primitive}: unknown argument(s) {sorted(unknown)} — check for typos"
+    return None
 
 
 def _validate_positive(prim: str, **dims) -> Optional[str]:
@@ -44,6 +51,9 @@ class PrimitivesHandler(BaseHandler):
     def create_box(self, args: Dict[str, Any]) -> str:
         """Create a box with specified dimensions."""
         try:
+            err = _check_unknown_keys('box', args, frozenset({'length', 'width', 'height', 'x', 'y', 'z', 'name'}))
+            if err:
+                return err
             length = args.get('length', 10)
             width = args.get('width', 10)
             height = args.get('height', 10)
@@ -77,6 +87,9 @@ class PrimitivesHandler(BaseHandler):
     def create_cylinder(self, args: Dict[str, Any]) -> str:
         """Create a cylinder with specified dimensions."""
         try:
+            err = _check_unknown_keys('cylinder', args, frozenset({'radius', 'height', 'x', 'y', 'z', 'name'}))
+            if err:
+                return err
             radius = args.get('radius', 5)
             height = args.get('height', 10)
             x = args.get('x', 0)
@@ -108,6 +121,9 @@ class PrimitivesHandler(BaseHandler):
     def create_sphere(self, args: Dict[str, Any]) -> str:
         """Create a sphere with specified radius."""
         try:
+            err = _check_unknown_keys('sphere', args, frozenset({'radius', 'x', 'y', 'z', 'name'}))
+            if err:
+                return err
             radius = args.get('radius', 5)
             x = args.get('x', 0)
             y = args.get('y', 0)
@@ -137,6 +153,9 @@ class PrimitivesHandler(BaseHandler):
     def create_cone(self, args: Dict[str, Any]) -> str:
         """Create a cone with specified radii and height."""
         try:
+            err = _check_unknown_keys('cone', args, frozenset({'radius1', 'radius2', 'height', 'x', 'y', 'z', 'name'}))
+            if err:
+                return err
             radius1 = args.get('radius1', 5)  # Bottom radius
             radius2 = args.get('radius2', 0)  # Top radius
             height = args.get('height', 10)
@@ -179,6 +198,9 @@ class PrimitivesHandler(BaseHandler):
     def create_torus(self, args: Dict[str, Any]) -> str:
         """Create a torus (donut shape) with specified radii."""
         try:
+            err = _check_unknown_keys('torus', args, frozenset({'radius1', 'radius2', 'x', 'y', 'z', 'name'}))
+            if err:
+                return err
             radius1 = args.get('radius1', 10)  # Major radius
             radius2 = args.get('radius2', 3)   # Minor radius
             x = args.get('x', 0)
@@ -210,6 +232,9 @@ class PrimitivesHandler(BaseHandler):
     def create_wedge(self, args: Dict[str, Any]) -> str:
         """Create a wedge (triangular prism) with specified dimensions."""
         try:
+            err = _check_unknown_keys('wedge', args, frozenset({'xmin', 'ymin', 'zmin', 'x2min', 'x2max', 'xmax', 'ymax', 'zmax', 'name'}))
+            if err:
+                return err
             xmin = args.get('xmin', 0)
             ymin = args.get('ymin', 0)
             zmin = args.get('zmin', 0)

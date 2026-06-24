@@ -6,6 +6,7 @@ assignment (e62ebc5 fix), and document creation behavior.
 """
 
 import unittest
+from unittest.mock import MagicMock
 
 from tests.unit._freecad_mocks import (
     mock_FreeCAD,
@@ -324,6 +325,55 @@ class TestPrimitivesNoDocument(unittest.TestCase):
         """newDocument() must never be called from a primitive handler."""
         self.handler.create_box({'length': 10, 'width': 10, 'height': 10})
         mock_FreeCAD.newDocument.assert_not_called()
+
+
+class TestUnknownArgKeys(unittest.TestCase):
+    """Misspelled/unknown keys must be rejected immediately, not silently defaulted."""
+
+    def setUp(self):
+        self.handler = PrimitivesHandler()
+        self.handler.get_document = MagicMock(return_value=None)
+
+    def _assert_unknown_key_error(self, result, key):
+        self.assertIn("Error", result)
+        self.assertIn("unknown argument", result)
+        self.assertIn(key, result)
+
+    def test_box_misspelled_length_rejected(self):
+        result = self.handler.create_box({'lenght': 50, 'width': 10, 'height': 10})
+        self._assert_unknown_key_error(result, 'lenght')
+
+    def test_cylinder_misspelled_radius_rejected(self):
+        result = self.handler.create_cylinder({'raduis': 5, 'height': 10})
+        self._assert_unknown_key_error(result, 'raduis')
+
+    def test_sphere_unknown_key_rejected(self):
+        result = self.handler.create_sphere({'radius': 5, 'depth': 10})
+        self._assert_unknown_key_error(result, 'depth')
+
+    def test_cone_unknown_key_rejected(self):
+        result = self.handler.create_cone({'radius1': 5, 'radius2': 0, 'height': 10, 'typo': 1})
+        self._assert_unknown_key_error(result, 'typo')
+
+    def test_torus_unknown_key_rejected(self):
+        result = self.handler.create_torus({'radius1': 10, 'radius2': 3, 'extra': 1})
+        self._assert_unknown_key_error(result, 'extra')
+
+    def test_wedge_unknown_key_rejected(self):
+        result = self.handler.create_wedge({'xmin': 0, 'bogus': 5})
+        self._assert_unknown_key_error(result, 'bogus')
+
+    def test_injected_operation_key_tolerated(self):
+        # dispatcher always forwards `operation` — must not trigger the unknown-key check
+        result = self.handler.create_box({'length': 10, 'width': 10, 'height': 10, 'operation': 'box'})
+        self.assertNotIn("unknown argument", result)
+
+    def test_injected_continuation_keys_tolerated(self):
+        result = self.handler.create_box({
+            'length': 10, 'width': 10, 'height': 10,
+            'operation': 'box', '_continue_selection': True, '_operation_id': 'abc123',
+        })
+        self.assertNotIn("unknown argument", result)
 
 
 if __name__ == '__main__':
