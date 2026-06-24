@@ -2,7 +2,7 @@
 # On Apple Silicon: docker build --platform linux/amd64 -t freecad-mcp .
 FROM mambaorg/micromamba:latest
 
-ARG FREECAD_VERSION=1.0.0
+ARG FREECAD_VERSION=1.1.0
 
 USER root
 
