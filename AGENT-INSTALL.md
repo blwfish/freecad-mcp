@@ -68,13 +68,22 @@ Clone location: wherever repos live on this system. `~/freecad-mcp` is a safe de
 
 ### Step 2: Install the AICopilot workbench into FreeCAD
 
-Copy the `AICopilot` directory to FreeCAD's Mod folder:
+Copy the `AICopilot` directory to FreeCAD's Mod folder. **Do not hardcode the
+Mod path** — FreeCAD stores user data under a version-stamped directory
+(e.g. `v1-2`, `v26-3`) that changes between releases. Ask FreeCAD itself where
+its Mod folder is, then copy into it:
 
-- **macOS:** `cp -r AICopilot ~/Library/Application\ Support/FreeCAD/v1-2/Mod/`
-- **Linux:** `cp -r AICopilot ~/.local/share/FreeCAD/Mod/`
-- **Windows:** Copy `AICopilot` to `%APPDATA%\FreeCAD\Mod\`
+```bash
+# Resolve FreeCAD's actual user Mod dir (works on any version / OS):
+MOD_DIR="$(FreeCADCmd -c 'import FreeCAD, os; print(os.path.join(FreeCAD.getUserAppDataDir(), "Mod"))' 2>/dev/null | tail -1)"
+mkdir -p "$MOD_DIR"
+cp -r AICopilot "$MOD_DIR/"
+```
 
-If the Mod directory doesn't exist, create it. The `v1-2` path component on macOS matches FreeCAD 1.2; adjust if needed.
+If `FreeCADCmd` isn't on `PATH`, substitute the full binary path (or use the
+GUI's Python console: `FreeCAD.getUserAppDataDir()`). The version-stamped
+component is resolved by FreeCAD, so this stays correct across the 1.x → 26.x
+renumber and any future change.
 
 ### Step 3: Install the MCP bridge
 
