@@ -6,11 +6,18 @@
 #                   list_freecad_instances enriched with active doc + window
 #                   title; startup banner shows handler version.
 
-# Minimum FreeCAD version required for CAM tools.
-# Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
-# "not supported" error rather than crashing on missing Path/CAM API.
-__version__ = "5.10.0"
+__version__ = "5.11.0"
 
+# Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
+# Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
+# "not supported" error rather than crashing on the missing Path/CAM API.
+#
+# NOTE on the value: FreeCAD's version scheme was renumbered from 1.2 to 26.3
+# (the dev series jumped 1.1 -> 26.3, skipping over 1.2 entirely). This tuple
+# threshold still gates correctly because of that gap: legacy builds without
+# the Toolbit API report (1, 0/1, x) which sort below (1, 2, 0), while every
+# build that HAS the API now reports (26, 3, 0)+ which sorts above it. Nothing
+# real lives between 1.1 and 26.3, so the boundary remains unambiguous.
 CAM_MIN_FC_VERSION = (1, 2, 0)
 
 REQUIRED_VERSIONS = {
@@ -333,11 +340,11 @@ class FreeCADSocketServer:
             minor = int(ver[1])
             patch = int(ver[2]) if len(ver) > 2 and str(ver[2]).isdigit() else 0
             self._fc_version = (major, minor, patch)
-            cam_req = ".".join(str(x) for x in CAM_MIN_FC_VERSION)
             if self._fc_version < CAM_MIN_FC_VERSION:
                 FreeCAD.Console.PrintWarning(
                     f"[MCP] FreeCAD {major}.{minor} detected. "
-                    f"CAM tools require {cam_req}+; all other tools work normally.\n"
+                    f"CAM tools require a build with the Path Toolbit API "
+                    f"(weekly / 26.x); all other tools work normally.\n"
                 )
             else:
                 FreeCAD.Console.PrintMessage(f"[MCP] FreeCAD {major}.{minor} — OK\n")
@@ -996,15 +1003,15 @@ class FreeCADSocketServer:
         if tool_name == "view_control":
             return self._dispatch_view_control(args)
 
-        # CAM version gate — return clean error on pre-1.2 FreeCAD
+        # CAM version gate — return clean error on builds without the Path Toolbit API
         _CAM_TOOLS = {"cam_operations", "cam_tools", "cam_tool_controllers"}
         if tool_name in _CAM_TOOLS and self._fc_version < CAM_MIN_FC_VERSION:
             running = ".".join(str(x) for x in self._fc_version)
-            required = ".".join(str(x) for x in CAM_MIN_FC_VERSION)
             return json.dumps({
                 "error": (
-                    f"CAM tools require FreeCAD {required} or later "
-                    f"(running {running}). Use a FreeCAD weekly build for CAM support."
+                    f"CAM tools require a FreeCAD build with the Path Toolbit API "
+                    f"(weekly builds / 26.x; running {running}). "
+                    f"Use a recent FreeCAD weekly build for CAM support."
                 )
             })
 

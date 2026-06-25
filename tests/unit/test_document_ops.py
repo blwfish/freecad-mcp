@@ -81,8 +81,9 @@ class TestCreateDocument:
         assert "MyDoc" in result
         assert "created" in result
 
-    def test_create_fallback_no_server(self, mock_freecad):
-        """Without server, should create document directly."""
+    def test_create_no_gui_dispatcher_errors(self, mock_freecad):
+        """Without a GUI thread dispatcher, create_document must refuse rather
+        than call FreeCAD.newDocument() off-thread (hardened in 6a4b39f)."""
         for mod in ("handlers.base", "handlers.document_ops"):
             if mod in sys.modules:
                 del sys.modules[mod]
@@ -93,9 +94,9 @@ class TestCreateDocument:
         mock_freecad.newDocument.return_value = new_doc
 
         result = handler.create_document({"document_name": "DirectDoc"})
-        assert "DirectDoc" in result
-        assert "created" in result
-        mock_freecad.newDocument.assert_called_once_with("DirectDoc")
+        assert "Error" in result
+        assert "GUI thread dispatcher" in result
+        mock_freecad.newDocument.assert_not_called()
 
     def test_create_uses_name_fallback(self, doc_handler):
         """Should fall back to 'name' arg if 'document_name' missing."""

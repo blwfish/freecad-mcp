@@ -310,6 +310,9 @@ def _find_freecadcmd() -> str | None:
         "/Applications/FreeCAD 1.0.app/Contents/MacOS/FreeCADCmd",
         "/Applications/FreeCAD 1.1.app/Contents/MacOS/FreeCADCmd",
         "/Applications/FreeCAD 1.2.app/Contents/MacOS/FreeCADCmd",
+        # Weekly / renumbered (26.x) builds ship under these bundle names
+        "/Applications/FreeCAD weekly-builds.app/Contents/MacOS/FreeCADCmd",
+        "/Applications/FreeCAD 26.app/Contents/MacOS/FreeCADCmd",
         # Local build (FC-clone)
         os.path.expanduser("~/Documents/FC-clone/build/release/bin/FreeCADCmd"),
         "/Volumes/Files/claude/FC-clone/build/release/bin/FreeCADCmd",
@@ -350,6 +353,9 @@ def _find_freecad_gui() -> str | None:
         "/Applications/FreeCAD 1.0.app/Contents/MacOS/FreeCAD",
         "/Applications/FreeCAD 1.1.app/Contents/MacOS/FreeCAD",
         "/Applications/FreeCAD 1.2.app/Contents/MacOS/FreeCAD",
+        # Weekly / renumbered (26.x) builds ship under these bundle names
+        "/Applications/FreeCAD weekly-builds.app/Contents/MacOS/FreeCAD",
+        "/Applications/FreeCAD 26.app/Contents/MacOS/FreeCAD",
         os.path.expanduser("~/Documents/FC-clone/build/release/bin/FreeCAD"),
         "/Volumes/Files/claude/FC-clone/build/release/bin/FreeCAD",
     ]
@@ -381,8 +387,11 @@ def _find_headless_script() -> str | None:
         os.path.join(bridge_dir, "AICopilot", "headless_server.py"),
         # Standard install
         os.path.expanduser("~/.freecad-mcp/AICopilot/headless_server.py"),
-        # Known addon paths (from MEMORY.md)
+        # Known addon paths (from MEMORY.md). The version-stamped component
+        # follows FreeCAD's renumbering (v1-2 -> v26-3); keep both so a freshly
+        # migrated profile and a legacy one both resolve.
         "/Volumes/Files/claude/FreeCAD-prefs/Mod/AICopilot/headless_server.py",
+        "/Volumes/Files/claude/FreeCAD-prefs/v26-3/Mod/AICopilot/headless_server.py",
         "/Volumes/Files/claude/FreeCAD-prefs/v1-2/Mod/AICopilot/headless_server.py",
     ]
     for p in candidates:
