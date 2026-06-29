@@ -1,5 +1,5 @@
 # MCP Protocol (bridge dependency)
-mcp==1.28.0
+mcp==1.28.1
 mcp-events>=0.1.0
 
 # FreeCAD's Python bindings come with FreeCAD (PySide2/PySide6)
