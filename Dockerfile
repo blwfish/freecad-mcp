@@ -6,9 +6,12 @@ ARG FREECAD_VERSION=1.1.0
 
 USER root
 
-# Install FreeCAD via conda-forge (this is what the AppImages are built from)
+# Install FreeCAD via conda-forge (this is what the AppImages are built from).
+# conda-forge's freecad package doesn't pull in pip as a dependency -- install
+# it explicitly, since the next step needs it to install the MCP bridge deps.
 RUN micromamba create -p /opt/freecad -c conda-forge \
     freecad=${FREECAD_VERSION} \
+    pip \
     --yes \
     && micromamba clean -a --yes
 
