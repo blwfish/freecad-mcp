@@ -24,17 +24,28 @@ jobs:
           # Read pinned version from Dockerfile (single source of truth)
           CURRENT_1_1=$(grep '^ARG FREECAD_VERSION=' Dockerfile | cut -d= -f2)
 
-          # Get latest 1.1.x stable release
-          LATEST_1_1=$(gh api repos/FreeCAD/FreeCAD/releases --paginate --jq '.[] | select(.tag_name | test("^1\\.1\\.[0-9]+$")) | .tag_name' | head -1 | sed 's/^v//')
+          # Latest 1.1.x stable on GitHub (informational — this is upstream's
+          # release, not necessarily what we can actually install)
+          GH_LATEST_1_1=$(gh api repos/FreeCAD/FreeCAD/releases --paginate --jq '.[] | select(.tag_name | test("^1\\.1\\.[0-9]+$")) | .tag_name' | head -1 | sed 's/^v//')
 
-          # Get latest 1.2 pre-release
+          # Latest 1.2 pre-release (informational)
           LATEST_1_2=$(gh api repos/FreeCAD/FreeCAD/releases --jq '.[] | select(.prerelease) | select(.tag_name | test("^1\\.2")) | .tag_name' | head -1 | sed 's/^v//')
 
-          echo "latest_1_1=$LATEST_1_1" >> $GITHUB_OUTPUT
+          # Latest version actually published on conda-forge — this is what the
+          # Dockerfile installs (`micromamba create -c conda-forge freecad=...`),
+          # so it's the only version that's actually actionable right now.
+          # conda-forge routinely lags the GitHub release by weeks/months.
+          CONDA_LATEST_1_1=$(curl -s "https://api.anaconda.org/package/conda-forge/freecad" | jq -r '.latest_version')
+
+          echo "gh_latest_1_1=$GH_LATEST_1_1" >> $GITHUB_OUTPUT
           echo "current_1_1=$CURRENT_1_1" >> $GITHUB_OUTPUT
           echo "latest_1_2=$LATEST_1_2" >> $GITHUB_OUTPUT
+          echo "conda_latest_1_1=$CONDA_LATEST_1_1" >> $GITHUB_OUTPUT
 
-          if [ "$LATEST_1_1" != "$CURRENT_1_1" ] || [ -n "$LATEST_1_2" ]; then
+          # Only actionable if conda-forge has shipped something newer than
+          # what we're pinned to. A GitHub release conda-forge hasn't packaged
+          # yet is not something we can bump to.
+          if [ "$CONDA_LATEST_1_1" != "$CURRENT_1_1" ] || [ -n "$LATEST_1_2" ]; then
             echo "update_available=true" >> $GITHUB_OUTPUT
           fi
 
@@ -42,12 +53,53 @@ jobs:
         id: python_deps
         run: |
           python3 -m venv /tmp/dep-check
-          python3 -c "import tomllib; data=tomllib.load(open('pyproject.toml','rb')); [print(d) for d in data['project']['dependencies']]" > /tmp/project-deps.txt
+
+          # Names of this project's own direct dependencies (main + test extra).
+          # Anything else pip reports as "outdated" is transitive (pulled in by
+          # mcp/pydantic, etc.) or incidental to the venv (pip itself) — not
+          # something this repo pins or can act on directly.
+          python3 -c "
+          import re, tomllib
+          data = tomllib.load(open('pyproject.toml', 'rb'))
+          deps = list(data['project']['dependencies'])
+          for extra_deps in data['project'].get('optional-dependencies', {}).values():
+              deps.extend(extra_deps)
+          for d in deps:
+              name = re.split(r'[<>=!~\[; ]', d, maxsplit=1)[0]
+              print(name)
+          " > /tmp/direct-dep-names.txt
+
+          # Normalize for comparison (PyPI treats -/_/. as equivalent).
+          normalize() { tr 'A-Z_.' 'a-z--' ; }
+          normalize < /tmp/direct-dep-names.txt | sort -u > /tmp/direct-dep-names-normalized.txt
+
+          python3 -c "
+          import tomllib
+          data=tomllib.load(open('pyproject.toml','rb'))
+          [print(d) for d in data['project']['dependencies']]
+          " > /tmp/project-deps.txt
           /tmp/dep-check/bin/pip install -r /tmp/project-deps.txt -q
-          OUTDATED=$(/tmp/dep-check/bin/pip list --outdated --format=json | jq -r '.[] | "\(.name)==\(.latest_version)"' 2>/dev/null || echo "")
-          if [ -n "$OUTDATED" ]; then
+
+          OUTDATED=$(/tmp/dep-check/bin/pip list --outdated --format=json | jq -r '.[] | "\(.name)==\(.latest_version)"')
+
+          FILTERED=""
+          while IFS= read -r line; do
+            pkg=$(echo "$line" | cut -d= -f1 | normalize)
+            # Exclude pip itself unconditionally — it's not a project dependency,
+            # just whatever version happened to ship in this throwaway venv.
+            if [ "$pkg" = "pip" ]; then
+              continue
+            fi
+            if grep -qxF "$pkg" /tmp/direct-dep-names-normalized.txt; then
+              FILTERED="${FILTERED}${line}
+          "
+            fi
+          done <<< "$OUTDATED"
+          FILTERED=$(echo "$FILTERED" | sed '/^$/d')
+
+          if [ -n "$FILTERED" ]; then
             echo "outdated<<EOF" >> $GITHUB_OUTPUT
-            echo "$OUTDATED" >> $GITHUB_OUTPUT
+            echo "$FILTERED" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
             echo "update_available=true" >> $GITHUB_OUTPUT
           fi
@@ -60,7 +112,8 @@ jobs:
         with:
           script: |
             const freecad_1_1_current = '${{ steps.freecad.outputs.current_1_1 }}';
-            const freecad_1_1_latest = '${{ steps.freecad.outputs.latest_1_1 }}';
+            const freecad_1_1_gh_latest = '${{ steps.freecad.outputs.gh_latest_1_1 }}';
+            const freecad_1_1_conda_latest = '${{ steps.freecad.outputs.conda_latest_1_1 }}';
             const freecad_1_2_latest = '${{ steps.freecad.outputs.latest_1_2 }}';
             const python_deps = `${{ steps.python_deps.outputs.outdated }}`;
 
@@ -68,8 +121,11 @@ jobs:
 
             if ('${{ steps.freecad.outputs.update_available }}' === 'true') {
               body += '## FreeCAD\n';
-              if (freecad_1_1_current !== freecad_1_1_latest) {
-                body += `### Stable (1.1.x)\n- Current: v${freecad_1_1_current}\n- Latest: v${freecad_1_1_latest}\n- **Action:** bump \`ARG FREECAD_VERSION=${freecad_1_1_latest}\` in \`Dockerfile\`\n\n`;
+              if (freecad_1_1_conda_latest !== freecad_1_1_current) {
+                body += `### Stable (1.1.x) — installable via conda-forge\n- Current: v${freecad_1_1_current}\n- Latest on conda-forge: v${freecad_1_1_conda_latest}\n- **Action:** bump \`ARG FREECAD_VERSION=${freecad_1_1_conda_latest}\` in \`Dockerfile\`\n\n`;
+              }
+              if (freecad_1_1_gh_latest !== freecad_1_1_conda_latest) {
+                body += `### FYI — GitHub release ahead of conda-forge\n- Latest GitHub release: v${freecad_1_1_gh_latest}\n- Latest on conda-forge: v${freecad_1_1_conda_latest}\n- **Not actionable yet:** the Dockerfile installs FreeCAD via conda-forge, which hasn't packaged this release. No action until the conda-forge feedstock catches up.\n\n`;
               }
               if (freecad_1_2_latest) {
                 body += `### Development (1.2-dev)\n- Latest pre-release: v${freecad_1_2_latest}\n- **Note:** CAM tools require 1.2+; all other tools work with 1.1.x stable\n\n`;
@@ -77,7 +133,7 @@ jobs:
             }
 
             if (python_deps.trim()) {
-              body += `## Python Dependencies\n\`\`\`\n${python_deps}\n\`\`\`\n\n`;
+              body += `## Python Dependencies\nDirect dependencies only (transitive deps and pip itself are excluded — they aren't pinned in \`pyproject.toml\` and aren't independently actionable here):\n\`\`\`\n${python_deps}\n\`\`\`\n\n`;
             }
 
             body += '**Note:** Review and test before upgrading. FreeCAD API may change between versions.';
