@@ -1,0 +1,55 @@
+name: Docker Build Check
+
+# Build-only (no push, no registry credentials needed) validation that the
+# Dockerfile actually builds. Exists because docker-publish.yml only runs at
+# release time, only pushes (never just builds) and had no failure alerting
+# until 2026-07-13 -- a build-breaking change could sit undetected for weeks.
+# This runs on every PR that touches anything the image depends on, so a
+# broken Dockerfile fails at review time instead of at the next release.
+
+on:
+  push:
+    branches: [main, rewrite-core]
+    paths:
+      - 'Dockerfile'
+      - 'docker-entrypoint.sh'
+      - 'freecad_mcp_server.py'
+      - 'mcp_bridge_framing.py'
+      - 'AICopilot/**'
+      - 'requirements.txt'
+      - 'pyproject.toml'
+      - '.github/workflows/docker-build-check.yml'
+      - '.github/workflows/docker-publish.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'docker-entrypoint.sh'
+      - 'freecad_mcp_server.py'
+      - 'mcp_bridge_framing.py'
+      - 'AICopilot/**'
+      - 'requirements.txt'
+      - 'pyproject.toml'
+      - '.github/workflows/docker-build-check.yml'
+      - '.github/workflows/docker-publish.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
