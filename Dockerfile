@@ -13,7 +13,7 @@ RUN micromamba create -p /opt/freecad -c conda-forge \
     && micromamba clean -a --yes
 
 # Install MCP bridge Python dependencies into the same env
-RUN micromamba run -p /opt/freecad pip install --no-cache-dir "mcp>=1.27.1"
+RUN micromamba run -p /opt/freecad pip install --no-cache-dir "mcp>=1.27.1" "mcp-events>=0.1.0"
 
 # Copy MCP server
 COPY freecad_mcp_server.py mcp_bridge_framing.py /opt/freecad-mcp/
