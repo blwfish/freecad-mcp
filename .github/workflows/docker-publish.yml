@@ -1,8 +1,14 @@
 name: Publish Docker Image
 
 on:
-  release:
-    types: [published]
+  # Triggers directly on the tag push (same trigger as release.yml), not on
+  # release.yml's `release: published` event: that event is created via
+  # softprops/action-gh-release using the default GITHUB_TOKEN, and GitHub
+  # doesn't cascade workflow triggers off GITHUB_TOKEN-authored events. This
+  # sidesteps that entirely by watching the tag push itself.
+  push:
+    tags:
+      - 'v[0-9]*'
   workflow_dispatch:
     inputs:
       tag:
@@ -33,8 +39,8 @@ jobs:
       - name: Determine image tags
         id: meta
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            VERSION="${{ github.event.release.tag_name }}"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${{ github.ref_name }}"
           else
             VERSION="${{ inputs.tag }}"
           fi
