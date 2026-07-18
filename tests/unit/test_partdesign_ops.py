@@ -36,6 +36,31 @@ from tests.unit._freecad_mocks import (
 from handlers.partdesign_ops import PartDesignOpsHandler
 
 
+def _make_next_addobject_invalid(doc, type_id):
+    """Make the next doc.addObject(type_id, ...) call return an object with
+    State=['Invalid'], preserving make_mock_doc's normal _add_object setup
+    (appends to doc.Objects, sets Shape defaults) for every other call.
+    Used to test the post-recompute Invalid-state check added to every
+    PartDesign feature-creating method."""
+    original = doc.addObject.side_effect
+
+    def _wrapped(t, name=None):
+        obj = original(t, name)
+        if t == type_id:
+            obj.State = ['Invalid']
+        return obj
+
+    doc.addObject.side_effect = _wrapped
+
+
+def _make_next_newobject_invalid(body, type_id):
+    """Same as above, but for body.newObject (PartDesign-native features).
+    make_body's newObject is a plain return_value MagicMock (not a
+    side_effect factory), so this just flags the shared return object —
+    fine as long as the test only creates one feature of this type_id."""
+    body.newObject.return_value.State = ['Invalid']
+
+
 # ---------------------------------------------------------------------------
 # Pad / pocket
 # ---------------------------------------------------------------------------
@@ -509,6 +534,19 @@ class TestMirrorFeature(unittest.TestCase):
         self.assertEqual(mirror.Normal, (1, 0, 0))
         assert_success_contains(self, result, "M", "F", "YZ")
 
+    def test_invalid_state_errors_instead_of_false_success(self):
+        """Only pad_sketch/pocket checked post-recompute State before this
+        fix; mirror_feature (and ~15 other feature-creating methods) could
+        silently report success for a broken feature."""
+        feat = make_part_object("F")
+        doc = make_mock_doc([feat])
+        mock_FreeCAD.ActiveDocument = doc
+        _make_next_addobject_invalid(doc, "Part::Mirroring")
+
+        result = self.handler.mirror_feature({'feature_name': 'F', 'plane': 'YZ'})
+
+        assert_error_contains(self, result, "failed to compute")
+
 
 # ---------------------------------------------------------------------------
 # Revolution / groove
@@ -534,6 +572,16 @@ class TestRevolution(unittest.TestCase):
         self.assertEqual(rev.Angle, 360)
         self.assertEqual(rev.Axis, (0, 0, 1))
         assert_success_contains(self, result, "S", "360", "Z")
+
+    def test_invalid_state_errors_instead_of_false_success(self):
+        sketch = make_sketch("S")
+        doc = make_mock_doc([sketch])
+        mock_FreeCAD.ActiveDocument = doc
+        _make_next_addobject_invalid(doc, "Part::Revolution")
+
+        result = self.handler.revolution({'sketch_name': 'S', 'angle': 360})
+
+        assert_error_contains(self, result, "failed to compute")
 
     def test_partial_revolution_around_x(self):
         sketch = make_sketch("S")
@@ -633,6 +681,229 @@ class TestSweepPath(unittest.TestCase):
         sweep = doc.Objects[-1]
         self.assertEqual(list(sweep.Sections), [profile])
         self.assertEqual(sweep.Spine, path)
+
+
+# ---------------------------------------------------------------------------
+# additive_pipe / subtractive_loft / subtractive_sweep / create_helix /
+# create_rib — previously zero test coverage (H15 finding).
+# ---------------------------------------------------------------------------
+
+class TestAdditivePipe(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(PartDesignOpsHandler)
+
+    def test_requires_body(self):
+        profile = make_sketch("P")
+        path = make_sketch("Path")
+        doc = make_mock_doc([profile, path])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.additive_pipe({
+            'profile_sketch': 'P', 'path_sketch': 'Path',
+        })
+        assert_error_contains(self, result, "partdesign body")
+
+    def test_creates_additive_pipe_in_body(self):
+        profile = make_sketch("P")
+        path = make_sketch("Path")
+        body = make_body("Body", group=[profile, path])
+        doc = make_mock_doc([body, profile, path])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.additive_pipe({
+            'profile_sketch': 'P', 'path_sketch': 'Path',
+        })
+
+        body.newObject.assert_called_with("PartDesign::AdditivePipe", "AdditivePipe")
+        pipe = body.newObject.return_value
+        self.assertEqual(pipe.Profile, profile)
+        self.assertEqual(pipe.Spine, path)
+        assert_success_contains(self, result, "P", "Path")
+
+    def test_invalid_state_errors_instead_of_false_success(self):
+        profile = make_sketch("P")
+        path = make_sketch("Path")
+        body = make_body("Body", group=[profile, path])
+        doc = make_mock_doc([body, profile, path])
+        mock_FreeCAD.ActiveDocument = doc
+        _make_next_newobject_invalid(body, "PartDesign::AdditivePipe")
+
+        result = self.handler.additive_pipe({
+            'profile_sketch': 'P', 'path_sketch': 'Path',
+        })
+
+        assert_error_contains(self, result, "failed to compute")
+
+
+class TestSubtractiveLoft(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(PartDesignOpsHandler)
+
+    def test_needs_at_least_two_sketches(self):
+        doc = make_mock_doc([])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.subtractive_loft({'sketches': ['S1']})
+        assert_error_contains(self, result, "at least 2")
+
+    def test_requires_body(self):
+        s1 = make_sketch("S1")
+        s2 = make_sketch("S2")
+        doc = make_mock_doc([s1, s2])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.subtractive_loft({'sketches': ['S1', 'S2']})
+        assert_error_contains(self, result, "partdesign body")
+
+    def test_creates_subtractive_loft_in_body(self):
+        s1 = make_sketch("S1")
+        s2 = make_sketch("S2")
+        body = make_body("Body", group=[s1, s2])
+        doc = make_mock_doc([body, s1, s2])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.subtractive_loft({'sketches': ['S1', 'S2']})
+
+        body.newObject.assert_called_with("PartDesign::SubtractiveLoft", "SubtractiveLoft")
+        loft = body.newObject.return_value
+        self.assertEqual(list(loft.Sections), [s1, s2])
+        assert_success_contains(self, result, "2 profiles")
+
+    def test_invalid_state_errors_instead_of_false_success(self):
+        s1 = make_sketch("S1")
+        s2 = make_sketch("S2")
+        body = make_body("Body", group=[s1, s2])
+        doc = make_mock_doc([body, s1, s2])
+        mock_FreeCAD.ActiveDocument = doc
+        _make_next_newobject_invalid(body, "PartDesign::SubtractiveLoft")
+
+        result = self.handler.subtractive_loft({'sketches': ['S1', 'S2']})
+
+        assert_error_contains(self, result, "failed to compute")
+
+
+class TestSubtractiveSweep(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(PartDesignOpsHandler)
+
+    def test_requires_body(self):
+        profile = make_sketch("P")
+        path = make_sketch("Path")
+        doc = make_mock_doc([profile, path])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.subtractive_sweep({
+            'profile_sketch': 'P', 'path_sketch': 'Path',
+        })
+        assert_error_contains(self, result, "partdesign body")
+
+    def test_creates_subtractive_pipe_in_body(self):
+        profile = make_sketch("P")
+        path = make_sketch("Path")
+        body = make_body("Body", group=[profile, path])
+        doc = make_mock_doc([body, profile, path])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.subtractive_sweep({
+            'profile_sketch': 'P', 'path_sketch': 'Path',
+        })
+
+        body.newObject.assert_called_with("PartDesign::SubtractivePipe", "SubtractivePipe")
+        pipe = body.newObject.return_value
+        self.assertEqual(pipe.Profile, profile)
+        self.assertEqual(pipe.Spine, path)
+        assert_success_contains(self, result, "P", "Path")
+
+    def test_invalid_state_errors_instead_of_false_success(self):
+        profile = make_sketch("P")
+        path = make_sketch("Path")
+        body = make_body("Body", group=[profile, path])
+        doc = make_mock_doc([body, profile, path])
+        mock_FreeCAD.ActiveDocument = doc
+        _make_next_newobject_invalid(body, "PartDesign::SubtractivePipe")
+
+        result = self.handler.subtractive_sweep({
+            'profile_sketch': 'P', 'path_sketch': 'Path',
+        })
+
+        assert_error_contains(self, result, "failed to compute")
+
+
+class TestCreateHelix(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(PartDesignOpsHandler)
+
+    def test_creates_helix_sweep_from_pitch_and_height(self):
+        sketch = make_sketch("S")
+        doc = make_mock_doc([sketch])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_helix({
+            'sketch_name': 'S', 'pitch': 2, 'height': 10,
+        })
+
+        doc.addObject.assert_any_call("Part::Sweep", "Helix")
+        assert_success_contains(self, result, "S", "pitch=2", "height=10", "turns=5.0")
+
+    def test_turns_drives_height_when_given(self):
+        sketch = make_sketch("S")
+        doc = make_mock_doc([sketch])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_helix({
+            'sketch_name': 'S', 'pitch': 2, 'turns': 3,
+        })
+
+        assert_success_contains(self, result, "height=6", "turns=3")
+
+    def test_invalid_state_errors_instead_of_false_success(self):
+        sketch = make_sketch("S")
+        doc = make_mock_doc([sketch])
+        mock_FreeCAD.ActiveDocument = doc
+        _make_next_addobject_invalid(doc, "Part::Sweep")
+
+        result = self.handler.create_helix({'sketch_name': 'S', 'pitch': 2, 'height': 10})
+
+        assert_error_contains(self, result, "failed to compute")
+
+
+class TestCreateRib(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(PartDesignOpsHandler)
+
+    def test_creates_rib_with_default_normal_direction(self):
+        sketch = make_sketch("S")
+        doc = make_mock_doc([sketch])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_rib({'sketch_name': 'S', 'thickness': 5})
+
+        doc.addObject.assert_called_with("Part::Extrude", "Rib")
+        rib = doc.Objects[-1]
+        self.assertEqual(rib.Dir, (0, 1, 0))
+        self.assertEqual(rib.LengthFwd, 5)
+        assert_success_contains(self, result, "S", "5mm", "normal")
+
+    def test_horizontal_direction(self):
+        sketch = make_sketch("S")
+        doc = make_mock_doc([sketch])
+        mock_FreeCAD.ActiveDocument = doc
+
+        self.handler.create_rib({'sketch_name': 'S', 'direction': 'horizontal'})
+
+        rib = doc.Objects[-1]
+        self.assertEqual(rib.Dir, (1, 0, 0))
+
+    def test_invalid_state_errors_instead_of_false_success(self):
+        sketch = make_sketch("S")
+        doc = make_mock_doc([sketch])
+        mock_FreeCAD.ActiveDocument = doc
+        _make_next_addobject_invalid(doc, "Part::Extrude")
+
+        result = self.handler.create_rib({'sketch_name': 'S'})
+
+        assert_error_contains(self, result, "failed to compute")
 
 
 # ---------------------------------------------------------------------------
