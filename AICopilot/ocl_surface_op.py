@@ -305,6 +305,19 @@ class OCLSurfaceProxy:
             raise ValueError(f"ToolDiameter must be > 0 (got {tool_dia})")
         if stepover <= 0:
             raise ValueError(f"StepOver must be > 0 (got {stepover})")
+        if stepover >= tool_dia:
+            # Unlike Pocket/Adaptive's StepOver (a percentage of tool
+            # diameter), this StepOver is an absolute mm value — the scan
+            # loop advances by it directly (_build_zigzag_scan: y +=
+            # stepover). At or above the tool diameter, consecutive scan
+            # lines don't overlap, leaving uncut ridges — the same
+            # silent-wrong-geometry failure as Pocket/Adaptive's percentage
+            # check, just expressed in absolute mm here.
+            raise ValueError(
+                f"StepOver ({stepover} mm) must be < ToolDiameter ({tool_dia} mm) — "
+                f"at or above the tool diameter, scan lines don't overlap, "
+                f"leaving uncut ridges/material"
+            )
         if sampling <= 0:
             raise ValueError(f"SampleInterval must be > 0 (got {sampling})")
 

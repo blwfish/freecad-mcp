@@ -172,6 +172,17 @@ class CAMOpsHandler(BaseHandler):
     def pocket(self, args: Dict[str, Any]) -> str:
         """Create a pocket operation. Pass faces=['FaceN',...] to generate toolpath."""
         try:
+            # StepOver is a percentage of tool diameter — confirmed against
+            # FreeCAD's own source (Path/Op/PocketBase.py):
+            # PocketStepover = (radius*2) * (StepOver/100). At/above 100 the
+            # tool paths are non-overlapping (or gapped), leaving uncut
+            # ridges/material — syntactically valid G-code with silently
+            # wrong geometry. Validated before creating the op.
+            if 'stepover' in args and args['stepover'] >= 100:
+                return (f"Error creating pocket operation: stepover ({args['stepover']}%) "
+                        f"must be < 100% of tool diameter — at or above 100% the tool "
+                        f"paths don't overlap, leaving uncut ridges/material")
+
             try:
                 from Path.Op.Pocket import Create as CreatePocket
             except ImportError:
@@ -241,6 +252,18 @@ class CAMOpsHandler(BaseHandler):
         Pass faces=['FaceN',...] to define the area to clear.
         """
         try:
+            # Same stepover-vs-tool-diameter validation as pocket() (see
+            # its comment). Also: the real Adaptive property is
+            # StepOverPercent, not StepOver — FreeCAD's own Adaptive.py
+            # explicitly removes a legacy "StepOver" property if present
+            # (obj.removeProperty("StepOver")), so hasattr(op, 'StepOver')
+            # is False on any modern Adaptive feature and the caller's
+            # stepover argument was silently never applied.
+            if 'stepover' in args and args['stepover'] >= 100:
+                return (f"Error creating adaptive operation: stepover ({args['stepover']}%) "
+                        f"must be < 100% of tool diameter — at or above 100% the tool "
+                        f"paths don't overlap, leaving uncut ridges/material")
+
             try:
                 from Path.Op.Adaptive import Create as CreateAdaptive
             except ImportError:
@@ -249,8 +272,8 @@ class CAMOpsHandler(BaseHandler):
 
             doc, op = self._create_path_op(CreateAdaptive, args, 'Adaptive')
 
-            if 'stepover' in args and hasattr(op, 'StepOver'):
-                op.StepOver = args['stepover']
+            if 'stepover' in args and hasattr(op, 'StepOverPercent'):
+                op.StepOverPercent = args['stepover']
             if 'tolerance' in args and hasattr(op, 'Tolerance'):
                 op.Tolerance = args['tolerance']
 
