@@ -135,6 +135,66 @@ class TestBridgeCtx:
             if os.path.exists(sock_path):
                 os.unlink(sock_path)
 
+    def test_freecad_available_windows_probes_instead_of_unconditional_true(self, bridge, monkeypatch):
+        """Windows used to return True unconditionally without probing the
+        socket — check_freecad_connection (the mandatory pre-flight gate
+        CLAUDE.md requires) was a deterministic false positive on an entire
+        supported platform whenever nothing was actually listening."""
+        monkeypatch.setattr(bridge.platform, "system", lambda: "Windows")
+        ctx = bridge._BridgeCtx()
+        ctx.socket_path = "127.0.0.1:1"  # port 1 — nothing listens there
+        assert ctx.freecad_available is False
+
+    def test_freecad_available_windows_true_when_tcp_listens(self, bridge, monkeypatch):
+        monkeypatch.setattr(bridge.platform, "system", lambda: "Windows")
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.bind(("127.0.0.1", 0))
+        port = srv.getsockname()[1]
+        srv.listen(1)
+        try:
+            ctx = bridge._BridgeCtx()
+            ctx.socket_path = f"127.0.0.1:{port}"
+            assert ctx.freecad_available is True
+        finally:
+            srv.close()
+
+    def test_freecad_available_windows_no_socket_path_is_false(self, bridge, monkeypatch):
+        monkeypatch.setattr(bridge.platform, "system", lambda: "Windows")
+        ctx = bridge._BridgeCtx()
+        ctx.socket_path = None
+        assert ctx.freecad_available is False
+
+
+class TestTcpSocketAlive:
+    """_tcp_socket_alive backs freecad_available on Windows, where discovery
+    is TCP-based (no Unix domain sockets, so _socket_alive doesn't apply)."""
+
+    def test_malformed_host_port_returns_false(self, bridge):
+        assert bridge._tcp_socket_alive("not-a-host-port") is False
+
+    def test_non_numeric_port_returns_false(self, bridge):
+        assert bridge._tcp_socket_alive("localhost:notaport") is False
+
+    def test_empty_string_returns_false(self, bridge):
+        assert bridge._tcp_socket_alive("") is False
+
+    def test_live_tcp_listener_returns_true(self, bridge):
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.bind(("127.0.0.1", 0))
+        port = srv.getsockname()[1]
+        srv.listen(1)
+        try:
+            assert bridge._tcp_socket_alive(f"127.0.0.1:{port}") is True
+        finally:
+            srv.close()
+
+    def test_dead_tcp_endpoint_returns_false(self, bridge):
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.bind(("127.0.0.1", 0))
+        port = srv.getsockname()[1]
+        srv.close()  # bind-then-close: port is very likely refused now
+        assert bridge._tcp_socket_alive(f"127.0.0.1:{port}", timeout=0.2) is False
+
 
 # ===========================================================================
 # _find_freecadcmd

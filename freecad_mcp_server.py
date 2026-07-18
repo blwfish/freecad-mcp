@@ -39,6 +39,30 @@ def _socket_alive(sock_path: str, timeout: float = 0.5) -> bool:
         return False
 
 
+def _tcp_socket_alive(host_port: str, timeout: float = 0.5) -> bool:
+    """Return True if a TCP endpoint "host:port" accepts connections.
+
+    Windows GUI discovery is TCP-based (no Unix domain sockets), so
+    _socket_alive's os.path.exists/AF_UNIX check doesn't apply — this is the
+    equivalent liveness probe for _BridgeCtx.freecad_available on Windows.
+    """
+    if not host_port or ":" not in host_port:
+        return False
+    host, _, port_str = host_port.rpartition(":")
+    try:
+        port = int(port_str)
+    except ValueError:
+        return False
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        s.connect((host, port))
+        s.close()
+        return True
+    except OSError:
+        return False
+
+
 def _scan_discovery(prune_stale: bool = True) -> list[dict]:
     """Read ~/.cache/freecad-mcp/instances/*.json, return live records.
 
@@ -169,10 +193,10 @@ class _BridgeCtx:
 
     @property
     def freecad_available(self) -> bool:
-        if platform.system() == "Windows":
-            return True
         if not self.socket_path:
             return False
+        if platform.system() == "Windows":
+            return _tcp_socket_alive(self.socket_path)
         return _socket_alive(self.socket_path)
 
     def register(self, sock_path: str, pid: int, proc, label: str,
