@@ -271,6 +271,27 @@ class TestCheckFreecadProcess:
         assert running is True
         assert pid == 999
 
+    @patch("freecad_health.subprocess.run")
+    def test_pgrep_pattern_is_case_sensitive_freecad(self, mock_run, tmp_path):
+        """Regression: pgrep -f "freecad" (lowercase) verified live to miss
+        the real FreeCAD process (whose binary/bundle path is capitalized:
+        FreeCAD.app, build/release/bin/FreeCAD) while matching unrelated
+        processes whose command line happens to contain "freecad" lowercase
+        (this project's own venv path, .../freecad-mcp/venv/bin/python, is
+        exactly such a case) — freecad_health.check_freecad_process would
+        then report a healthy instance while pointing freecad_pid at an
+        unrelated process, which attempt_restart could kill.
+        freecad_crash_report.py already uses the correct capitalized
+        pattern; this pins the same pattern here."""
+        m = make_monitor(tmp_path)
+        mock_run.return_value = MagicMock(returncode=0, stdout="1\n")
+
+        m.check_freecad_process()
+
+        args = mock_run.call_args[0][0]
+        assert "FreeCAD" in args
+        assert "freecad" not in args
+
 
 # ---------------------------------------------------------------------------
 # perform_health_check
