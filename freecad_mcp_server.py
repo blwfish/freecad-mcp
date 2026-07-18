@@ -2167,7 +2167,22 @@ async def main():
         # execute_python: submit as async job, poll with timeout
         elif name == "execute_python":
             args = arguments or {}
-            submit_resp = json.loads(await send_to_freecad("execute_python_async", {"code": args.get("code", "")}))
+            raw_submit_resp = await send_to_freecad("execute_python_async", {"code": args.get("code", "")})
+            try:
+                submit_resp = json.loads(raw_submit_resp)
+            except json.JSONDecodeError as e:
+                # send_to_freecad's success path returns whatever the
+                # FreeCAD-side handler sent verbatim — not guaranteed JSON
+                # (truncated response, handler bug, encoding issue). This is
+                # the most-used tool (the documented execute_python escape
+                # hatch); an uncaught exception here would propagate out of
+                # handle_call_tool entirely, bypassing the crash-diagnosis
+                # system this codebase otherwise invests in for every other
+                # failure path.
+                return [types.TextContent(type="text", text=json.dumps({
+                    "error": f"Non-JSON response from FreeCAD: {e}",
+                    "raw_response": raw_submit_resp[:500],
+                }))]
             if "error" in submit_resp:
                 return [types.TextContent(type="text", text=json.dumps(submit_resp))]
             job_id = submit_resp.get("job_id")

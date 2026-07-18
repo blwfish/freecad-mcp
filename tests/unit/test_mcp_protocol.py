@@ -148,3 +148,41 @@ class TestCallToolUnknown:
         name = "__nonexistent_tool__"
         content = _call_tool(name)
         assert name in content[0].text
+
+
+# ---------------------------------------------------------------------------
+# execute_python — non-JSON response from FreeCAD must not raise uncaught
+# ---------------------------------------------------------------------------
+
+
+class TestExecutePythonNonJsonResponse:
+    """execute_python is the most-used tool (the documented escape hatch).
+    json.loads(await send_to_freecad(...)) was previously unguarded —
+    send_to_freecad's success path returns whatever the FreeCAD-side
+    handler sent verbatim, not guaranteed JSON (truncated response,
+    handler bug, encoding issue). An uncaught exception here would
+    propagate out of handle_call_tool entirely, bypassing the
+    crash-diagnosis system this codebase otherwise invests in for every
+    other failure path."""
+
+    def test_non_json_response_returns_clean_error_not_raise(self):
+        from unittest.mock import MagicMock as _MagicMock
+
+        with patch.object(freecad_mcp_server._ctx, "resolve_target",
+                           return_value=("/tmp/fake.sock", None)), \
+             patch.object(freecad_mcp_server.socket, "socket") as mock_socket_cls, \
+             patch.object(freecad_mcp_server, "send_message", return_value=True), \
+             patch.object(freecad_mcp_server, "receive_message",
+                           return_value="not valid json {{{"):
+            # socket.socket()/.connect()/.close() are all synchronous real
+            # methods even though send_to_freecad itself is an async def —
+            # a plain MagicMock, not AsyncMock, is what a sync socket call
+            # returns.
+            mock_socket_cls.return_value = _MagicMock()
+
+            content = _call_tool("execute_python", {"code": "1 + 1"})
+
+        assert content is not None and len(content) > 0
+        parsed = json.loads(content[0].text)
+        assert "error" in parsed
+        assert "non-json" in parsed["error"].lower() or "json" in parsed["error"].lower()
