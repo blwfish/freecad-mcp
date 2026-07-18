@@ -240,43 +240,128 @@ class FreeCADDebugger:
         except (TypeError, ValueError):
             return str(result)
     
+    # Above this many objects, capture_freecad_state stops per-object detail
+    # and only reports names — matches document_ops.list_objects's cap so a
+    # DXF-import-sized document doesn't make a crash snapshot itself hang or
+    # balloon in size.
+    _MAX_DETAILED_OBJECTS = 500
+
     def capture_freecad_state(self) -> Dict:
         """
         Capture current FreeCAD document state.
-        
+
         Returns:
             Dictionary containing document state information
         """
         try:
             import FreeCAD as App
-            
+
             state = {
                 "timestamp": datetime.now().isoformat(),
                 "has_active_document": App.ActiveDocument is not None,
             }
-            
+
             if App.ActiveDocument:
                 doc = App.ActiveDocument
+                objects = doc.Objects
+                truncated = len(objects) > self._MAX_DETAILED_OBJECTS
+                detailed = objects[:self._MAX_DETAILED_OBJECTS] if truncated else objects
                 state.update({
                     "document_name": doc.Name,
                     "document_label": doc.Label,
-                    "object_count": len(doc.Objects),
-                    "objects": [
-                        {
-                            "name": obj.Name,
-                            "type": obj.TypeId,
-                            "label": obj.Label,
-                        }
-                        for obj in doc.Objects
-                    ],
+                    "document_filename": getattr(doc, "FileName", "") or None,
+                    "object_count": len(objects),
+                    "objects_truncated": truncated,
+                    "objects": [self._capture_object_state(obj) for obj in detailed],
                 })
-            
+
             self.last_freecad_state = state
             return state
-            
+
         except Exception as e:
             self.logger.warning(f"Failed to capture FreeCAD state: {e}")
             return {"error": str(e)}
+
+    @staticmethod
+    def _capture_object_state(obj) -> Dict:
+        """Capture enough about one object to diagnose a geometry-related
+        crash: name/type/label (as before), plus Placement, Shape
+        validity/bbox, State flags, and simple scalar PropertiesList values
+        (the parametric dimensions — Box.Length, Fillet.Radius, etc — that
+        would actually let someone reproduce the crash). Previously only
+        name/type/label were captured; every crash log in this system
+        recorded object *names* with none of the geometric state needed to
+        diagnose a geometry-related crash.
+
+        Iterates PropertiesList generically (no hardcoded per-TypeId field
+        list) so this stays correct as new object types are added. Each
+        section is independently try/except'd — this runs from inside a
+        crash-diagnosis path, so one malformed object/property must not
+        abort the whole capture or mask the original failure.
+        """
+        info = {
+            "name": getattr(obj, "Name", "?"),
+            "type": getattr(obj, "TypeId", "?"),
+            "label": getattr(obj, "Label", "?"),
+        }
+
+        try:
+            state_flags = getattr(obj, "State", None)
+            if state_flags:
+                info["state"] = list(state_flags)
+        except Exception:
+            pass
+
+        try:
+            placement = getattr(obj, "Placement", None)
+            if placement is not None:
+                info["placement"] = {
+                    "position": [placement.Base.x, placement.Base.y, placement.Base.z],
+                    "rotation_axis": [
+                        placement.Rotation.Axis.x,
+                        placement.Rotation.Axis.y,
+                        placement.Rotation.Axis.z,
+                    ],
+                    "rotation_angle": placement.Rotation.Angle,
+                }
+        except Exception:
+            pass
+
+        try:
+            shape = getattr(obj, "Shape", None)
+            if shape is not None:
+                is_null = shape.isNull()
+                shape_info = {"is_null": is_null}
+                if not is_null:
+                    shape_info["is_valid"] = shape.isValid()
+                    bb = shape.BoundBox
+                    shape_info["bbox"] = [bb.XMin, bb.YMin, bb.ZMin, bb.XMax, bb.YMax, bb.ZMax]
+                info["shape"] = shape_info
+        except Exception:
+            pass
+
+        try:
+            props = {}
+            for prop_name in obj.PropertiesList:
+                if prop_name in ("Shape", "Placement", "State"):
+                    continue  # captured separately above
+                try:
+                    val = getattr(obj, prop_name)
+                except Exception:
+                    continue
+                if isinstance(val, (int, float, str, bool)) or val is None:
+                    props[prop_name] = val
+                elif hasattr(val, "Value"):  # FreeCAD Quantity (Length, Angle, ...)
+                    try:
+                        props[prop_name] = val.Value
+                    except Exception:
+                        pass
+            if props:
+                info["properties"] = props
+        except Exception:
+            pass
+
+        return info
     
     def log_state_change(self, operation: str):
         """Log state before operation (returns state for comparison)."""
