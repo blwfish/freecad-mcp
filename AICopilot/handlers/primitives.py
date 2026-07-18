@@ -45,6 +45,32 @@ def _validate_positive(prim: str, **dims) -> Optional[str]:
     return None
 
 
+def _validate_wedge_bounds(xmin, xmax, ymin, ymax, zmin, zmax, x2min, x2max) -> Optional[str]:
+    """Return an 'Error creating wedge: ...' string if any min/max pair is
+    inverted or degenerate; otherwise None.
+
+    Part::Wedge is defined by min/max coordinate PAIRS, not positive
+    magnitudes, so _validate_positive doesn't apply (xmin can legitimately
+    be negative). Each max must strictly exceed its min, or OCCT gets an
+    inverted/zero-volume solid that can crash a downstream Boolean —
+    create_wedge was the one primitive in this file not hardened against
+    that (see the module header).
+    """
+    for lo_name, lo, hi_name, hi in (
+        ("xmin", xmin, "xmax", xmax),
+        ("ymin", ymin, "ymax", ymax),
+        ("zmin", zmin, "zmax", zmax),
+        ("x2min", x2min, "x2max", x2max),
+    ):
+        try:
+            lo_f, hi_f = float(lo), float(hi)
+        except (TypeError, ValueError):
+            return f"Error creating wedge: {lo_name}/{hi_name} must be numbers (got {lo!r}, {hi!r})"
+        if hi_f <= lo_f:
+            return f"Error creating wedge: {hi_name} ({hi}) must be > {lo_name} ({lo})"
+    return None
+
+
 class PrimitivesHandler(BaseHandler):
     """Handler for creating primitive shapes (Part workbench)."""
 
@@ -244,6 +270,10 @@ class PrimitivesHandler(BaseHandler):
             ymax = args.get('ymax', 10)
             zmax = args.get('zmax', 10)
             name = args.get('name', 'Wedge')
+
+            err = _validate_wedge_bounds(xmin, xmax, ymin, ymax, zmin, zmax, x2min, x2max)
+            if err:
+                return err
 
             doc = self.get_document()
             if not doc:

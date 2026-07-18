@@ -385,6 +385,52 @@ class TestLinearPattern(unittest.TestCase):
         self.assertEqual(doc.copyObject.call_count, 3)
         assert_success_contains(self, result, "4 instances", "x", "10mm")
 
+    def test_invalid_direction_errors_instead_of_stacking_copies(self):
+        """An unrecognized direction used to leave the offset vector at
+        (0,0,0), silently stacking every copy exactly on the original
+        (coincident geometry — the OCCT Boolean crash pathology) while
+        still reporting success. Must error instead."""
+        feat = make_part_object("F")
+        feat.Label = "F"
+        doc = make_mock_doc([feat])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.linear_pattern({
+            'feature_name': 'F', 'direction': 'q',
+            'count': 4, 'spacing': 10,
+        })
+
+        assert_error_contains(self, result, "invalid direction", "q")
+        doc.copyObject.assert_not_called()
+
+    def test_count_zero_rejected(self):
+        feat = make_part_object("F")
+        feat.Label = "F"
+        doc = make_mock_doc([feat])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.linear_pattern({
+            'feature_name': 'F', 'direction': 'x', 'count': 0, 'spacing': 10,
+        })
+
+        assert_error_contains(self, result, "count")
+        doc.copyObject.assert_not_called()
+
+    def test_count_one_accepted_as_boundary(self):
+        """count=1 means 'just the original, no copies' — the >= 1 floor's
+        accept side, not the reject side."""
+        feat = make_part_object("F")
+        feat.Label = "F"
+        doc = make_mock_doc([feat])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.linear_pattern({
+            'feature_name': 'F', 'direction': 'x', 'count': 1, 'spacing': 10,
+        })
+
+        doc.copyObject.assert_not_called()
+        assert_success_contains(self, result, "1 instances")
+
 
 class TestPolarPattern(unittest.TestCase):
     def setUp(self):

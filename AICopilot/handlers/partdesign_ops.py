@@ -507,13 +507,21 @@ class PartDesignOpsHandler(BaseHandler):
             if not feature:
                 return f"Feature not found: {feature_name}"
 
-            direction_vector = FreeCAD.Vector(0, 0, 0)
+            if count < 1:
+                return f"count must be >= 1 (got {count})"
+
             if direction.lower() == 'x':
                 direction_vector = FreeCAD.Vector(spacing, 0, 0)
             elif direction.lower() == 'y':
                 direction_vector = FreeCAD.Vector(0, spacing, 0)
             elif direction.lower() == 'z':
                 direction_vector = FreeCAD.Vector(0, 0, spacing)
+            else:
+                # No fallback vector — an unrecognized direction used to
+                # silently stay at (0,0,0), stacking every copy exactly on
+                # top of the original (the coincident-geometry OCCT crash
+                # pathology) while still reporting success.
+                return f"Invalid direction '{direction}': must be 'x', 'y', or 'z'"
 
             for i in range(1, count):
                 copy = doc.copyObject(feature)
