@@ -332,9 +332,14 @@ class TestRoundTrip:
 # message of *exactly* MAX_MESSAGE_SIZE bytes must be accepted, and exactly
 # MAX_MESSAGE_SIZE+1 must be rejected.  The "49KB ok / 100KB rejected" pair
 # above doesn't pin the threshold.  These tests do.
+#
+# MAX_MESSAGE_SIZE is NOT redefined here — it's the one imported from
+# mcp_bridge_framing at the top of this file. A local redefinition used to
+# shadow that import, so these tests silently pinned a hardcoded literal
+# instead of the real constant: if the source value ever changed, every
+# test below would keep passing against the stale copy instead of catching
+# the drift.
 # ---------------------------------------------------------------------------
-
-MAX_MESSAGE_SIZE = 50 * 1024  # must match the value in mcp_bridge_framing
 
 
 class TestMaxMessageSizeThreshold:

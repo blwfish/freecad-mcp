@@ -140,6 +140,25 @@ class TestServerFraming:
         """Server-side MAX_MESSAGE_SIZE should be 50KB, matching bridge."""
         assert ss_module.MAX_MESSAGE_SIZE == 50 * 1024
 
+    def test_max_message_size_matches_bridge_module_directly(self, ss_module):
+        """Real parity check, not two independent hardcoded literals.
+
+        mcp_bridge_framing.py (bridge process) and freecad_mcp_handler.py
+        (FreeCAD process) each define their own MAX_MESSAGE_SIZE — they
+        can't share an import across the process boundary (same
+        architectural constraint as instance_registry.scan_discovery /
+        freecad_mcp_server._scan_discovery). Both this test AND
+        test_bridge_framing.py's TestMaxMessageSizeThreshold used to assert
+        only against a hardcoded `50 * 1024` on their own side, so the two
+        constants could silently drift apart with every test staying
+        green. This imports both modules and compares them directly.
+        """
+        repo_root = os.path.join(os.path.dirname(__file__), "..", "..")
+        if repo_root not in sys.path:
+            sys.path.insert(0, repo_root)
+        import mcp_bridge_framing
+        assert ss_module.MAX_MESSAGE_SIZE == mcp_bridge_framing.MAX_MESSAGE_SIZE
+
     def test_receive_exactly_at_max_message_size_accepted(self, ss_module):
         """Confirmed as a surviving mutant during the full review: mutating
         `>` to `>=` on the server-side receive check left all tests passing
