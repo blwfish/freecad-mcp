@@ -27,7 +27,30 @@ from tests.unit._freecad_mocks import (
     assert_success_contains,
 )
 
-from handlers.spreadsheet_ops import SpreadsheetOpsHandler
+from handlers.spreadsheet_ops import SpreadsheetOpsHandler, _col_to_num, _num_to_col
+
+
+class TestColumnConversionHelpers(unittest.TestCase):
+    """_col_to_num/_num_to_col are the single source of truth this handler's
+    4 former hand-written copies (set_cell_range, get_cell_range, import_csv,
+    export_csv) were consolidated into (H13). Pinning the boundary here
+    covers every call site structurally — a regression in either function
+    breaks all four callers identically, no per-site duplication needed."""
+
+    def test_single_letter_columns(self):
+        self.assertEqual(_col_to_num('A'), 1)
+        self.assertEqual(_col_to_num('Z'), 26)
+
+    def test_z_to_aa_boundary(self):
+        """col 26 (Z) -> col 27 (AA) is the wraparound the review flagged
+        as unverified at every one of the original 4 duplicate sites."""
+        self.assertEqual(_col_to_num('AA'), 27)
+        self.assertEqual(_num_to_col(26), 'Z')
+        self.assertEqual(_num_to_col(27), 'AA')
+
+    def test_round_trip_across_boundary(self):
+        for n in (1, 25, 26, 27, 28, 52, 53, 702, 703):
+            self.assertEqual(_col_to_num(_num_to_col(n)), n)
 
 
 class TestCreateSpreadsheet(unittest.TestCase):

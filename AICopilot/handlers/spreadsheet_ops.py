@@ -6,6 +6,31 @@ from typing import Dict, Any
 from .base import BaseHandler
 
 
+def _col_to_num(col):
+    """Spreadsheet column letters ('A', 'Z', 'AA', ...) -> 1-based number.
+
+    Single source of truth for this conversion — previously hand-written
+    identically at 4 call sites in this file (set_cell_range, get_cell_range,
+    import_csv, export_csv), including one instance inlined without even a
+    local function wrapper.
+    """
+    num = 0
+    for c in col:
+        num = num * 26 + (ord(c) - ord('A') + 1)
+    return num
+
+
+def _num_to_col(num):
+    """1-based column number -> spreadsheet column letters. Inverse of
+    _col_to_num; same consolidation rationale."""
+    col = ''
+    while num > 0:
+        num -= 1
+        col = chr(num % 26 + ord('A')) + col
+        num //= 26
+    return col
+
+
 class SpreadsheetOpsHandler(BaseHandler):
     """Handler for Spreadsheet workbench operations."""
 
@@ -214,19 +239,8 @@ class SpreadsheetOpsHandler(BaseHandler):
                 if not isinstance(row_values, list):
                     row_values = [row_values]
                 for col_idx, value in enumerate(row_values):
-                    # Calculate column letter
-                    col_num = 0
-                    for c in start_col:
-                        col_num = col_num * 26 + (ord(c) - ord('A') + 1)
-                    col_num += col_idx
-
-                    # Convert back to letter(s)
-                    col_letter = ''
-                    while col_num > 0:
-                        col_num -= 1
-                        col_letter = chr(col_num % 26 + ord('A')) + col_letter
-                        col_num //= 26
-
+                    col_num = _col_to_num(start_col) + col_idx
+                    col_letter = _num_to_col(col_num)
                     cell = f"{col_letter}{start_row + row_idx}"
                     spreadsheet.set(cell, str(value))
                     cells_set += 1
@@ -265,22 +279,8 @@ class SpreadsheetOpsHandler(BaseHandler):
             if not match_start or not match_end:
                 return f"Invalid cell reference: {start_cell} or {end_cell}"
 
-            def col_to_num(col):
-                num = 0
-                for c in col:
-                    num = num * 26 + (ord(c) - ord('A') + 1)
-                return num
-
-            def num_to_col(num):
-                col = ''
-                while num > 0:
-                    num -= 1
-                    col = chr(num % 26 + ord('A')) + col
-                    num //= 26
-                return col
-
-            start_col_num = col_to_num(match_start.group(1))
-            end_col_num = col_to_num(match_end.group(1))
+            start_col_num = _col_to_num(match_start.group(1))
+            end_col_num = _col_to_num(match_end.group(1))
             start_row = int(match_start.group(2))
             end_row = int(match_end.group(2))
 
@@ -288,7 +288,7 @@ class SpreadsheetOpsHandler(BaseHandler):
             for row in range(start_row, end_row + 1):
                 row_values = []
                 for col_num in range(start_col_num, end_col_num + 1):
-                    cell = f"{num_to_col(col_num)}{row}"
+                    cell = f"{_num_to_col(col_num)}{row}"
                     try:
                         value = spreadsheet.get(cell)
                         row_values.append(str(value) if value is not None else "")
@@ -423,21 +423,7 @@ class SpreadsheetOpsHandler(BaseHandler):
             start_col = match.group(1)
             start_row = int(match.group(2))
 
-            def col_to_num(col):
-                num = 0
-                for c in col:
-                    num = num * 26 + (ord(c) - ord('A') + 1)
-                return num
-
-            def num_to_col(num):
-                col = ''
-                while num > 0:
-                    num -= 1
-                    col = chr(num % 26 + ord('A')) + col
-                    num //= 26
-                return col
-
-            start_col_num = col_to_num(start_col)
+            start_col_num = _col_to_num(start_col)
 
             # csv.reader handles quoted fields, embedded delimiters and embedded
             # newlines correctly; naive line.split(delimiter) silently breaks cell
@@ -448,7 +434,7 @@ class SpreadsheetOpsHandler(BaseHandler):
             reader = _csv.reader(_io.StringIO(csv_data), delimiter=delimiter)
             for row_idx, values in enumerate(reader):
                 for col_idx, value in enumerate(values):
-                    col_letter = num_to_col(start_col_num + col_idx)
+                    col_letter = _num_to_col(start_col_num + col_idx)
                     cell = f"{col_letter}{start_row + row_idx}"
                     spreadsheet.set(cell, value)
                     cells_set += 1
@@ -481,20 +467,6 @@ class SpreadsheetOpsHandler(BaseHandler):
 
             import re
 
-            def col_to_num(col):
-                num = 0
-                for c in col:
-                    num = num * 26 + (ord(c) - ord('A') + 1)
-                return num
-
-            def num_to_col(num):
-                col = ''
-                while num > 0:
-                    num -= 1
-                    col = chr(num % 26 + ord('A')) + col
-                    num //= 26
-                return col
-
             # Default to the sheet's actual used range, not a hardcoded J100 box
             # that silently drops any data beyond column J / row 100.
             if not end_cell:
@@ -513,8 +485,8 @@ class SpreadsheetOpsHandler(BaseHandler):
             if not match_start or not match_end:
                 return f"Invalid cell reference"
 
-            start_col_num = col_to_num(match_start.group(1))
-            end_col_num = col_to_num(match_end.group(1))
+            start_col_num = _col_to_num(match_start.group(1))
+            end_col_num = _col_to_num(match_end.group(1))
             start_row = int(match_start.group(2))
             end_row = int(match_end.group(2))
 
@@ -528,7 +500,7 @@ class SpreadsheetOpsHandler(BaseHandler):
             for row in range(start_row, end_row + 1):
                 row_values = []
                 for col_num in range(start_col_num, end_col_num + 1):
-                    cell = f"{num_to_col(col_num)}{row}"
+                    cell = f"{_num_to_col(col_num)}{row}"
                     try:
                         value = spreadsheet.get(cell)
                         row_values.append("" if value is None else str(value))
@@ -545,7 +517,7 @@ class SpreadsheetOpsHandler(BaseHandler):
                     ur = spreadsheet.getUsedRange()
                     if ur and len(ur) == 2 and ur[1]:
                         m = re.match(r'([A-Z]+)(\d+)', ur[1].upper())
-                        if m and (col_to_num(m.group(1)) > end_col_num
+                        if m and (_col_to_num(m.group(1)) > end_col_num
                                   or int(m.group(2)) > end_row):
                             truncated = True
             except Exception:

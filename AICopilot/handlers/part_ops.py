@@ -290,6 +290,10 @@ class PartOpsHandler(BaseHandler):
 
             self.recompute(doc)
 
+            err = self._check_feature_state(loft, "Loft")
+            if err:
+                return err
+
             return f"Created loft: {loft.Name} through {len(sketches)} profiles"
 
         except Exception as e:
@@ -321,6 +325,10 @@ class PartOpsHandler(BaseHandler):
             sweep.Solid = solid
 
             self.recompute(doc)
+
+            err = self._check_feature_state(sweep, "Sweep")
+            if err:
+                return err
 
             return f"Created sweep: {sweep.Name} with profile {profile_sketch} along path {path_sketch}"
 
