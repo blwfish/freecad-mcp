@@ -38,9 +38,17 @@ if 'FreeCAD' not in sys.modules:
     sys.modules['FreeCADGui'] = MagicMock()
     sys.modules['Part'] = MagicMock()
 
-# Always set Vector and Document — conftest's types.ModuleType mock
-# doesn't auto-create attributes like MagicMock does
-sys.modules['FreeCAD'].Vector = FakeVector
+# Document only (conftest's types.ModuleType mock doesn't auto-create
+# attributes like MagicMock does) — NOT Vector. sys.modules['FreeCAD'] is
+# the same shared singleton object _freecad_mocks.py installs for every
+# other test file; unconditionally overwriting its .Vector here at
+# collection time (module-level code, runs once, before any test) used to
+# permanently replace the real _Vec (full arithmetic: __add__, .Length,
+# .add, .sub, .multiply, .distanceToPoint) with this file's bare FakeVector
+# for the rest of the pytest session — including files collected AFTER
+# this one. The autouse _patch_fc fixture below already scopes FakeVector
+# correctly (patches spatial_ops_module.FreeCAD per-test, restores after),
+# so this module-level mutation was redundant as well as unsafe.
 if not hasattr(sys.modules['FreeCAD'], 'Document'):
     sys.modules['FreeCAD'].Document = type("Document", (), {})
 
