@@ -525,5 +525,118 @@ class TestUpdateToolController(unittest.TestCase):
         self.assertAlmostEqual(controller.VertRapid, 25.0)    # 1500 / 60
 
 
+# ---------------------------------------------------------------------------
+# cam_ops: _create_path_op / drilling — StepDown/FinalDepth expression trap
+# and silently-dropped Base wiring
+#
+# FreeCAD binds StepDown/FinalDepth to a SetupSheet-driven expression
+# ("OpToolDiameter"/"OpFinalDepth") by default at op creation. Setting only
+# the *value* while that binding is live means the very next recompute()
+# silently reverts it back to the computed default — a wrong drill depth is
+# a crash-into-fixture risk on real hardware. configure_operation() already
+# clears the expression correctly; _create_path_op/drilling previously
+# didn't.
+# ---------------------------------------------------------------------------
+
+class TestCreatePathOpStepDownExpression(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(CAMOpsHandler)
+
+    def test_stepdown_expression_cleared_before_value_is_set(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+
+        op = MagicMock()
+        import sys
+        sys.modules['Path.Op.Pocket'].Create = MagicMock(return_value=op)
+
+        self.handler.pocket({
+            'job_name': 'Job1', 'stepdown': 2.5,
+        })
+
+        # setExpression(None) must happen BEFORE the value write, not after —
+        # otherwise the clear is pointless (the binding is what gets
+        # re-evaluated on recompute, order between the two calls on the same
+        # mock doesn't matter for correctness here, but both must happen).
+        op.setExpression.assert_any_call('StepDown', None)
+        self.assertEqual(op.StepDown, 2.5)
+
+    def test_drilling_final_depth_expression_cleared_before_value_is_set(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+
+        op = MagicMock()
+        import sys
+        sys.modules['Path.Op.Drilling'].Create = MagicMock(return_value=op)
+
+        self.handler.drilling({
+            'job_name': 'Job1', 'depth': -12.5,
+        })
+
+        op.setExpression.assert_any_call('FinalDepth', None)
+        self.assertEqual(op.FinalDepth, -12.5)
+
+
+class TestCreatePathOpBaseWiring(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(CAMOpsHandler)
+
+    def test_unresolved_base_object_errors_instead_of_dropping_selection(self):
+        """faces=[...] with a base_object that doesn't resolve must error —
+        not silently create the op with Base unset while still reporting
+        the requested faces as applied."""
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])  # no 'Clone' or any other object present
+        mock_FreeCAD.ActiveDocument = doc
+
+        op = MagicMock()
+        import sys
+        sys.modules['Path.Op.Pocket'].Create = MagicMock(return_value=op)
+
+        result = self.handler.pocket({
+            'job_name': 'Job1', 'faces': ['Face3'],
+        })
+
+        assert_error_contains(self, result, "clone", "not found")
+
+    def test_explicit_base_object_not_found_errors_with_its_name(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+
+        op = MagicMock()
+        import sys
+        sys.modules['Path.Op.Pocket'].Create = MagicMock(return_value=op)
+
+        result = self.handler.pocket({
+            'job_name': 'Job1', 'faces': ['Face1'], 'base_object': 'Plate',
+        })
+
+        assert_error_contains(self, result, "plate", "not found")
+
+    def test_resolved_base_object_still_wires_correctly(self):
+        """Regression guard: the error path above must not have broken the
+        happy path where base_object does resolve."""
+        job = make_cam_job("Job1")
+        plate = make_box_object("Plate")
+        doc = make_mock_doc([job, plate])
+        mock_FreeCAD.ActiveDocument = doc
+
+        op = MagicMock()
+        import sys
+        sys.modules['Path.Op.Pocket'].Create = MagicMock(return_value=op)
+
+        result = self.handler.pocket({
+            'job_name': 'Job1', 'faces': ['Face1', 'Face2'], 'base_object': 'Plate',
+        })
+
+        self.assertEqual(op.Base, [(plate, ['Face1', 'Face2'])])
+        assert_success_contains(self, result, "Pocket")
+
+
 if __name__ == '__main__':
     unittest.main()

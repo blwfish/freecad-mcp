@@ -208,6 +208,17 @@ class CAMOpsHandler(BaseHandler):
             doc, op = self._create_path_op(CreateDrilling, args, 'Drilling')
 
             if 'depth' in args and hasattr(op, 'FinalDepth'):
+                # Same expression-binding trap as StepDown (see
+                # _create_path_op): FreeCAD binds FinalDepth to expression
+                # "OpFinalDepth" by default, so setting only the value
+                # leaves the binding live and the caller's recompute() below
+                # silently reverts the requested drill depth back to the
+                # SetupSheet-computed default — a wrong depth on a drilling
+                # cycle is a crash-into-fixture/table risk on real hardware.
+                try:
+                    op.setExpression('FinalDepth', None)
+                except Exception:
+                    pass
                 op.FinalDepth = args['depth']
             if 'retract_height' in args and hasattr(op, 'RetractHeight'):
                 op.RetractHeight = args['retract_height']
@@ -1152,12 +1163,33 @@ class CAMOpsHandler(BaseHandler):
         if subs:
             base_obj_name = args.get('base_object') or 'Clone'
             base = self.get_object(base_obj_name, doc)
-            if base:
-                op.Base = [(base, subs)]
+            if not base:
+                # Do NOT silently proceed with op.Base unset — that produces
+                # either a whole-model-exterior toolpath (Profile) or a
+                # near-empty 2-3-command one (Pocket/Drilling/Adaptive) while
+                # the caller believes their faces/edges were applied.
+                raise RuntimeError(
+                    f"base_object '{base_obj_name}' not found — cannot wire "
+                    f"faces/edges {subs} onto it. Pass an existing object name "
+                    f"via base_object=, or create '{base_obj_name}' first."
+                )
+            op.Base = [(base, subs)]
 
         # Common parameters shared by most ops; hasattr guard makes them safe on
         # ops that don't support them
         if 'stepdown' in args and hasattr(op, 'StepDown'):
+            # Clear any expression binding before setting — FreeCAD binds
+            # StepDown to expression "OpToolDiameter" by default at op
+            # creation (Path/Base/SetupSheet.py DefaultStepDownExpression).
+            # Setting only the value while that binding is live means the
+            # caller's own recompute() (in the operation-specific method
+            # right after this returns) silently reverts it back to the
+            # SetupSheet-computed default. See configure_operation() above,
+            # which already does this correctly.
+            try:
+                op.setExpression('StepDown', None)
+            except Exception:
+                pass
             op.StepDown = args['stepdown']
         if 'direction' in args and hasattr(op, 'Direction'):
             op.Direction = args['direction']
