@@ -729,6 +729,43 @@ class TestSimplifyMesh(unittest.TestCase):
         })
         self.assertIn("must be between 0 and 1", result)
 
+    def test_target_below_minimum_floor_rejected(self):
+        """Confirmed as a surviving mutant during the full review: no test
+        exercised a target below the 4-face floor, so relaxing `< 4` to
+        effectively never reject (`< -999`) left every existing test
+        passing — target=3 reaching mesh_copy.decimate(3) unchecked."""
+        mesh_obj = make_mesh_object("Terrain", count_facets=1000)
+        doc = make_mock_doc([mesh_obj])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.simplify_mesh({
+            'object_name': 'Terrain',
+            'target_count': 3,
+        })
+
+        self.assertIn("too small", result)
+        self.assertIn("minimum is 4", result)
+        doc.addObject.assert_not_called()
+
+    def test_target_exactly_at_minimum_floor_accepted(self):
+        """The floor is `< 4` (strict) — exactly 4 must be accepted, not
+        rejected."""
+        mesh_obj = make_mesh_object("Terrain", count_facets=1000)
+        copy = mesh_obj.Mesh.copy.return_value
+        copy.CountFacets = 4
+        copy.CountPoints = 4
+        doc = make_mock_doc([mesh_obj])
+        mock_FreeCAD.ActiveDocument = doc
+        doc.addObject.return_value = MagicMock(Name="Terrain_Simplified")
+
+        result = self.handler.simplify_mesh({
+            'object_name': 'Terrain',
+            'target_count': 4,
+        })
+
+        self.assertIn("Simplified mesh", result)
+        mesh_obj.Mesh.copy.return_value.decimate.assert_called_with(4)
+
     def test_simplify_with_target_count(self):
         mesh_obj = make_mesh_object("Terrain", count_facets=1000)
         copy = mesh_obj.Mesh.copy.return_value
