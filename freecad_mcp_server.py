@@ -551,6 +551,7 @@ async def main():
         """Send command to FreeCAD via socket (cross-platform)"""
         # Record operation before sending (bridge-side crash tracking)
         _record_op(tool_name, args)
+        sock = None
         try:
             # Create socket connection based on platform
             if platform.system() == "Windows":
@@ -566,7 +567,6 @@ async def main():
             # Send command with length-prefixed protocol (v2.1.1)
             command = json.dumps({"tool": tool_name, "args": args})
             if not send_message(sock, command):
-                sock.close()
                 return json.dumps({"error": "Failed to send command to FreeCAD"})
 
             # Receive response with length-prefixed protocol (v2.1.1)
@@ -574,7 +574,6 @@ async def main():
             recv_timeout = float(args.get("timeout", 30.0)) if isinstance(args, dict) else 30.0
             # Add 5s grace period so server-side timeout fires first
             response = receive_message(sock, timeout=recv_timeout + 5.0)
-            sock.close()
 
             if response is None:
                 report = _diagnose_crash()
@@ -612,7 +611,19 @@ async def main():
             # Always produce a rich crash report (replaces generic "Connection refused")
             report = _diagnose_crash(error=e)
             return json.dumps({"error": report})
-    
+
+        finally:
+            # sock is created before connect() is attempted, so a raised
+            # connect() (the common case while FreeCAD isn't running) used
+            # to leak one fd per call — the only close() calls were on the
+            # success paths, after connect() had already returned. This
+            # runs on every exit (return or exception), including that one.
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+
     async def poll_job_until_done(job_id: str, context: str = "Operation") -> dict:
         """Poll a FreeCAD async job with progressive backoff.
 
