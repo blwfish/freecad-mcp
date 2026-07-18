@@ -31,14 +31,28 @@ class WindowDoorHelpers:
             raise ValueError("No active FreeCAD document. Open a document first.")
 
     def get_object(self, name):
-        """Get object by name or label."""
+        """Get object by internal Name or Label.
+
+        Tries internal Name first (unique by construction), then falls back
+        to Label search. FreeCAD does NOT enforce Label uniqueness — a
+        first-match loop silently risks operating on the wrong solid on a
+        duplicate-label document (the anti-pattern
+        AICopilot.handlers.base.BaseHandler.get_object() was hardened
+        against). Raise on ambiguity instead of guessing.
+        """
         obj = self.doc.getObject(name)
         if obj:
             return obj
-        for obj in self.doc.Objects:
-            if obj.Label == name:
-                return obj
-        raise ValueError(f"Object '{name}' not found")
+        matches = [o for o in self.doc.Objects if o.Label == name]
+        if not matches:
+            raise ValueError(f"Object '{name}' not found")
+        if len(matches) > 1:
+            names = [m.Name for m in matches]
+            raise ValueError(
+                f"Ambiguous label '{name}': {len(matches)} objects share this "
+                f"label ({', '.join(names)}). Use the internal Name to disambiguate."
+            )
+        return matches[0]
 
     # ========== CONFIG CHECKING ==========
 
@@ -191,8 +205,12 @@ class WindowDoorHelpers:
                         dims[alias] = val.Value
                     else:
                         dims[alias] = float(val)
-            except:
-                pass
+            except (TypeError, ValueError, AttributeError) as e:
+                # Visible rather than silent: a caller relying on this alias
+                # (clone_and_position reads casingDepth, e.g.) needs to know
+                # it failed to convert, not just silently get a 0 fallback
+                # downstream with no indication why.
+                print(f"  Warning: could not read '{alias}' from spreadsheet: {e}")
 
         # If we didn't find all params, try the master's bounding box as fallback
         if 'width' not in dims or 'height' not in dims:
@@ -214,17 +232,24 @@ class WindowDoorHelpers:
         Returns:
             bool: True if hole matches master
         """
-        # Get hole dimensions (use the two largest dimensions for width/height)
-        hole_dims = sorted([hole['width'], hole['height'], hole['depth']])
-        hole_width = hole_dims[1]  # Middle value
-        hole_height = hole_dims[2]  # Largest value
+        # find_holes_in_wall already labels these correctly from the cut
+        # tool's bounding box axes (width=XLength, height=YLength,
+        # depth=ZLength) — use them directly. Re-deriving width/height by
+        # sorting [width, height, depth] and taking the two largest values
+        # silently assumes depth (wall-thickness direction) is always the
+        # smallest of the three; a thick wall with a small window breaks
+        # that assumption and swaps which dimension gets reported as width
+        # vs height, feeding the wrong values into the tolerance match below.
+        hole_width = hole['width']
+        hole_height = hole['height']
 
         # Get master dimensions
         master_width = master_dims.get('width', 0)
         master_height = master_dims.get('height', 0)
 
-        # Check tolerance (allow hole to be slightly larger than master)
-        # This accounts for kerf and dimensional tolerance
+        # Symmetric tolerance band: hole may be slightly larger OR smaller
+        # than the master (accounts for kerf and dimensional tolerance in
+        # either direction, not just oversized holes).
         width_match = abs(hole_width - master_width) <= tolerance_mm
         height_match = abs(hole_height - master_height) <= tolerance_mm
 
@@ -289,7 +314,9 @@ class WindowDoorHelpers:
             wall_name: Name or Label of the wall
             tolerance_mm: Size tolerance for fuzzy matching
             dry_run: If True, just report matches without creating clones
-            auto_place: If True, create clones without prompting
+            auto_place: Required True (with dry_run=False) to actually
+                create clones — there is no interactive confirmation here,
+                only report-then-explicit-opt-in
 
         Returns:
             dict with 'matches' (list of matching holes) and 'created' (list of clones)
@@ -328,9 +355,18 @@ class WindowDoorHelpers:
             print("(Dry run - no clones created)")
             return {'matches': matches, 'created': []}
 
-        # Create clones
+        # Create clones. auto_place is the only real gate here — there is no
+        # interactive prompt channel available from this helper (it runs as
+        # a scripted call, not an attended session), so a fake "prompt" that
+        # always answers yes would make auto_place=False mean nothing while
+        # still claiming to have asked. Report the pending matches instead
+        # and require the caller to explicitly opt in.
         created = []
-        if matches and (auto_place or self._prompt_user(f"Create {len(matches)} clone(s)?")):
+        if matches and not auto_place:
+            print(f"\n{len(matches)} match(es) found. Pass auto_place=True to create clones.")
+            return {'matches': matches, 'created': []}
+
+        if matches and auto_place:
             for i, hole in enumerate(matches):
                 try:
                     clone = self.clone_and_position(master, hole)
@@ -341,12 +377,6 @@ class WindowDoorHelpers:
                     print(f"  Error creating clone: {e}")
 
         return {'matches': matches, 'created': created}
-
-    def _prompt_user(self, question):
-        """Prompt user (simplified - you can make this more interactive)."""
-        # In interactive use, this would use input() or Gui dialogs
-        # For now, return True to auto-proceed
-        return True
 
 
 # ========== CONVENIENCE FUNCTIONS ==========
