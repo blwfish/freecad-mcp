@@ -190,22 +190,34 @@ class DocumentOpsHandler(BaseHandler):
             obj = self.get_object(name, doc)
             if obj is None:
                 return json.dumps({"error": f"Object not found: {name!r}"})
+            # Every property gets an explicit disposition instead of being
+            # collapsed into "properties[name]" with three different possible
+            # meanings (a real value, a repr() string standing in for one, or
+            # an error message) — a caller couldn't previously tell which one
+            # they'd received without re-deriving it themselves.
             props = {}
+            unserializable = {}
+            errors = {}
             for prop_name in sorted(obj.PropertiesList):
                 try:
                     val = getattr(obj, prop_name)
                     json.dumps(val)  # probe serializability
                     props[prop_name] = val
                 except (TypeError, ValueError):
-                    props[prop_name] = repr(val)
+                    unserializable[prop_name] = repr(val)
                 except Exception as e:
-                    props[prop_name] = f"<error: {e}>"
-            return json.dumps({
+                    errors[prop_name] = str(e)
+            result = {
                 "object_name": name,
                 "type": obj.TypeId,
-                "property_count": len(props),
+                "property_count": len(props) + len(unserializable) + len(errors),
                 "properties": props,
-            })
+            }
+            if unserializable:
+                result["properties_unserializable"] = unserializable
+            if errors:
+                result["properties_errors"] = errors
+            return json.dumps(result)
         except Exception as e:
             return json.dumps({"error": f"Error getting properties: {e}"})
 

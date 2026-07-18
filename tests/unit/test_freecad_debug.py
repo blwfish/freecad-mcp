@@ -127,6 +127,31 @@ class TestLogOperation:
         entry = json.loads(json_files[0].read_text().strip())
         assert entry["operation"] == "my_op"
 
+    def test_error_includes_parameters_and_duration(self, tmp_path):
+        """H16: the success branch always included parameters/duration but
+        the error branch dropped both — exactly the case (a failed
+        operation) where knowing the args it failed with and how long it
+        ran before failing is most diagnostically useful."""
+        d = make_debugger(tmp_path, lean_logging=True)
+        d.log_operation("my_op", parameters={"radius": -5}, error=ValueError("bad radius"),
+                         duration=1.25)
+        json_files = list(tmp_path.glob("operations_*.json"))
+        entry = json.loads(json_files[0].read_text().strip())
+        assert entry["parameters"] == {"radius": -5}
+        assert entry["duration_seconds"] == 1.25
+
+    def test_error_without_parameters_or_duration_is_null_not_missing(self, tmp_path):
+        """When the caller genuinely didn't pass them, the keys should still
+        be present (as null) rather than silently absent — matches the
+        success branch's shape so a consumer doesn't need two different
+        parsers depending on entry["success"]."""
+        d = make_debugger(tmp_path, lean_logging=True)
+        d.log_operation("my_op", error=RuntimeError("boom"))
+        json_files = list(tmp_path.glob("operations_*.json"))
+        entry = json.loads(json_files[0].read_text().strip())
+        assert entry["parameters"] is None
+        assert entry["duration_seconds"] is None
+
     def test_lean_mode_skips_start_operations(self, tmp_path):
         """In lean mode, operations containing START are skipped (no JSON file)."""
         d = make_debugger(tmp_path, lean_logging=True)

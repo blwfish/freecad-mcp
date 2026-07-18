@@ -761,3 +761,86 @@ class TestMakeLinkArray:
         mock_freecad.ActiveDocument = None
         result = doc_handler.make_link_array({"object_name": "Box"})
         assert "No active document" in result
+
+
+# ---------------------------------------------------------------------------
+# get_object_properties
+# ---------------------------------------------------------------------------
+
+class TestGetObjectProperties:
+    """Previously zero test coverage (H16). Each property must land in
+    exactly one of three typed buckets — properties (real, JSON-serializable
+    value), properties_unserializable (repr() stand-in), properties_errors
+    (getattr() raised) — never collapsed into one key whose meaning shifts
+    depending on what happened."""
+
+    def test_serializable_value_lands_in_properties(self, doc_handler, mock_doc):
+        obj = mock_doc.Objects[0]
+        obj.PropertiesList = ["Length"]
+        obj.Length = 42.0
+
+        result = json.loads(doc_handler.get_object_properties({"object_name": "Box"}))
+
+        assert result["properties"]["Length"] == 42.0
+        assert "properties_unserializable" not in result
+        assert "properties_errors" not in result
+
+    def test_unserializable_value_lands_in_unserializable_bucket_not_properties(
+        self, doc_handler, mock_doc
+    ):
+        """A FreeCAD Vector/Placement-typed property isn't JSON-serializable
+        directly; previously this got silently stuffed into the same
+        "properties" dict as a repr() string indistinguishable from a real
+        value (e.g. a Vector could repr to something that also looks like
+        valid JSON-ish text)."""
+        obj = mock_doc.Objects[0]
+        obj.PropertiesList = ["Placement"]
+
+        class _Unserializable:
+            def __repr__(self):
+                return "<Placement object>"
+
+        obj.Placement = _Unserializable()
+
+        result = json.loads(doc_handler.get_object_properties({"object_name": "Box"}))
+
+        assert "Placement" not in result["properties"]
+        assert result["properties_unserializable"]["Placement"] == "<Placement object>"
+
+    def test_getattr_error_lands_in_errors_bucket_not_properties(self, doc_handler, mock_doc):
+        obj = mock_doc.Objects[0]
+        obj.PropertiesList = ["Broken"]
+        # patch.object (not a raw `type(obj).Broken = ...` assignment) so the
+        # class attribute is removed on exit — obj is a plain MagicMock(),
+        # and MagicMock instances share one class process-wide unless spec=
+        # is used, so an unpatched assignment here would leak into every
+        # other MagicMock in the suite.
+        with patch.object(type(obj), "Broken", PropertyMock(side_effect=RuntimeError("GIL threading error")), create=True):
+            result = json.loads(doc_handler.get_object_properties({"object_name": "Box"}))
+
+        assert "Broken" not in result["properties"]
+        assert result["properties_errors"]["Broken"] == "GIL threading error"
+
+    def test_property_count_covers_all_three_buckets(self, doc_handler, mock_doc):
+        obj = mock_doc.Objects[0]
+        obj.PropertiesList = ["Length", "Placement", "Broken"]
+        obj.Length = 1.0
+
+        class _Unserializable:
+            def __repr__(self):
+                return "<x>"
+
+        obj.Placement = _Unserializable()
+        with patch.object(type(obj), "Broken", PropertyMock(side_effect=RuntimeError("boom")), create=True):
+            result = json.loads(doc_handler.get_object_properties({"object_name": "Box"}))
+
+        assert result["property_count"] == 3
+
+    def test_object_not_found(self, doc_handler, mock_doc):
+        result = json.loads(doc_handler.get_object_properties({"object_name": "Ghost"}))
+        assert "error" in result
+
+    def test_no_active_document(self, doc_handler, mock_freecad):
+        mock_freecad.ActiveDocument = None
+        result = json.loads(doc_handler.get_object_properties({"object_name": "Box"}))
+        assert "error" in result

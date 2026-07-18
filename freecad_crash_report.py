@@ -195,9 +195,22 @@ def _parse_crash_report(content: str, path: str) -> str:
             nl = content.index("\n")
             header = json.loads(content[:nl])
             body = json.loads(content[nl + 1:])
-            return _parse_ips_report(header, body, path)
         except Exception:
-            pass  # not valid .ips JSON — fall through to legacy plaintext
+            pass  # not valid .ips JSON at all — fall through to legacy plaintext
+        else:
+            try:
+                return _parse_ips_report(header, body, path)
+            except Exception as e:
+                # JSON parsed fine but building the summary hit an unexpected
+                # shape (e.g. a field that's a list where a dict was assumed).
+                # The legacy parser below only understands plaintext .crash
+                # prefixes ("Exception Type:" etc.) — running it against this
+                # JSON content produces empty/useless output while hiding the
+                # real failure. Surface the failure and what we did parse
+                # instead of silently degrading to that useless fallback.
+                return (f"[{Path(path).name}] — .ips JSON parsed but summary "
+                        f"generation failed ({type(e).__name__}: {e}). "
+                        f"Raw header: {json.dumps(header)[:500]}")
     return _parse_crash_report_legacy(content, path)
 
 
@@ -222,6 +235,18 @@ def _parse_ips_report(header: dict, body: dict, path: str) -> str:
     term = body.get("termination") or {}
     if term.get("indicator"):
         out.append(f"Termination: {term['indicator']}")
+
+    # Application Specific Information: bundle-id -> list of free-text
+    # diagnostic strings (assertion messages, embedded Python tracebacks,
+    # etc.). Often the single highest-signal field for crashes that aren't
+    # a plain EXC_BAD_ACCESS — previously never extracted, so this
+    # information existed in every .ips file but never reached the summary.
+    asi = body.get("asi") or {}
+    if asi:
+        out.append("\nApplication Specific Information:")
+        for messages in asi.values():
+            for msg in (messages if isinstance(messages, list) else [messages]):
+                out.append(f"  {msg}")
 
     images = body.get("usedImages") or []
 
