@@ -3,12 +3,34 @@
 import json
 import FreeCAD
 import FreeCADGui
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from .base import BaseHandler
 
 
 class PartDesignOpsHandler(BaseHandler):
     """Handler for PartDesign workbench operations."""
+
+    def _check_feature_state(self, feature, feature_label: str, sketch=None) -> Optional[str]:
+        """Return a diagnostic error string if feature.State contains
+        'Invalid' after recompute(), else None.
+
+        recompute() never raises on geometry failure — it marks the
+        feature Invalid instead — so every feature-creating method must
+        check this explicitly or risk reporting success for a broken
+        feature. Historically only pad_sketch/pocket did this; every other
+        sibling here could silently return "Created X: ..." for a broken
+        feature (radius too large, self-intersecting shell, degenerate
+        profile). Centralizes that check for the rest.
+        """
+        state = getattr(feature, 'State', [])
+        if 'Invalid' not in state:
+            return None
+        err = f"{feature_label} created but failed to compute (State=Invalid)."
+        if sketch is not None:
+            diagnosis = self._diagnose_open_wires(sketch)
+            if diagnosis:
+                err += f"\n\nSketch wire diagnosis:\n{diagnosis}"
+        return err
 
     def pad_sketch(self, args: Dict[str, Any]) -> str:
         """Extrude a sketch to create solid (pad) - requires PartDesign Body."""
@@ -51,15 +73,8 @@ class PartDesignOpsHandler(BaseHandler):
             rev_msg = " (reversed)" if reversed_dir else ""
             base_msg = f"Created pad: {pad.Name} from {sketch_name} with length {length}mm{rev_msg} in Body: {body.Name}"
 
-            # recompute() doesn't raise on geometry failures — it just marks
-            # the feature Invalid.  Check State so the user isn't misled by a
-            # false "Created pad: ..." success message.
-            pad_state = getattr(pad, 'State', [])
-            if 'Invalid' in pad_state:
-                diagnosis = self._diagnose_open_wires(sketch)
-                err = f"Pad created but failed to compute (wire not closed or invalid profile)."
-                if diagnosis:
-                    err += f"\n\nSketch wire diagnosis:\n{diagnosis}"
+            err = self._check_feature_state(pad, "Pad", sketch=sketch)
+            if err:
                 return err
 
             return base_msg
@@ -113,12 +128,8 @@ class PartDesignOpsHandler(BaseHandler):
             rev_msg = " (reversed)" if reversed_dir else ""
             base_msg = f"Created pocket: {pocket.Name} from {sketch_name} with depth {length}mm{rev_msg}"
 
-            pocket_state = getattr(pocket, 'State', [])
-            if 'Invalid' in pocket_state:
-                diagnosis = self._diagnose_open_wires(sketch)
-                err = f"Pocket created but failed to compute (wire not closed or invalid profile)."
-                if diagnosis:
-                    err += f"\n\nSketch wire diagnosis:\n{diagnosis}"
+            err = self._check_feature_state(pocket, "Pocket", sketch=sketch)
+            if err:
                 return err
 
             return base_msg
@@ -234,6 +245,10 @@ class PartDesignOpsHandler(BaseHandler):
 
             self.recompute(doc)
 
+            err = self._check_feature_state(fillet, "Fillet")
+            if err:
+                return err
+
             return f"Created fillet: {fillet.Name} on {len(edge_indices)} selected edges with radius {radius}mm"
 
         except Exception as e:
@@ -268,6 +283,10 @@ class PartDesignOpsHandler(BaseHandler):
 
             self.recompute(doc)
 
+            err = self._check_feature_state(fillet, "Fillet")
+            if err:
+                return err
+
             return f"Created fillet: {fillet.Name} on {len(edges)} edges with radius {radius}mm"
 
         except Exception as e:
@@ -299,6 +318,10 @@ class PartDesignOpsHandler(BaseHandler):
             fillet.Edges = [(i + 1, radius, radius) for i in range(n_edges)]
 
             self.recompute(doc)
+
+            err = self._check_feature_state(fillet, "Fillet")
+            if err:
+                return err
 
             return f"Created fillet: {fillet.Name} on all {n_edges} edges with radius {radius}mm"
 
@@ -382,6 +405,10 @@ class PartDesignOpsHandler(BaseHandler):
 
             self.recompute(doc)
 
+            err = self._check_feature_state(chamfer, "Chamfer")
+            if err:
+                return err
+
             return f"Created chamfer: {chamfer.Name} on {len(edge_indices)} selected edges with distance {distance}mm"
 
         except Exception as e:
@@ -415,6 +442,10 @@ class PartDesignOpsHandler(BaseHandler):
             chamfer.Edges = [(i + 1, distance) for i in range(n_edges)]
 
             self.recompute(doc)
+
+            err = self._check_feature_state(chamfer, "Chamfer")
+            if err:
+                return err
 
             return f"Created chamfer: {chamfer.Name} on all {n_edges} edges with distance {distance}mm"
 
@@ -485,6 +516,10 @@ class PartDesignOpsHandler(BaseHandler):
 
             self.recompute(doc)
 
+            err = self._check_feature_state(cut, "Hole cut")
+            if err:
+                return err
+
             return f"Created {hole_type} hole: {diameter}mm diameter at ({x}, {y}) in {object_name}"
 
         except Exception as e:
@@ -523,6 +558,7 @@ class PartDesignOpsHandler(BaseHandler):
                 # pathology) while still reporting success.
                 return f"Invalid direction '{direction}': must be 'x', 'y', or 'z'"
 
+            copies = []
             for i in range(1, count):
                 copy = doc.copyObject(feature)
                 copy.Label = f"{feature.Label}_Pattern{i}"
@@ -532,8 +568,14 @@ class PartDesignOpsHandler(BaseHandler):
                     direction_vector.z * i
                 )
                 copy.Placement.Base = feature.Placement.Base.add(offset)
+                copies.append(copy)
 
             self.recompute(doc)
+
+            invalid = [c.Name for c in copies if 'Invalid' in getattr(c, 'State', [])]
+            if invalid:
+                return (f"Linear pattern created but {len(invalid)} of {count - 1} "
+                        f"copies failed to compute (State=Invalid): {', '.join(invalid)}")
 
             return f"Created linear pattern: {count} instances of {feature_name} in {direction} direction with {spacing}mm spacing"
 
@@ -567,6 +609,7 @@ class PartDesignOpsHandler(BaseHandler):
             elif axis.lower() == 'y':
                 axis_vector = FreeCAD.Vector(0, 1, 0)
 
+            copies = []
             for i in range(1, count):
                 copy = doc.copyObject(feature)
                 copy.Label = f"{feature.Label}_Polar{i}"
@@ -577,8 +620,14 @@ class PartDesignOpsHandler(BaseHandler):
                     feature.Placement.Rotation.multiply(rotation)
                 )
                 copy.Placement = new_placement
+                copies.append(copy)
 
             self.recompute(doc)
+
+            invalid = [c.Name for c in copies if 'Invalid' in getattr(c, 'State', [])]
+            if invalid:
+                return (f"Polar pattern created but {len(invalid)} of {count - 1} "
+                        f"copies failed to compute (State=Invalid): {', '.join(invalid)}")
 
             return f"Created polar pattern: {count} instances of {feature_name} around {axis.upper()}-axis, {angle}° total"
 
@@ -615,6 +664,10 @@ class PartDesignOpsHandler(BaseHandler):
 
             self.recompute(doc)
 
+            err = self._check_feature_state(mirror, "Mirror")
+            if err:
+                return err
+
             return f"Created mirror: {mirror.Name} of {feature_name} across {plane} plane"
 
         except Exception as e:
@@ -648,6 +701,10 @@ class PartDesignOpsHandler(BaseHandler):
                 revolution.Axis = (0, 0, 1)
 
             self.recompute(doc)
+
+            err = self._check_feature_state(revolution, "Revolution", sketch=sketch)
+            if err:
+                return err
 
             return f"Created revolution: {revolution.Name} from {sketch_name} around {axis.upper()}-axis, {angle}°"
 
@@ -689,6 +746,10 @@ class PartDesignOpsHandler(BaseHandler):
 
             self.recompute(doc)
 
+            err = self._check_feature_state(groove, "Groove", sketch=sketch)
+            if err:
+                return err
+
             return f"Created groove: {groove.Name} from {sketch_name} around {axis.upper()}-axis, {angle}°"
 
         except Exception as e:
@@ -724,6 +785,10 @@ class PartDesignOpsHandler(BaseHandler):
 
             self.recompute(doc)
 
+            err = self._check_feature_state(loft, "Loft")
+            if err:
+                return err
+
             return f"Created loft: {loft.Name} through {len(sketches)} profiles"
 
         except Exception as e:
@@ -755,6 +820,10 @@ class PartDesignOpsHandler(BaseHandler):
             sweep.Solid = solid
 
             self.recompute(doc)
+
+            err = self._check_feature_state(sweep, "Sweep")
+            if err:
+                return err
 
             return f"Created sweep: {sweep.Name} with profile {profile_sketch} along path {path_sketch}"
 
@@ -791,6 +860,10 @@ class PartDesignOpsHandler(BaseHandler):
             pipe.Spine = path
 
             self.recompute(doc)
+
+            err = self._check_feature_state(pipe, "Additive pipe")
+            if err:
+                return err
 
             return f"Created additive pipe: {pipe.Name} sweeping {profile_sketch} along {path_sketch}"
 
@@ -829,6 +902,10 @@ class PartDesignOpsHandler(BaseHandler):
 
             self.recompute(doc)
 
+            err = self._check_feature_state(loft, "Subtractive loft")
+            if err:
+                return err
+
             return f"Created subtractive loft: {loft.Name} through {len(sketches)} profiles"
 
         except Exception as e:
@@ -864,6 +941,10 @@ class PartDesignOpsHandler(BaseHandler):
             pipe.Spine = path
 
             self.recompute(doc)
+
+            err = self._check_feature_state(pipe, "Subtractive pipe")
+            if err:
+                return err
 
             return f"Created subtractive pipe: {pipe.Name} sweeping {profile_sketch} along {path_sketch}"
 
@@ -947,6 +1028,10 @@ class PartDesignOpsHandler(BaseHandler):
 
                 self.recompute(doc)
 
+                err = self._check_feature_state(draft, "Draft")
+                if err:
+                    return err
+
                 return f"Created draft: {draft.Name} on {len(face_indices)} selected faces with {angle}° angle"
             else:
                 return "Draft operation requires object to be in a PartDesign Body"
@@ -1025,6 +1110,10 @@ class PartDesignOpsHandler(BaseHandler):
 
             self.recompute(doc)
 
+            err = self._check_feature_state(shell, "Shell")
+            if err:
+                return err
+
             return f"Created shell: {shell.Name} from {object_name} with {thickness}mm thickness and {len(face_indices)} face(s) removed for opening"
 
         except Exception as e:
@@ -1051,6 +1140,10 @@ class PartDesignOpsHandler(BaseHandler):
             shell.Join = 2
 
             self.recompute(doc)
+
+            err = self._check_feature_state(shell, "Shell")
+            if err:
+                return err
 
             return f"Created closed shell: {shell.Name} from {object_name} with {thickness}mm thickness (no opening)"
 
@@ -1131,6 +1224,10 @@ class PartDesignOpsHandler(BaseHandler):
 
             self.recompute(doc)
 
+            err = self._check_feature_state(thickness, "PartDesign Thickness")
+            if err:
+                return err
+
             return f"Created PartDesign Thickness: {thickness.Name} from {object_name} with {thickness_val}mm thickness and {len(face_indices)} face(s) removed for opening"
 
         except Exception as e:
@@ -1186,6 +1283,10 @@ class PartDesignOpsHandler(BaseHandler):
 
             self.recompute(doc)
 
+            err = self._check_feature_state(helix_sweep, "Helix")
+            if err:
+                return err
+
             return f"Created helix: {helix_sweep.Name} from {sketch_name}, pitch={pitch}mm, height={height}mm, turns={turns}"
 
         except Exception as e:
@@ -1223,6 +1324,10 @@ class PartDesignOpsHandler(BaseHandler):
             rib.Solid = True
 
             self.recompute(doc)
+
+            err = self._check_feature_state(rib, "Rib")
+            if err:
+                return err
 
             return f"Created rib: {rib.Name} from {sketch_name} with {thickness}mm thickness in {direction} direction"
 
