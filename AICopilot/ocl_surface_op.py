@@ -45,20 +45,49 @@ def _load_stl(stl_file, ocl):
     """Read a binary STL file into an ocl.STLSurf.
 
     Returns (stl_surf, x_min, x_max, y_min, y_max).
-    Raises ValueError on truncated/invalid file.
+    Raises ValueError on a non-binary-STL file (ASCII STL, wrong format
+    entirely, or truncated/corrupt) — this parser only understands the
+    binary layout and previously reinterpreted anything else as raw
+    triangle bytes with no format check first, either raising a confusing
+    "Truncated triangle data" partway through or, worse, silently building
+    a garbage mesh that becomes a real CNC toolpath via PathDropCutter.
     """
     stl_surf = ocl.STLSurf()
     x_min = y_min = math.inf
     x_max = y_max = -math.inf
 
+    file_size = os.path.getsize(stl_file)
+    if file_size < 84:
+        raise ValueError(f"Not a binary STL file (too small, {file_size} bytes): {stl_file}")
+
     with open(stl_file, "rb") as f:
-        f.read(80)  # header (ignored)
+        header = f.read(80)
         raw = f.read(4)
         if len(raw) < 4:
             raise ValueError(f"Truncated STL file: {stl_file}")
         n_tris = struct.unpack("<I", raw)[0]
         if n_tris == 0:
             raise ValueError(f"STL file has no triangles: {stl_file}")
+
+        # A binary STL is exactly 84 + 50*n_tris bytes (80-byte header +
+        # 4-byte count + n_tris * (12-byte normal + 36-byte vertices +
+        # 2-byte attribute byte count)). If the declared count doesn't
+        # match the actual file size, this isn't a binary STL we can
+        # trust — most commonly an ASCII STL (whose "solid ..." header
+        # text gets reinterpreted as a garbage triangle count above), but
+        # this also catches plain truncation/corruption and any trailing
+        # bytes past the declared triangle count, up front rather than
+        # partway through the triangle loop below.
+        expected_size = 84 + 50 * n_tris
+        if file_size != expected_size:
+            looks_ascii = header.lstrip()[:5].lower() == b"solid"
+            reason = "appears to be ASCII STL, not binary" if looks_ascii \
+                else "size does not match declared triangle count"
+            raise ValueError(
+                f"Not a valid binary STL file ({reason}): {stl_file} "
+                f"(file is {file_size} bytes, expected {expected_size} "
+                f"for {n_tris} triangles)"
+            )
 
         for _ in range(n_tris):
             f.read(12)  # normal vector (ignored — OCL recomputes)
