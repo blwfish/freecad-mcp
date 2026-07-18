@@ -62,6 +62,11 @@ def mock_doc(mock_freecad):
 
     doc.Objects = [obj1, obj2, obj3]
     doc.getObject = lambda name: {"Box": obj1, "Cylinder001": obj2, "Body": obj3}.get(name)
+    # BaseHandler.get_object()'s Label-fallback path calls this; without it,
+    # it auto-vivifies as a MagicMock (truthy, len()==0 by default), so
+    # get_object would return a fake "found" object for ANY name instead of
+    # correctly falling through to None.
+    doc.getObjectsByLabel = lambda label: [o for o in doc.Objects if o.Label == label]
 
     mock_freecad.ActiveDocument = doc
     return doc
@@ -410,6 +415,14 @@ class TestObjectVisibility:
         result = doc_handler.show_object({"object_name": "Box"})
         assert "No active document" in result
 
+    def test_hide_resolves_by_label(self, doc_handler, mock_doc):
+        """hide_object previously bypassed get_object() via raw
+        doc.getObject, which matches internal Name only — a caller-supplied
+        Label ("MyCylinder", Name="Cylinder001") always came back
+        "not found" even though every other handler resolves labels fine."""
+        result = doc_handler.hide_object({"object_name": "MyCylinder"})
+        assert "Hidden" in result
+
 
 class TestDeleteObject:
     def test_delete(self, doc_handler, mock_doc):
@@ -425,6 +438,14 @@ class TestDeleteObject:
         mock_freecad.ActiveDocument = None
         result = doc_handler.delete_object({"object_name": "Box"})
         assert "No active document" in result
+
+    def test_delete_by_label_removes_the_internal_name_not_the_label(self, doc_handler, mock_doc):
+        """removeObject() needs the internal Name — passing a resolved
+        Label straight through (rather than obj.Name) would fail against a
+        real FreeCAD document even though get_object() found the object."""
+        result = doc_handler.delete_object({"object_name": "MyCylinder"})
+        assert "Deleted" in result
+        mock_doc.removeObject.assert_called_once_with("Cylinder001")
 
 
 # ---------------------------------------------------------------------------
@@ -537,6 +558,20 @@ class TestMakeLink:
         mock_freecad.ActiveDocument = None
         result = doc_handler.make_link({"object_name": "Box"})
         assert "No active document" in result
+
+    def test_link_resolves_by_label(self, doc_handler, mock_doc):
+        """make_link previously bypassed get_object() via raw
+        doc.getObject, so a caller-supplied Label ("MyCylinder",
+        Name="Cylinder001") always came back "not found"."""
+        link = MagicMock()
+        link.Name = "MyCylinder_Link"
+        mock_doc.addObject.return_value = link
+        cylinder = mock_doc.getObject("Cylinder001")
+
+        result = doc_handler.make_link({"object_name": "MyCylinder"})
+
+        assert "not found" not in result.lower()
+        assert link.LinkedObject is cylinder
 
 
 # ---------------------------------------------------------------------------

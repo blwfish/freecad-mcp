@@ -465,6 +465,43 @@ class TestCreateJob(unittest.TestCase):
         assert_success_contains(self, result, "Job_Plate", "Plate")
         mock_Path_Main_Job.Create.assert_called_once()
 
+    def test_create_job_resolves_base_object_by_label(self):
+        """create_job's base_object lookup previously hand-rolled its own
+        'search by Label, first match wins' loop instead of using
+        self.get_object() — the exact anti-pattern get_object() was
+        hardened against elsewhere in this codebase."""
+        box = make_box_object("Box001")
+        box.Label = "East Wall"
+        doc = make_mock_doc([box])
+        mock_FreeCAD.ActiveDocument = doc
+
+        new_job = make_cam_job("Job_Wall")
+        mock_Path_Main_Job.Create = MagicMock(return_value=new_job)
+
+        result = self.handler.create_job({
+            'base_object': 'East Wall', 'job_name': 'Job_Wall',
+        })
+
+        assert_success_contains(self, result, "Job_Wall")
+        self.assertNotIn("not found", result.lower())
+
+    def test_create_job_ambiguous_label_errors_instead_of_first_match(self):
+        """Two objects sharing a Label must error, not silently pick
+        whichever was first in doc.Objects."""
+        box1 = make_box_object("Box001")
+        box1.Label = "Wall"
+        box2 = make_box_object("Box002")
+        box2.Label = "Wall"
+        doc = make_mock_doc([box1, box2])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_job({
+            'base_object': 'Wall', 'job_name': 'Job1',
+        })
+
+        assert_error_contains(self, result, "ambiguous")
+        mock_Path_Main_Job.Create.assert_not_called()
+
 
 class TestCreateToolShapes(unittest.TestCase):
     def setUp(self):

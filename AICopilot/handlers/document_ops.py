@@ -187,7 +187,7 @@ class DocumentOpsHandler(BaseHandler):
             if not doc:
                 return json.dumps({"error": "No active document"})
             name = args.get("object_name", "")
-            obj = doc.getObject(name)
+            obj = self.get_object(name, doc)
             if obj is None:
                 return json.dumps({"error": f"Object not found: {name!r}"})
             props = {}
@@ -261,7 +261,7 @@ class DocumentOpsHandler(BaseHandler):
             if not doc:
                 return "No active document"
 
-            obj = doc.getObject(object_name)
+            obj = self.get_object(object_name, doc)
             if not obj:
                 return f"Object not found: {object_name}"
 
@@ -279,7 +279,7 @@ class DocumentOpsHandler(BaseHandler):
             if not doc:
                 return "No active document"
 
-            obj = doc.getObject(object_name)
+            obj = self.get_object(object_name, doc)
             if not obj:
                 return f"Object not found: {object_name}"
 
@@ -297,11 +297,14 @@ class DocumentOpsHandler(BaseHandler):
             if not doc:
                 return "No active document"
 
-            obj = doc.getObject(object_name)
+            obj = self.get_object(object_name, doc)
             if not obj:
                 return f"Object not found: {object_name}"
 
-            doc.removeObject(object_name)
+            # removeObject needs the internal Name, not a Label — object_name
+            # may be either (get_object resolves both), so use obj.Name here
+            # rather than re-passing the caller's possibly-Label string.
+            doc.removeObject(obj.Name)
             doc.recompute()
             return f"Deleted object: {object_name}"
         except Exception as e:
@@ -364,7 +367,7 @@ class DocumentOpsHandler(BaseHandler):
             # Add objects to group if specified
             added = []
             for obj_name in objects:
-                obj = doc.getObject(obj_name)
+                obj = self.get_object(obj_name, doc)
                 if obj:
                     group.addObject(obj)
                     added.append(obj_name)
@@ -392,7 +395,7 @@ class DocumentOpsHandler(BaseHandler):
             if not doc:
                 return "No active document"
 
-            obj = doc.getObject(object_name)
+            obj = self.get_object(object_name, doc)
             if not obj:
                 return f"Object not found: {object_name}"
 
@@ -521,7 +524,7 @@ class DocumentOpsHandler(BaseHandler):
             if not doc:
                 return "No active document"
 
-            obj = doc.getObject(object_name)
+            obj = self.get_object(object_name, doc)
             if not obj:
                 return f"Object not found: {object_name}"
 

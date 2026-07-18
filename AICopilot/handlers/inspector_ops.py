@@ -125,17 +125,19 @@ class InspectorOpsHandler(BaseHandler):
             if not doc:
                 return json.dumps({"error": "No active document"})
 
-        # Resolve objects
+        # Resolve objects. get_object() raises ValueError on an ambiguous
+        # Label rather than guessing (see its docstring) — a DRC scan that
+        # silently checked the wrong solid on a duplicate-label document
+        # would be worse than surfacing the ambiguity as an error. The
+        # async-dispatch wrapper around this method catches that and
+        # returns a clean {"error": ...} response, same as every other
+        # exception path here.
         requested_names: list = args.get('objects') or []
         if requested_names:
             objects = []
             missing = []
             for name in requested_names:
-                obj = doc.getObject(name)
-                if obj is None:
-                    # Try label lookup
-                    hits = doc.getObjectsByLabel(name)
-                    obj = hits[0] if hits else None
+                obj = self.get_object(name, doc)
                 if obj:
                     objects.append(obj)
                 else:

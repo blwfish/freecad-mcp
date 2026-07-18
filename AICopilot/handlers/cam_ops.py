@@ -41,19 +41,18 @@ class CAMOpsHandler(BaseHandler):
             # Prepare model list - MUST be a list, not individual objects
             model_list = []
             if base_object:
-                # Try direct lookup first
-                obj = doc.getObject(base_object)
-
-                # If not found, try stripping whitespace and try again
-                if not obj and base_object.strip() != base_object:
-                    obj = doc.getObject(base_object.strip())
-
-                # If still not found, search by Label
-                if not obj:
-                    for o in doc.Objects:
-                        if o.Label == base_object or o.Label == base_object.strip():
-                            obj = o
-                            break
+                # self.get_object already tries internal Name then Label
+                # (and raises on an ambiguous Label rather than guessing —
+                # the previous "search by Label, first match wins" loop
+                # reintroduced exactly the anti-pattern get_object() was
+                # hardened against). Only the whitespace-stripped retry is
+                # extra behavior beyond what get_object provides.
+                try:
+                    obj = self.get_object(base_object, doc)
+                    if not obj and base_object.strip() != base_object:
+                        obj = self.get_object(base_object.strip(), doc)
+                except ValueError as e:
+                    return f"Error: {e}"
 
                 if obj:
                     model_list = [obj]
