@@ -1900,3 +1900,53 @@ class TestProcessCommandExtended:
         finally:
             ss_mod.DEBUG_ENABLED = original_debug
             ss_mod._monitor = original_monitor
+
+
+# ---------------------------------------------------------------------------
+# start_server updates the health monitor's socket_path
+#
+# init_monitor() runs at module import time, before any instance's real
+# socket path exists, so the health monitor always got constructed with its
+# hardcoded default ("/tmp/freecad_mcp.sock" — the legacy single-instance
+# path). Under the multi-instance architecture, every health check/crash
+# snapshot was silently probing the wrong socket whenever a non-default
+# instance was active — the normal case.
+# ---------------------------------------------------------------------------
+
+class TestStartServerMonitorSocketPath:
+    def test_updates_monitor_socket_path_to_the_real_one(self, server, monkeypatch, tmp_path):
+        import freecad_mcp_handler as ss_mod
+
+        fake_monitor = MagicMock()
+        custom_path = str(tmp_path / "custom.sock")
+
+        monkeypatch.setattr(ss_mod, "_monitor", fake_monitor)
+        monkeypatch.setattr(ss_mod, "SOCKET_PATH", custom_path)
+        monkeypatch.setattr(ss_mod, "IS_WINDOWS", False)
+        # Avoid real socket/OS/thread work — start_server does a real
+        # AF_UNIX bind otherwise.
+        monkeypatch.setattr(ss_mod.socket, "socket", MagicMock(return_value=MagicMock()))
+        monkeypatch.setattr(ss_mod.os, "chmod", MagicMock())
+        monkeypatch.setattr(ss_mod.os.path, "exists", MagicMock(return_value=False))
+        monkeypatch.setattr(ss_mod.threading, "Thread", MagicMock(return_value=MagicMock()))
+
+        server.start_server()
+
+        assert str(fake_monitor.socket_path) == custom_path
+
+    def test_no_monitor_does_not_raise(self, server, monkeypatch, tmp_path):
+        """DEBUG_ENABLED False (the common case: freecad_debug/freecad_health
+        not installed) means _monitor is None — must not crash trying to
+        update it."""
+        import freecad_mcp_handler as ss_mod
+
+        monkeypatch.setattr(ss_mod, "_monitor", None)
+        monkeypatch.setattr(ss_mod, "SOCKET_PATH", str(tmp_path / "custom.sock"))
+        monkeypatch.setattr(ss_mod, "IS_WINDOWS", False)
+        monkeypatch.setattr(ss_mod.socket, "socket", MagicMock(return_value=MagicMock()))
+        monkeypatch.setattr(ss_mod.os, "chmod", MagicMock())
+        monkeypatch.setattr(ss_mod.os.path, "exists", MagicMock(return_value=False))
+        monkeypatch.setattr(ss_mod.threading, "Thread", MagicMock(return_value=MagicMock()))
+
+        server.start_server()  # must not raise (the assertion is reaching this line)
+        assert server.running is True

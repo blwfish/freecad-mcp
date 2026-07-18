@@ -567,6 +567,18 @@ class FreeCADSocketServer:
                     f"Socket server started on {self.socket_path} (uuid={self.instance_uuid})\n"
                 )
 
+                # init_monitor() (module import time, before this instance's
+                # real socket path exists) always constructed the health
+                # monitor with its hardcoded default
+                # ("/tmp/freecad_mcp.sock" — the legacy single-instance
+                # path). Under the multi-instance architecture that default
+                # is almost never this instance's actual socket, so every
+                # health check and crash snapshot was silently probing the
+                # wrong socket. Point it at the real one now that it's known.
+                if _monitor is not None:
+                    from pathlib import Path as _Path
+                    _monitor.socket_path = _Path(self.socket_path)
+
             self.server_socket.listen(5)
             self.running = True
 
