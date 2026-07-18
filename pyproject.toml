@@ -30,10 +30,22 @@ Repository = "https://github.com/blwfish/freecad-mcp"
 Issues = "https://github.com/blwfish/freecad-mcp/issues"
 
 [project.optional-dependencies]
-test = ["pytest>=9.1.1", "pip-audit>=2.10.1"]
+test = ["pytest>=9.1.1", "pip-audit>=2.10.1", "pytest-cov>=7.1.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
 markers = [
     "cam: requires FreeCAD 1.2-dev (CAM/Path workbench)",
 ]
+
+# Coverage is a floor-check, not a quality gate — deliberately not wired
+# into the default pytest run above; invoke explicitly at release-gate
+# cadence: `venv/bin/pytest --cov --cov-report=term-missing`. /full-review's
+# Phase 3.5 detects this config and runs it the same way.
+[tool.coverage.run]
+source = ["."]
+omit = ["tests/*", "venv/*", "*/__pycache__/*", "actions-runner*/*"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "if __name__ == .__main__.:"]
+skip_empty = true
