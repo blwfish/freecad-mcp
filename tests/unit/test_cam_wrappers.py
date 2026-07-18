@@ -524,6 +524,28 @@ class TestUpdateToolController(unittest.TestCase):
         self.assertAlmostEqual(controller.HorizRapid, 50.0)   # 3000 / 60
         self.assertAlmostEqual(controller.VertRapid, 25.0)    # 1500 / 60
 
+    def test_feed_rate_and_vertical_feed_rate_convert_mm_per_min_to_mm_per_sec(self):
+        """update_tool_controller's own feed_rate/vertical_feed_rate
+        conversion had no test at all — only add_tool_controller's copy of
+        this same /60.0 arithmetic was pinned. Mutating this specific
+        divisor (287/291) survived the pre-existing suite; mutating the
+        sibling at add_tool_controller (line 92) was correctly caught,
+        proving the two copies were unequally guarded despite being the
+        same conversion."""
+        controller = MagicMock()
+        controller.Name = "TC1"
+        controller.Label = "TC1"
+        doc = make_mock_doc([controller])
+        mock_FreeCAD.ActiveDocument = doc
+
+        self.handler.update_tool_controller({
+            'job_name': 'Job', 'controller_name': 'TC1',
+            'feed_rate': 3000, 'vertical_feed_rate': 1500,
+        })
+
+        self.assertAlmostEqual(controller.HorizFeed, 50.0)   # 3000 / 60
+        self.assertAlmostEqual(controller.VertFeed, 25.0)    # 1500 / 60
+
 
 # ---------------------------------------------------------------------------
 # cam_ops: _create_path_op / drilling — StepDown/FinalDepth expression trap

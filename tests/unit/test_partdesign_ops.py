@@ -140,6 +140,27 @@ class TestPocket(unittest.TestCase):
         self.assertEqual(pocket.Length, 8)
         assert_success_contains(self, result, "S", "8")
 
+    def test_pocket_invalid_state_diagnoses_open_wires(self):
+        """If the pocket's State contains 'Invalid', the handler must call
+        the wire-diagnosis helper and surface the result instead of falsely
+        reporting success. pad_sketch's identical check has a test
+        (test_pad_invalid_state_diagnoses_open_wires); this one didn't —
+        confirmed as a surviving mutant during the full review (disabling
+        this check entirely left all TestPocket tests passing)."""
+        sketch = make_sketch("S")
+        body = make_body("Body", group=[sketch])
+        doc = make_mock_doc([body, sketch])
+        mock_FreeCAD.ActiveDocument = doc
+
+        invalid_pocket = MagicMock()
+        invalid_pocket.Name = "Pocket001"
+        invalid_pocket.State = ['Invalid']
+        body.newObject = MagicMock(return_value=invalid_pocket)
+
+        result = self.handler.pocket({'sketch_name': 'S', 'length': 10})
+
+        assert_error_contains(self, result, "failed to compute")
+
     def test_pocket_accepts_depth_alias(self):
         """`depth` and `length` are interchangeable for pocket."""
         sketch = make_sketch("S")

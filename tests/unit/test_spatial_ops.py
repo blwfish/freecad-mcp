@@ -56,6 +56,15 @@ for mod_name in list(sys.modules):
 import handlers.spatial_ops as spatial_ops_module
 from handlers.spatial_ops import SpatialOpsHandler
 
+# Deliberately hardcoded, NOT read from spatial_ops_module — these tests
+# exist to PIN the constants' values. Reading the live value would make the
+# test track any change to the source (including an accidental one)
+# instead of failing on it, which defeats the purpose of a boundary-pinning
+# test. A real, intentional change to either tolerance must update these
+# two literals as a conscious, visible edit.
+_VOL_TOL = 1e-9    # mm³ — must match handlers/spatial_ops.py
+_OCCT_LIN_TOL = 1e-7  # mm — must match handlers/spatial_ops.py
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -272,6 +281,82 @@ class TestInterferenceCheck(unittest.TestCase):
         box2 = make_box("B", 20, 0, 0)
         box1.Shape.BoundBox.intersect = MagicMock(return_value=False)
         box1.Shape.distToShape = MagicMock(return_value=(0.0, []))
+        self.fc.ActiveDocument = make_mock_doc([box1, box2])
+        result = self.handler.interference_check({'object1': 'A', 'object2': 'B'})
+        self.assertNotIn("sliver", result.lower())
+
+    # -- _VOL_TOL boundary (1e-9 mm³): pins the constant's value, not just
+    # its comparison operator. A mutation to the constant (e.g. 1e-9 -> 1e-3)
+    # survived the pre-existing suite because no test used a volume anywhere
+    # near the actual threshold (500.0 mm³ is nowhere close).
+
+    def test_volume_exactly_at_vol_tol_does_not_intersect(self):
+        """The check is `vol > _VOL_TOL` (strict) — a volume exactly at the
+        threshold must NOT count as intersecting."""
+        box1 = make_box("A", 0, 0, 0)
+        box2 = make_box("B", 5, 0, 0)
+        common = MagicMock()
+        common.Volume = _VOL_TOL
+        box1.Shape.common = MagicMock(return_value=common)
+        box1.Shape.distToShape = MagicMock(return_value=(0.0, []))
+        self.fc.ActiveDocument = make_mock_doc([box1, box2])
+
+        result = self.handler.interference_check({'object1': 'A', 'object2': 'B'})
+        self.assertIn("Intersects: False", result)
+
+    def test_volume_just_above_vol_tol_intersects(self):
+        box1 = make_box("A", 0, 0, 0)
+        box2 = make_box("B", 5, 0, 0)
+        common = MagicMock()
+        common.Volume = _VOL_TOL * 1.5
+        common.BoundBox = MagicMock(XMin=5.0, XMax=10.0, YMin=0.0, YMax=10.0,
+                                     ZMin=0.0, ZMax=10.0,
+                                     XLength=5.0, YLength=10.0, ZLength=10.0)
+        box1.Shape.common = MagicMock(return_value=common)
+        self.fc.ActiveDocument = make_mock_doc([box1, box2])
+
+        result = self.handler.interference_check({'object1': 'A', 'object2': 'B'})
+        self.assertIn("Intersects: True", result)
+
+    def test_volume_just_below_vol_tol_does_not_intersect(self):
+        box1 = make_box("A", 0, 0, 0)
+        box2 = make_box("B", 5, 0, 0)
+        common = MagicMock()
+        common.Volume = _VOL_TOL * 0.5
+        box1.Shape.common = MagicMock(return_value=common)
+        box1.Shape.distToShape = MagicMock(return_value=(0.0, []))
+        self.fc.ActiveDocument = make_mock_doc([box1, box2])
+
+        result = self.handler.interference_check({'object1': 'A', 'object2': 'B'})
+        self.assertIn("Intersects: False", result)
+
+    # -- _OCCT_LIN_TOL boundary (1e-7 mm): sliver-detection distance check.
+
+    def test_sliver_distance_exactly_at_occt_lin_tol_no_warning(self):
+        """The check is `min_dist < _OCCT_LIN_TOL` (strict) — a distance
+        exactly at the threshold must NOT trigger the sliver warning."""
+        box1 = make_box("A", 0, 0, 0)
+        box2 = make_box("B", 0, 0, 0)
+        box1.Shape.BoundBox.intersect = MagicMock(return_value=True)
+        box1.Shape.distToShape = MagicMock(return_value=(_OCCT_LIN_TOL, []))
+        self.fc.ActiveDocument = make_mock_doc([box1, box2])
+        result = self.handler.interference_check({'object1': 'A', 'object2': 'B'})
+        self.assertNotIn("sliver", result.lower())
+
+    def test_sliver_distance_just_below_occt_lin_tol_warns(self):
+        box1 = make_box("A", 0, 0, 0)
+        box2 = make_box("B", 0, 0, 0)
+        box1.Shape.BoundBox.intersect = MagicMock(return_value=True)
+        box1.Shape.distToShape = MagicMock(return_value=(_OCCT_LIN_TOL * 0.5, []))
+        self.fc.ActiveDocument = make_mock_doc([box1, box2])
+        result = self.handler.interference_check({'object1': 'A', 'object2': 'B'})
+        self.assertIn("sub-tolerance sliver", result.lower())
+
+    def test_sliver_distance_just_above_occt_lin_tol_no_warning(self):
+        box1 = make_box("A", 0, 0, 0)
+        box2 = make_box("B", 0, 0, 0)
+        box1.Shape.BoundBox.intersect = MagicMock(return_value=True)
+        box1.Shape.distToShape = MagicMock(return_value=(_OCCT_LIN_TOL * 1.5, []))
         self.fc.ActiveDocument = make_mock_doc([box1, box2])
         result = self.handler.interference_check({'object1': 'A', 'object2': 'B'})
         self.assertNotIn("sliver", result.lower())

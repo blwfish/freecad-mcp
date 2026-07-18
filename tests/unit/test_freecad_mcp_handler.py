@@ -140,6 +140,48 @@ class TestServerFraming:
         """Server-side MAX_MESSAGE_SIZE should be 50KB, matching bridge."""
         assert ss_module.MAX_MESSAGE_SIZE == 50 * 1024
 
+    def test_receive_exactly_at_max_message_size_accepted(self, ss_module):
+        """Confirmed as a surviving mutant during the full review: mutating
+        `>` to `>=` on the server-side receive check left all tests passing
+        because no test used a message of exactly MAX_MESSAGE_SIZE bytes —
+        test_receive_oversized only checks well above the cap (100KB vs the
+        50KB limit). The check is `message_len > MAX_MESSAGE_SIZE`, so a
+        message of exactly the cap must be ACCEPTED.
+
+        Sends from a background thread (matching
+        test_bridge_framing.py's TestMaxMessageSizeThreshold): a
+        MAX_MESSAGE_SIZE payload exceeds the socket's kernel send buffer, so
+        a synchronous sendall() before receive_message starts draining would
+        deadlock — both sides must run concurrently.
+        """
+        import threading
+        client, peer = self._make_socketpair()
+        try:
+            msg = "x" * ss_module.MAX_MESSAGE_SIZE
+            msg_bytes = msg.encode("utf-8")
+
+            def sender():
+                peer.sendall(struct.pack(">I", len(msg_bytes)) + msg_bytes)
+
+            t = threading.Thread(target=sender)
+            t.start()
+            result = ss_module.receive_message(client, timeout=10.0)
+            t.join()
+            assert result == msg
+        finally:
+            client.close()
+            peer.close()
+
+    def test_receive_one_byte_over_max_message_size_rejected(self, ss_module):
+        client, peer = self._make_socketpair()
+        try:
+            peer.sendall(struct.pack(">I", ss_module.MAX_MESSAGE_SIZE + 1))
+            result = ss_module.receive_message(client, timeout=2.0)
+            assert result is None
+        finally:
+            client.close()
+            peer.close()
+
 
 # ---------------------------------------------------------------------------
 # _run_on_gui_thread

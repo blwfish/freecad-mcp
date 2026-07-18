@@ -281,6 +281,46 @@ class TestCreateConeDegenerateDimensions(unittest.TestCase):
 
         self.assertEqual(doc.Objects[-1].Radius2, 0)
 
+    def test_negative_radius1_rejected(self):
+        """Confirmed as a surviving mutant during the full review: no test
+        exercised a negative radius, so relaxing `< 0` to effectively never
+        reject (`< -999`) left every existing test passing."""
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_cone({'radius1': -5, 'radius2': 0, 'height': 10})
+
+        assert_error_contains(self, result, "radii must be")
+        self.assertEqual(len(doc.Objects), 0)
+
+    def test_negative_radius2_rejected(self):
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_cone({'radius1': 5, 'radius2': -1, 'height': 10})
+
+        assert_error_contains(self, result, "radii must be")
+        self.assertEqual(len(doc.Objects), 0)
+
+    def test_radius_exactly_zero_is_accepted(self):
+        """The floor is `< 0` (strict), so exactly 0 must be accepted —
+        it's the documented pointed-cone case, not a rejection boundary."""
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_cone({'radius1': 5, 'radius2': 0, 'height': 10})
+
+        self.assertIn("Created cone", result)
+
+    def test_both_radii_zero_rejected(self):
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_cone({'radius1': 0, 'radius2': 0, 'height': 10})
+
+        assert_error_contains(self, result, "at least one")
+        self.assertEqual(len(doc.Objects), 0)
+
 
 class TestCreateWedgeDegenerateDimensions(unittest.TestCase):
     """create_wedge was the one primitive in this file with no dimensional
