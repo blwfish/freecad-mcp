@@ -264,3 +264,39 @@ class TestRun:
     def test_run_rejects_path_traversal(self, handler, macro_dir):
         result = json.loads(handler.run({"name": "../etc/passwd", "confirmed": True}))
         assert "error" in result
+
+    def test_run_without_confirmed_does_not_execute(self, handler, macro_dir):
+        """The confirmed gate — macros run as Python with full OS access —
+        had zero coverage of the omitted/False path: all 9 existing tests
+        in this class pass confirmed=True. A side effect (writing a marker
+        file) proves the macro body genuinely never ran, not just that the
+        response shape looks right."""
+        marker = os.path.join(macro_dir, "ran.txt")
+        _write_macro(macro_dir, "sideeffect.FCMacro",
+                     f"open({marker!r}, 'w').write('ran')\n")
+
+        result = json.loads(handler.run({"name": "sideeffect.FCMacro"}))
+
+        assert result.get("status") == "confirmation_required"
+        assert "error" not in result
+        assert not os.path.exists(marker), "macro body executed without confirmation"
+
+    def test_run_confirmed_false_does_not_execute(self, handler, macro_dir):
+        """confirmed=False (explicit, not just omitted) must be treated the
+        same as omitted — args.get("confirmed") is falsy either way."""
+        marker = os.path.join(macro_dir, "ran2.txt")
+        _write_macro(macro_dir, "sideeffect2.FCMacro",
+                     f"open({marker!r}, 'w').write('ran')\n")
+
+        result = json.loads(handler.run({"name": "sideeffect2.FCMacro", "confirmed": False}))
+
+        assert result.get("status") == "confirmation_required"
+        assert not os.path.exists(marker)
+
+    def test_confirmation_required_response_includes_macro_path(self, handler, macro_dir):
+        _write_macro(macro_dir, "info.FCMacro", "pass\n")
+
+        result = json.loads(handler.run({"name": "info.FCMacro"}))
+
+        assert "path" in result
+        assert "info.FCMacro" in result["path"]

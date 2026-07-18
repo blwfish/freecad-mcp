@@ -274,6 +274,102 @@ class TestSetCellRange(unittest.TestCase):
         self.assertEqual(sheet._cells_data['D3'], '6')
 
 
+class TestGetCellRange(unittest.TestCase):
+    """get_cell_range had zero test coverage before this class."""
+
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(SpreadsheetOpsHandler)
+
+    def test_single_cell_range(self):
+        sheet = make_spreadsheet("Params")
+        sheet.set('A1', '42')
+        doc = make_mock_doc([sheet])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = json.loads(self.handler.get_cell_range({
+            'spreadsheet_name': 'Params', 'start_cell': 'A1', 'end_cell': 'A1',
+        }))
+
+        self.assertEqual(result['range'], 'A1:A1')
+        self.assertEqual(result['values'], [['42']])
+
+    def test_2d_range_reads_correct_cells(self):
+        sheet = make_spreadsheet("Params")
+        for cell, val in [('B2', '1'), ('C2', '2'), ('B3', '3'), ('C3', '4')]:
+            sheet.set(cell, val)
+        doc = make_mock_doc([sheet])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = json.loads(self.handler.get_cell_range({
+            'spreadsheet_name': 'Params', 'start_cell': 'B2', 'end_cell': 'C3',
+        }))
+
+        self.assertEqual(result['values'], [['1', '2'], ['3', '4']])
+
+    def test_multi_letter_column_boundary_z_to_aa(self):
+        """The column-letter<->number conversion is reimplemented 4x in
+        this file (set_cell_range, get_cell_range, import_csv, export_csv)
+        with no shared helper and no test using a multi-letter column
+        anywhere — the Z (26) -> AA (27) wraparound was unverified in all
+        four copies."""
+        sheet = make_spreadsheet("Params")
+        sheet.set('Z1', 'last-single-letter')
+        sheet.set('AA1', 'first-double-letter')
+        doc = make_mock_doc([sheet])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = json.loads(self.handler.get_cell_range({
+            'spreadsheet_name': 'Params', 'start_cell': 'Z1', 'end_cell': 'AA1',
+        }))
+
+        self.assertEqual(result['range'], 'Z1:AA1')
+        self.assertEqual(result['values'], [['last-single-letter', 'first-double-letter']])
+
+    def test_empty_cell_reads_as_empty_string(self):
+        sheet = make_spreadsheet("Params")
+        doc = make_mock_doc([sheet])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = json.loads(self.handler.get_cell_range({
+            'spreadsheet_name': 'Params', 'start_cell': 'A1', 'end_cell': 'A1',
+        }))
+
+        self.assertEqual(result['values'], [['']])
+
+    def test_invalid_start_cell_errors(self):
+        sheet = make_spreadsheet("Params")
+        doc = make_mock_doc([sheet])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.get_cell_range({
+            'spreadsheet_name': 'Params', 'start_cell': 'not-a-cell', 'end_cell': 'A1',
+        })
+
+        assert_error_contains(self, result, "invalid cell")
+
+    def test_not_a_spreadsheet_errors(self):
+        obj = make_part_object("NotASheet")
+        doc = make_mock_doc([obj])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.get_cell_range({
+            'spreadsheet_name': 'NotASheet', 'start_cell': 'A1', 'end_cell': 'A1',
+        })
+
+        assert_error_contains(self, result, "not a spreadsheet")
+
+    def test_spreadsheet_not_found_errors(self):
+        doc = make_mock_doc([])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.get_cell_range({
+            'spreadsheet_name': 'Ghost', 'start_cell': 'A1', 'end_cell': 'A1',
+        })
+
+        assert_error_contains(self, result, "not found")
+
+
 class TestBindProperty(unittest.TestCase):
     def setUp(self):
         reset_mocks()
