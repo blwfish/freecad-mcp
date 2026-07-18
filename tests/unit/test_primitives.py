@@ -14,6 +14,7 @@ from tests.unit._freecad_mocks import (
     make_handler,
     make_mock_doc,
     assert_success_contains,
+    assert_error_contains,
     _Vec,
 )
 
@@ -279,6 +280,72 @@ class TestCreateConeDegenerateDimensions(unittest.TestCase):
         self.handler.create_cone({'radius1': 5, 'height': 10})
 
         self.assertEqual(doc.Objects[-1].Radius2, 0)
+
+
+class TestCreateWedgeDegenerateDimensions(unittest.TestCase):
+    """create_wedge was the one primitive in this file with no dimensional
+    validation at all — every sibling calls _validate_positive; wedge
+    skipped it because its bounds are min/max coordinate pairs rather than
+    positive magnitudes (xmin can legitimately be negative), so it needs
+    its own ordering check instead."""
+
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(PrimitivesHandler)
+
+    def test_inverted_xmax_xmin_rejected(self):
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_wedge({'xmin': 10, 'xmax': 0})
+
+        assert_error_contains(self, result, "xmax", "xmin")
+        self.assertEqual(len(doc.Objects), 0)
+
+    def test_zero_volume_all_equal_bounds_rejected(self):
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_wedge({
+            'xmin': 0, 'xmax': 0, 'ymin': 0, 'ymax': 0, 'zmin': 0, 'zmax': 0,
+        })
+
+        assert_error_contains(self, result, "must be >")
+        self.assertEqual(len(doc.Objects), 0)
+
+    def test_inverted_x2min_x2max_rejected(self):
+        """The x2min/x2max top-face bounds get the same check as the base
+        xmin/xmax/ymin/ymax/zmin/zmax pairs."""
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_wedge({'x2min': 8, 'x2max': 2})
+
+        assert_error_contains(self, result, "x2max", "x2min")
+        self.assertEqual(len(doc.Objects), 0)
+
+    def test_valid_bounds_still_create_a_wedge(self):
+        """Regression guard: the new validation must not reject the
+        ordinary case."""
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_wedge({
+            'xmin': 0, 'xmax': 10, 'ymin': 0, 'ymax': 10, 'zmin': 0, 'zmax': 10,
+            'x2min': 2, 'x2max': 8,
+        })
+
+        assert_success_contains(self, result, "Created wedge")
+        self.assertEqual(len(doc.Objects), 1)
+
+    def test_non_numeric_bound_rejected(self):
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_wedge({'xmin': 'not_a_number', 'xmax': 10})
+
+        assert_error_contains(self, result, "must be", "numbers")
+        self.assertEqual(len(doc.Objects), 0)
 
 
 class TestPrimitivesNoDocument(unittest.TestCase):
