@@ -136,6 +136,13 @@ def scan_discovery(prune_stale: bool = True) -> list[dict]:
                 except OSError:
                     pass
             continue
+        if not isinstance(data, dict):
+            # Valid JSON but not an object (list/number/null) — not a
+            # discovery record we understand. Skip without deleting or
+            # crashing the rest of the scan (data.get below would raise
+            # AttributeError on a list/etc otherwise, aborting discovery
+            # for every other instance in this directory).
+            continue
         sock_path = data.get("socket_path")
         if sock_path is None:
             # Schema mismatch — likely a future-version record we don't
