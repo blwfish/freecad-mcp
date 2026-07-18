@@ -154,6 +154,29 @@ class TestReadSpreadsheetParams(unittest.TestCase):
         params = _read_spreadsheet_params(doc, 'Spreadsheet')
         self.assertEqual(params, {})
 
+    def test_resolves_spreadsheet_by_label(self):
+        """_read_spreadsheet_params previously used raw doc.getObject
+        (Name-only) — a caller-supplied Label always came back "not
+        found"."""
+        ss = _make_spreadsheet({'width': 100.0})
+        ss.Name = 'Spreadsheet001'
+        ss.Label = 'Params'
+        doc = make_mock_doc([ss])
+
+        params = _read_spreadsheet_params(doc, 'Params')
+
+        self.assertAlmostEqual(params['width'], 100.0)
+
+    def test_ambiguous_label_raises(self):
+        ss1 = _make_spreadsheet({'width': 100.0})
+        ss1.Name, ss1.Label = 'Spreadsheet001', 'Params'
+        ss2 = _make_spreadsheet({'width': 200.0})
+        ss2.Name, ss2.Label = 'Spreadsheet002', 'Params'
+        doc = make_mock_doc([ss1, ss2])
+
+        with self.assertRaisesRegex(ValueError, "Ambiguous label"):
+            _read_spreadsheet_params(doc, 'Params')
+
 
 # ---------------------------------------------------------------------------
 # Tests: _apply_layout
@@ -293,6 +316,34 @@ class TestBuildSketch(unittest.TestCase):
         self.assertEqual(result['geo'], 12)
         self.assertEqual(result['constraints'], 30)
         sb_instance.emit.assert_called_once_with(doc, sketch_name='XZ_Test', placement='XZ')
+
+    def test_sketch_lookup_falls_back_to_label(self):
+        """emit() was called with sketch_name="Master XZ" as the requested
+        name, but FreeCAD internal Names can't contain spaces — if the
+        library set that string as the Label and auto-sanitized the Name
+        (e.g. "Sketch"), the old raw doc.getObject(sketch_name) (Name-only)
+        would silently fail to find the sketch just created and report
+        geo=0/constraints=0 instead of the real counts."""
+        ss = _make_spreadsheet({'width': 100.0, 'eaveHeight': 60.0})
+        ss.Name, ss.Label = 'Spreadsheet', 'Spreadsheet'
+        sk = _make_sketch_obj('Sketch', geo_count=12, constraint_count=30)
+        sk.Label = 'Master XZ'  # sanitized Name != requested sketch_name
+        doc = make_mock_doc([ss, sk])
+        mock_FreeCAD.ActiveDocument = doc
+
+        sb_instance = MagicMock()
+        sb_instance.validate.return_value = _make_ok_report(dof=5)
+        _mock_sketch_builder_class.return_value = sb_instance
+
+        result = json.loads(self.handler.build_sketch({
+            'layout': {'elements': [{'type': 'envelope', 'width': 'width', 'height': 'eaveHeight'}]},
+            'sketch_name': 'Master XZ',
+            'spreadsheet': 'Spreadsheet',
+        }))
+
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['geo'], 12)
+        self.assertEqual(result['constraints'], 30)
 
     def test_validation_failure_returns_conflicts(self):
         doc, _ = self._make_doc_with_spreadsheet()
@@ -466,6 +517,29 @@ class TestEnsureImportable(unittest.TestCase):
         _ensure_sketch_builder_importable()
         count = _sys.path.count(FC_TOOLS_PATH)
         self.assertEqual(count, 1)
+
+
+class TestHandlerInheritance(unittest.TestCase):
+    """Was previously the only handler class in AICopilot/handlers/ that
+    did not subclass BaseHandler."""
+
+    def test_inherits_base_handler(self):
+        # Checked structurally (by name in the MRO) rather than via a fresh
+        # `from handlers.base import BaseHandler` + issubclass(): other test
+        # files (test_document_ops.py etc.) delete-and-reimport
+        # handlers.base mid-session, which can produce a DIFFERENT
+        # BaseHandler class object than the one SketchBuilderOpsHandler was
+        # originally defined against — issubclass() would then be comparing
+        # two same-named-but-distinct classes and fail spuriously depending
+        # on suite execution order (the same H9-class hazard flagged
+        # elsewhere in this codebase).
+        base_names = [cls.__name__ for cls in SketchBuilderOpsHandler.__mro__]
+        self.assertIn('BaseHandler', base_names)
+
+    def test_has_get_object_method(self):
+        handler = _make_handler()
+        self.assertTrue(hasattr(handler, 'get_object'))
+        self.assertTrue(callable(handler.get_object))
 
 
 if __name__ == '__main__':

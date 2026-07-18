@@ -13,6 +13,8 @@ import sys
 import xml.etree.ElementTree as ET
 from typing import Any, Dict
 
+from .base import BaseHandler
+
 FC_TOOLS_PATH = '/Volumes/Files/claude/FC-tools'
 
 
@@ -24,9 +26,34 @@ def _ensure_sketch_builder_importable() -> None:
     import Part  # noqa: F401
 
 
+def _resolve_by_name_or_label(doc, name: str):
+    """Name-first, Label-fallback lookup mirroring BaseHandler.get_object().
+
+    Duplicated here (not a method call) because this module's functions
+    are tested standalone with a (doc, name) signature, not through a
+    handler instance. Raises ValueError on an ambiguous Label rather than
+    guessing, matching BaseHandler.get_object()'s contract — the anti-
+    pattern it exists to avoid is picking the wrong object on a
+    duplicate-label document.
+    """
+    obj = doc.getObject(name)
+    if obj is not None:
+        return obj
+    results = doc.getObjectsByLabel(name)
+    if not results:
+        return None
+    if len(results) > 1:
+        names = [getattr(o, "Name", "?") for o in results]
+        raise ValueError(
+            f"Ambiguous label {name!r}: {len(results)} objects share this "
+            f"label ({', '.join(names)}). Use the internal Name to disambiguate."
+        )
+    return results[0]
+
+
 def _read_spreadsheet_params(doc, spreadsheet_name: str) -> Dict[str, float]:
     """Read all aliased cells from a spreadsheet, return {alias: float_value}."""
-    ss = doc.getObject(spreadsheet_name)
+    ss = _resolve_by_name_or_label(doc, spreadsheet_name)
     if ss is None:
         raise ValueError(f"Spreadsheet '{spreadsheet_name}' not found in document")
 
@@ -97,13 +124,16 @@ def _apply_layout(sb, layout: Dict[str, Any]) -> None:
             raise ValueError(f"Unknown element type: {t!r}")
 
 
-class SketchBuilderOpsHandler:
-    """Handles the build_sketch MCP tool."""
+class SketchBuilderOpsHandler(BaseHandler):
+    """Handles the build_sketch MCP tool.
 
-    def __init__(self, server=None, log_operation=None, capture_state=None):
-        self.server = server
-        self._log_operation = log_operation or (lambda *a, **kw: None)
-        self._capture_state = capture_state or (lambda: {})
+    Was previously the only handler class in AICopilot/handlers/ that did
+    not subclass BaseHandler — it hand-duplicated __init__ (identical to
+    BaseHandler's own) and had no access to get_object() (label-aware,
+    ambiguity-checked lookup), _validate_file_path(), log_and_return(), or
+    run_on_gui_thread(). BaseHandler's __init__ signature matches exactly,
+    so no override is needed here.
+    """
 
     def build_sketch(self, args: Dict[str, Any]) -> str:
         """
@@ -147,7 +177,12 @@ class SketchBuilderOpsHandler:
 
             sb.emit(doc, sketch_name=sketch_name, placement=placement)
 
-            sk = doc.getObject(sketch_name)
+            # get_object (Name-first, Label-fallback) rather than raw
+            # doc.getObject: FreeCAD internal Names can't contain spaces,
+            # so if sketch_name (e.g. "Master XZ") became the object's
+            # Label rather than its sanitized Name, an exact-Name-only
+            # lookup would silently fail to find the sketch just created.
+            sk = self.get_object(sketch_name, doc)
             geo_count = sk.GeometryCount if sk else 0
             constraint_count = len(sk.Constraints) if sk else 0
 
