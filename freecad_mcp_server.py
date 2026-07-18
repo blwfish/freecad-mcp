@@ -44,6 +44,22 @@ def _scan_discovery(prune_stale: bool = True) -> list[dict]:
 
     On Windows this is a no-op (returns []); GUI discovery on Windows is TCP
     based and uses _ctx.socket_path directly.
+
+    Behavior must stay in sync with AICopilot/instance_registry.py's
+    scan_discovery — the two are independent implementations of the same
+    contract because they run in separate processes/installs (the bridge
+    deploys to ~/.freecad-mcp/, AICopilot/ deploys into the FreeCAD Mod
+    directory; neither can reliably import the other). See
+    tests/unit/test_instance_registry_parity.py, which runs both against
+    identical synthetic discovery directories and asserts identical output.
+
+    A record that's parseable JSON but missing socket_path (e.g. a newer
+    bridge version using a renamed key) is NOT deleted, even when
+    prune_stale=True — mass-deleting unrecognized records would silently
+    kill discovery for any future schema migration. A record that isn't a
+    JSON object at all (list, number, null) is skipped without aborting the
+    rest of the scan. Only records that DO carry socket_path but whose
+    socket is dead are pruned, since those are unambiguously stale.
     """
     if platform.system() == "Windows":
         return []
@@ -61,14 +77,24 @@ def _scan_discovery(prune_stale: bool = True) -> list[dict]:
             with open(path) as f:
                 data = json.load(f)
         except (OSError, json.JSONDecodeError):
+            # Corrupt or unreadable — drop it.
             if prune_stale:
                 try:
                     os.unlink(path)
                 except OSError:
                     pass
             continue
+        if not isinstance(data, dict):
+            # Valid JSON but not an object (list/number/null) — not a
+            # discovery record we understand. Skip, don't delete or crash
+            # the rest of the scan.
+            continue
         sock_path = data.get("socket_path")
-        if sock_path and _socket_alive(sock_path):
+        if sock_path is None:
+            # Schema mismatch — likely a future-version record we don't
+            # know how to interpret. Don't delete; skip and keep scanning.
+            continue
+        if _socket_alive(sock_path):
             live.append(data)
         elif prune_stale:
             try:
