@@ -649,18 +649,19 @@ class PartDesignOpsHandler(BaseHandler):
             if not feature:
                 return f"Feature not found: {feature_name}"
 
+            plane_normals = {'XY': (0, 0, 1), 'XZ': (0, 1, 0), 'YZ': (1, 0, 0)}
+            normal = plane_normals.get(plane.upper())
+            if normal is None:
+                # Validated before creating the object — an unrecognized
+                # plane used to leave mirror.Normal/Base entirely unset on
+                # an already-created Part::Mirroring while still reporting
+                # "Created mirror: ... across {plane} plane" as success.
+                return f"Invalid plane '{plane}': must be 'XY', 'XZ', or 'YZ'"
+
             mirror = doc.addObject("Part::Mirroring", name)
             mirror.Source = feature
-
-            if plane.upper() == 'XY':
-                mirror.Normal = (0, 0, 1)
-                mirror.Base = (0, 0, 0)
-            elif plane.upper() == 'XZ':
-                mirror.Normal = (0, 1, 0)
-                mirror.Base = (0, 0, 0)
-            elif plane.upper() == 'YZ':
-                mirror.Normal = (1, 0, 0)
-                mirror.Base = (0, 0, 0)
+            mirror.Normal = normal
+            mirror.Base = (0, 0, 0)
 
             self.recompute(doc)
 
@@ -689,16 +690,20 @@ class PartDesignOpsHandler(BaseHandler):
             if not sketch:
                 return f"Sketch not found: {sketch_name}"
 
+            axis_vectors = {'x': (1, 0, 0), 'y': (0, 1, 0), 'z': (0, 0, 1)}
+            axis_vector = axis_vectors.get(axis.lower())
+            if axis_vector is None:
+                # Validated before creating the object — an unrecognized
+                # axis used to silently fall through to Z while the success
+                # message still echoed the requested axis string, e.g.
+                # axis="q" reporting "around Q-axis" while actually
+                # revolving around Z.
+                return f"Invalid axis '{axis}': must be 'x', 'y', or 'z'"
+
             revolution = doc.addObject("Part::Revolution", name)
             revolution.Source = sketch
             revolution.Angle = angle
-
-            if axis.lower() == 'x':
-                revolution.Axis = (1, 0, 0)
-            elif axis.lower() == 'y':
-                revolution.Axis = (0, 1, 0)
-            else:
-                revolution.Axis = (0, 0, 1)
+            revolution.Axis = axis_vector
 
             self.recompute(doc)
 
@@ -731,18 +736,20 @@ class PartDesignOpsHandler(BaseHandler):
             if not body:
                 return f"Sketch {sketch_name} must be in a PartDesign Body"
 
+            # Map the requested revolution axis to the sketch's local axes:
+            #   x -> H_Axis (horizontal), y -> V_Axis (vertical), z -> N_Axis (normal).
+            axis_refs = {'x': 'H_Axis', 'y': 'V_Axis', 'z': 'N_Axis'}
+            ref_axis = axis_refs.get(axis.lower())
+            if ref_axis is None:
+                # Validated before creating the object — see revolution()
+                # for the identical silent-default/message-lie bug this
+                # mirrors.
+                return f"Invalid axis '{axis}': must be 'x', 'y', or 'z'"
+
             groove = body.newObject("PartDesign::Groove", name)
             groove.Profile = sketch
             groove.Angle = angle
-
-            # Map the requested revolution axis to the sketch's local axes:
-            #   x -> H_Axis (horizontal), y -> V_Axis (vertical), z -> N_Axis (normal).
-            if axis.lower() == 'x':
-                groove.ReferenceAxis = (sketch, ['H_Axis'])
-            elif axis.lower() == 'y':
-                groove.ReferenceAxis = (sketch, ['V_Axis'])
-            else:
-                groove.ReferenceAxis = (sketch, ['N_Axis'])
+            groove.ReferenceAxis = (sketch, [ref_axis])
 
             self.recompute(doc)
 

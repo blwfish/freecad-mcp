@@ -67,11 +67,18 @@ class TransformsHandler(BaseHandler):
                 return f"Object not found: {object_name}"
 
             # Set rotation axis
-            axis_vector = FreeCAD.Vector(0, 0, 1)  # default Z
-            if axis.lower() == 'x':
-                axis_vector = FreeCAD.Vector(1, 0, 0)
-            elif axis.lower() == 'y':
-                axis_vector = FreeCAD.Vector(0, 1, 0)
+            axis_vectors = {
+                'x': FreeCAD.Vector(1, 0, 0),
+                'y': FreeCAD.Vector(0, 1, 0),
+                'z': FreeCAD.Vector(0, 0, 1),
+            }
+            axis_vector = axis_vectors.get(axis.lower())
+            if axis_vector is None:
+                # No fallback — an unrecognized axis used to silently
+                # rotate around Z while the success message still echoed
+                # the requested axis string, e.g. axis="q" reporting
+                # "around Q-axis" while actually rotating around Z.
+                return f"Invalid axis '{axis}': must be 'x', 'y', or 'z'"
 
             # Rotate object
             rotation = FreeCAD.Rotation(axis_vector, angle)

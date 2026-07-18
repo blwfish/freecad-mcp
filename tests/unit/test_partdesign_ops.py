@@ -547,6 +547,19 @@ class TestMirrorFeature(unittest.TestCase):
 
         assert_error_contains(self, result, "failed to compute")
 
+    def test_invalid_plane_rejected_instead_of_silent_default(self):
+        """An unrecognized plane used to leave Normal/Base entirely unset
+        on an already-created Part::Mirroring while still reporting
+        "Created mirror: ... across {plane} plane" as success."""
+        feat = make_part_object("F")
+        doc = make_mock_doc([feat])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.mirror_feature({'feature_name': 'F', 'plane': 'QQ'})
+
+        assert_error_contains(self, result, "invalid plane", "qq")
+        doc.addObject.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Revolution / groove
@@ -596,6 +609,18 @@ class TestRevolution(unittest.TestCase):
         self.assertEqual(rev.Angle, 90)
         self.assertEqual(rev.Axis, (1, 0, 0))
 
+    def test_invalid_axis_rejected_instead_of_silent_default(self):
+        """An unrecognized axis used to silently fall through to Z while
+        the success message still echoed the requested axis string."""
+        sketch = make_sketch("S")
+        doc = make_mock_doc([sketch])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.revolution({'sketch_name': 'S', 'axis': 'q'})
+
+        assert_error_contains(self, result, "invalid axis", "q")
+        doc.addObject.assert_not_called()
+
 
 class TestGroove(unittest.TestCase):
     def setUp(self):
@@ -621,6 +646,17 @@ class TestGroove(unittest.TestCase):
 
         body.newObject.assert_called_with("PartDesign::Groove", "Groove")
         assert_success_contains(self, result, "S", "180", "Z")
+
+    def test_invalid_axis_rejected_instead_of_silent_default(self):
+        sketch = make_sketch("S")
+        body = make_body("Body", group=[sketch])
+        doc = make_mock_doc([body, sketch])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.groove({'sketch_name': 'S', 'axis': 'q'})
+
+        assert_error_contains(self, result, "invalid axis", "q")
+        body.newObject.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
