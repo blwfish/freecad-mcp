@@ -170,8 +170,18 @@ class FreeCADHealthMonitor:
             Tuple of (is_running, pid)
         """
         try:
+            # Case-sensitive, matching freecad_crash_report.py's pattern
+            # (pgrep -lf FreeCAD) exactly. Verified live: the lowercase
+            # "-f freecad" pattern missed the real FreeCAD process (its
+            # binary/bundle path is capitalized: FreeCAD.app,
+            # build/release/bin/FreeCAD) while matching unrelated
+            # processes whose command line happens to contain "freecad"
+            # lowercase — this repo's own venv path
+            # (.../freecad-mcp/venv/bin/python) is exactly such a case.
+            # Adding -i (case-insensitive) makes this worse, not better:
+            # it then matches "freecad-mcp" in this project's own path too.
             result = subprocess.run(
-                ["pgrep", "-f", "freecad"],
+                ["pgrep", "-f", "FreeCAD"],
                 capture_output=True,
                 text=True,
                 timeout=5
