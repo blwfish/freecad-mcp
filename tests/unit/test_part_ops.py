@@ -28,6 +28,24 @@ from tests.unit._freecad_mocks import (
 from handlers.part_ops import PartOpsHandler
 
 
+def _make_next_addobject_invalid(doc, type_id):
+    """Make the next doc.addObject(type_id, ...) call return an object with
+    State=['Invalid'], preserving make_mock_doc's normal _add_object setup
+    (appends to doc.Objects, sets Shape defaults) for every other call.
+    Used to test the post-recompute Invalid-state check that loft/sweep
+    inherit from BaseHandler._check_feature_state (H13 consolidation —
+    previously PartDesignOpsHandler-only, now shared)."""
+    original = doc.addObject.side_effect
+
+    def _wrapped(t, name=None):
+        obj = original(t, name)
+        if t == type_id:
+            obj.State = ['Invalid']
+        return obj
+
+    doc.addObject.side_effect = _wrapped
+
+
 class TestExtrude(unittest.TestCase):
     def setUp(self):
         reset_mocks()
@@ -300,6 +318,22 @@ class TestLoft(unittest.TestCase):
         result = self.handler.loft({'sketches': ['Only']})
         assert_error_contains(self, result, "at least 2")
 
+    def test_invalid_state_errors_instead_of_false_success(self):
+        """recompute() never raises on geometry failure — it marks
+        feature.State Invalid instead. Part::Loft shares this FreeCAD
+        mechanism with PartDesign features, so it must get the same
+        post-recompute check (H13: previously only PartDesignOpsHandler's
+        loft_profiles had this; Part::Loft could silently report success
+        on a self-intersecting/degenerate loft)."""
+        s1, s2 = make_sketch("S1"), make_sketch("S2")
+        doc = make_mock_doc([s1, s2])
+        mock_FreeCAD.ActiveDocument = doc
+        _make_next_addobject_invalid(doc, "Part::Loft")
+
+        result = self.handler.loft({'sketches': ['S1', 'S2'], 'name': 'L'})
+
+        assert_error_contains(self, result, "invalid")
+
 
 class TestSweep(unittest.TestCase):
     def setUp(self):
@@ -329,6 +363,19 @@ class TestSweep(unittest.TestCase):
             'profile_sketch': 'NoProfile', 'path_sketch': 'Path',
         })
         assert_error_contains(self, result, "profile", "not found")
+
+    def test_invalid_state_errors_instead_of_false_success(self):
+        profile = make_sketch("Profile")
+        path = make_sketch("Path")
+        doc = make_mock_doc([profile, path])
+        mock_FreeCAD.ActiveDocument = doc
+        _make_next_addobject_invalid(doc, "Part::Sweep")
+
+        result = self.handler.sweep({
+            'profile_sketch': 'Profile', 'path_sketch': 'Path',
+        })
+
+        assert_error_contains(self, result, "invalid")
 
 
 class TestCompound(unittest.TestCase):

@@ -558,3 +558,91 @@ class TestDiagnoseOpenWires:
         sketch.detectMissingPointOnPointConstraints.return_value = 0
         result = base_handler._diagnose_open_wires(sketch)
         assert "getOpenVertices unavailable" in result
+
+
+class TestMmMinToMmS:
+    """mm_min_to_mm_s is the single source of truth for the mm/min -> mm/s
+    divide-by-60 that used to be hand-written at 6 call sites across
+    cam_tool_controllers.py and ocl_surface_op.py (H13). These tests pin
+    its behavior directly; the parity tests below confirm every call site
+    actually imports this same function rather than a local copy."""
+
+    def test_typical_value(self):
+        from handlers.base import mm_min_to_mm_s
+        assert mm_min_to_mm_s(1200) == 20.0
+
+    def test_zero(self):
+        from handlers.base import mm_min_to_mm_s
+        assert mm_min_to_mm_s(0) == 0.0
+
+    def test_accepts_string_numeric(self):
+        """Call sites pass args['feed_rate'] straight from JSON — could be
+        an int, float, or (if a caller stringifies) a numeric string."""
+        from handlers.base import mm_min_to_mm_s
+        assert mm_min_to_mm_s("600") == 10.0
+
+    def test_negative_value_not_silently_clamped(self):
+        """Not a valid feed rate, but the conversion itself must not hide
+        it — validation is the caller's job, not this arithmetic helper's."""
+        from handlers.base import mm_min_to_mm_s
+        assert mm_min_to_mm_s(-60) == -1.0
+
+
+class TestMmMinToMmSParity:
+    """Every former hand-written /60.0 call site must resolve to the shared
+    handlers.base.mm_min_to_mm_s — not a separately-maintained copy that
+    could drift.
+
+    Deliberately NOT an `is` identity check: several other test files in
+    this suite (including this one's own base_handler/base_handler_class
+    fixtures) do `del sys.modules["handlers.base"]` + reimport to force a
+    clean module for their own tests, which mints a *new* function object.
+    Whether that reimport has happened yet by the time this test runs
+    depends on pytest's collection/execution order — a real prior instance
+    of this exact class of flakiness is documented in this repo's git
+    history (H9). __module__ survives that churn (it's a string baked in
+    at function-definition time, not a live reference), so it proves "no
+    local reimplementation exists in this module's namespace" without
+    being sensitive to which particular handlers.base object is currently
+    cached in sys.modules.
+    """
+
+    def test_cam_tool_controllers_imports_the_shared_function(self):
+        import handlers.cam_tool_controllers as cam_tool_controllers_module
+        assert cam_tool_controllers_module.mm_min_to_mm_s.__module__ == "handlers.base"
+        assert cam_tool_controllers_module.mm_min_to_mm_s(1200) == 20.0
+
+    def test_ocl_surface_op_imports_the_shared_function(self):
+        # ocl_surface_op.py does `import Path` (FreeCAD's CAM module) at
+        # module level; _freecad_mocks registers a stand-in in sys.modules
+        # before that import resolves, same as test_ocl_surface_op.py does.
+        from tests.unit._freecad_mocks import mock_FreeCAD, reset_mocks  # noqa: F401
+        import ocl_surface_op as ocl_surface_op_module
+        assert ocl_surface_op_module.mm_min_to_mm_s.__module__ == "handlers.base"
+        assert ocl_surface_op_module.mm_min_to_mm_s(1200) == 20.0
+
+
+class TestCheckFeatureStateParity:
+    """_check_feature_state used to be defined only on PartDesignOpsHandler
+    and hand-copied nowhere else, even though Part::Loft/Part::Sweep (created
+    by PartOpsHandler) share the same FreeCAD State='Invalid'-on-failed-
+    recompute mechanism (H13). Moved to BaseHandler so both handlers inherit
+    the identical method rather than risking a second hand-written copy."""
+
+    def test_partdesign_and_part_handlers_share_the_inherited_method(self):
+        from handlers.partdesign_ops import PartDesignOpsHandler
+        from handlers.part_ops import PartOpsHandler
+        assert (
+            PartDesignOpsHandler._check_feature_state
+            is PartOpsHandler._check_feature_state
+            is __import__("handlers.base", fromlist=["BaseHandler"]).BaseHandler._check_feature_state
+        )
+
+    def test_partdesign_ops_no_longer_defines_its_own_copy(self):
+        """Guards against a future edit silently reintroducing a shadowing
+        override on PartDesignOpsHandler that would defeat the parity check
+        above without making it fail (an override with an identical body
+        would still pass the `is` check above only if never re-added — this
+        directly inspects the class's own __dict__ instead)."""
+        from handlers.partdesign_ops import PartDesignOpsHandler
+        assert "_check_feature_state" not in PartDesignOpsHandler.__dict__

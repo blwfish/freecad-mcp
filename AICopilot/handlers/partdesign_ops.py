@@ -3,34 +3,12 @@
 import json
 import FreeCAD
 import FreeCADGui
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from .base import BaseHandler
 
 
 class PartDesignOpsHandler(BaseHandler):
     """Handler for PartDesign workbench operations."""
-
-    def _check_feature_state(self, feature, feature_label: str, sketch=None) -> Optional[str]:
-        """Return a diagnostic error string if feature.State contains
-        'Invalid' after recompute(), else None.
-
-        recompute() never raises on geometry failure — it marks the
-        feature Invalid instead — so every feature-creating method must
-        check this explicitly or risk reporting success for a broken
-        feature. Historically only pad_sketch/pocket did this; every other
-        sibling here could silently return "Created X: ..." for a broken
-        feature (radius too large, self-intersecting shell, degenerate
-        profile). Centralizes that check for the rest.
-        """
-        state = getattr(feature, 'State', [])
-        if 'Invalid' not in state:
-            return None
-        err = f"{feature_label} created but failed to compute (State=Invalid)."
-        if sketch is not None:
-            diagnosis = self._diagnose_open_wires(sketch)
-            if diagnosis:
-                err += f"\n\nSketch wire diagnosis:\n{diagnosis}"
-        return err
 
     def pad_sketch(self, args: Dict[str, Any]) -> str:
         """Extrude a sketch to create solid (pad) - requires PartDesign Body."""

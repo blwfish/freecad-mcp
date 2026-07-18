@@ -3,7 +3,7 @@
 import FreeCAD
 import time
 from typing import Dict, Any
-from .base import BaseHandler
+from .base import BaseHandler, mm_min_to_mm_s
 
 
 class CAMToolControllersHandler(BaseHandler):
@@ -89,8 +89,8 @@ class CAMToolControllersHandler(BaseHandler):
 
             # FC 1.2 stores feed rates in mm/s internally
             controller.SpindleSpeed = float(spindle_speed)
-            controller.HorizFeed = feed_rate / 60.0
-            controller.VertFeed = vertical_feed_rate / 60.0
+            controller.HorizFeed = mm_min_to_mm_s(feed_rate)
+            controller.VertFeed = mm_min_to_mm_s(vertical_feed_rate)
             controller.ToolNumber = tool_number
 
             # Add to job's tool controllers
@@ -284,11 +284,11 @@ class CAMToolControllersHandler(BaseHandler):
                 updates.append(f"spindle_speed: {args['spindle_speed']} RPM")
 
             if 'feed_rate' in args:
-                controller.HorizFeed = args['feed_rate'] / 60.0  # mm/min -> mm/s
+                controller.HorizFeed = mm_min_to_mm_s(args['feed_rate'])
                 updates.append(f"feed_rate: {args['feed_rate']} mm/min")
 
             if 'vertical_feed_rate' in args:
-                controller.VertFeed = args['vertical_feed_rate'] / 60.0  # mm/min -> mm/s
+                controller.VertFeed = mm_min_to_mm_s(args['vertical_feed_rate'])
                 updates.append(f"vertical_feed_rate: {args['vertical_feed_rate']} mm/min")
 
             if 'tool_number' in args:
@@ -303,11 +303,11 @@ class CAMToolControllersHandler(BaseHandler):
                 updates.append(f"spindle_dir: {args['spindle_dir']}")
 
             if 'horiz_rapid' in args:
-                controller.HorizRapid = args['horiz_rapid'] / 60.0  # mm/min -> mm/s
+                controller.HorizRapid = mm_min_to_mm_s(args['horiz_rapid'])
                 updates.append(f"horiz_rapid: {args['horiz_rapid']} mm/min")
 
             if 'vert_rapid' in args:
-                controller.VertRapid = args['vert_rapid'] / 60.0  # mm/min -> mm/s
+                controller.VertRapid = mm_min_to_mm_s(args['vert_rapid'])
                 updates.append(f"vert_rapid: {args['vert_rapid']} mm/min")
 
             if not updates:

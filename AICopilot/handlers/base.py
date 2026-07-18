@@ -12,6 +12,20 @@ else:
     FreeCADGui = None
 
 
+def mm_min_to_mm_s(value):
+    """Convert a user-supplied feed rate in mm/min to the mm/s value FreeCAD's
+    App::PropertySpeed feed/rapid properties expect internally.
+
+    Assigning a bare float to a PropertySpeed sets it directly in the
+    property's base unit (mm/s), independent of the user's display unit
+    schema, so this is plain arithmetic rather than a Quantity conversion.
+    Single source of truth for the mm/min -> mm/s divide-by-60 previously
+    hand-written at each call site in cam_tool_controllers.py and
+    ocl_surface_op.py.
+    """
+    return float(value) / 60.0
+
+
 class BaseHandler:
     """Base class for all FreeCAD operation handlers.
 
@@ -412,6 +426,27 @@ class BaseHandler:
             f"Path is outside allowed directories (home dir, /tmp, /Volumes). "
             f"Resolved path: {resolved}"
         )
+
+    def _check_feature_state(self, feature, feature_label: str, sketch=None) -> Optional[str]:
+        """Return a diagnostic error string if feature.State contains
+        'Invalid' after recompute(), else None.
+
+        recompute() never raises on geometry failure — it marks the
+        feature Invalid instead — so every feature-creating method must
+        check this explicitly or risk reporting success for a broken
+        feature. Originally added only to PartDesignOpsHandler; moved here
+        (H13) so Part::Loft/Part::Sweep in PartOpsHandler get the same
+        check instead of duplicating this method verbatim.
+        """
+        state = getattr(feature, 'State', [])
+        if 'Invalid' not in state:
+            return None
+        err = f"{feature_label} created but failed to compute (State=Invalid)."
+        if sketch is not None:
+            diagnosis = self._diagnose_open_wires(sketch)
+            if diagnosis:
+                err += f"\n\nSketch wire diagnosis:\n{diagnosis}"
+        return err
 
     def create_body_if_needed(self, doc: FreeCAD.Document = None):
         """Create a PartDesign Body if one doesn't exist.

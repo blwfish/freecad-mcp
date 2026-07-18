@@ -36,6 +36,8 @@ import math
 import FreeCAD
 import Path
 
+from handlers.base import mm_min_to_mm_s
+
 
 # ---------------------------------------------------------------------------
 # Module-level helpers (no OCL dependency at import time)
@@ -151,8 +153,8 @@ def _cl_points_to_commands(pts, safe_z, cut_feed, plunge_feed):
     velocity unit (mm/s). The GRBL post-processor multiplies by 60 to
     produce mm/min in the G-code output. Callers pass mm/min; we ÷60.
     """
-    cut_feed_mms    = cut_feed    / 60.0
-    plunge_feed_mms = plunge_feed / 60.0
+    cut_feed_mms    = mm_min_to_mm_s(cut_feed)
+    plunge_feed_mms = mm_min_to_mm_s(plunge_feed)
 
     cmds = [Path.Command("G0", {"Z": safe_z})]
     current_y = None
