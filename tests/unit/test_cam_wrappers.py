@@ -697,5 +697,98 @@ class TestCreatePathOpBaseWiring(unittest.TestCase):
         assert_success_contains(self, result, "Pocket")
 
 
+# ---------------------------------------------------------------------------
+# pocket / adaptive — stepover-vs-tool-diameter validation
+#
+# StepOver is a percentage of tool diameter (confirmed against FreeCAD's
+# own source, Path/Op/PocketBase.py: PocketStepover = (radius*2) *
+# (StepOver/100)). At/above 100 the tool paths don't overlap, leaving
+# uncut ridges — syntactically valid G-code with silently wrong geometry.
+# Neither pocket() nor adaptive() validated this before.
+# ---------------------------------------------------------------------------
+
+class TestPocketStepoverValidation(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(CAMOpsHandler)
+
+    def test_stepover_at_100_rejected(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        import sys
+        create_fn = MagicMock()
+        sys.modules['Path.Op.Pocket'].Create = create_fn
+
+        result = self.handler.pocket({'job_name': 'Job1', 'stepover': 100})
+
+        assert_error_contains(self, result, "stepover", "100")
+        create_fn.assert_not_called()
+
+    def test_stepover_above_100_rejected(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        import sys
+        create_fn = MagicMock()
+        sys.modules['Path.Op.Pocket'].Create = create_fn
+
+        result = self.handler.pocket({'job_name': 'Job1', 'stepover': 150})
+
+        assert_error_contains(self, result, "stepover")
+        create_fn.assert_not_called()
+
+    def test_stepover_just_below_100_accepted(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        op = MagicMock()
+        import sys
+        sys.modules['Path.Op.Pocket'].Create = MagicMock(return_value=op)
+
+        result = self.handler.pocket({'job_name': 'Job1', 'stepover': 99})
+
+        assert_success_contains(self, result, "Pocket")
+        self.assertEqual(op.StepOver, 99)
+
+
+class TestAdaptiveStepoverValidation(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(CAMOpsHandler)
+
+    def test_stepover_at_100_rejected(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        import sys
+        create_fn = MagicMock()
+        sys.modules['Path.Op.Adaptive'].Create = create_fn
+
+        result = self.handler.adaptive({'job_name': 'Job1', 'stepover': 100})
+
+        assert_error_contains(self, result, "stepover", "100")
+        create_fn.assert_not_called()
+
+    def test_stepover_writes_to_step_over_percent_not_legacy_stepover(self):
+        """Regression: the real Adaptive property is StepOverPercent, not
+        StepOver — FreeCAD's own Adaptive.py explicitly removes a legacy
+        "StepOver" property if present, so hasattr(op, 'StepOver') is False
+        on any modern Adaptive feature and the caller's stepover argument
+        was silently never applied."""
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        # Mock spec'd to the REAL property surface — no StepOver attribute
+        # at all, matching a real (post-cleanup) Adaptive feature object.
+        op = MagicMock(spec=['Name', 'StepOverPercent', 'Tolerance', 'Base'])
+        import sys
+        sys.modules['Path.Op.Adaptive'].Create = MagicMock(return_value=op)
+
+        self.handler.adaptive({'job_name': 'Job1', 'stepover': 40})
+
+        self.assertEqual(op.StepOverPercent, 40)
+
+
 if __name__ == '__main__':
     unittest.main()
