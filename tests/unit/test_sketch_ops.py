@@ -99,6 +99,20 @@ class TestCreateSketch(unittest.TestCase):
         result = self.handler.create_sketch({'plane': 'YZ', 'name': 'S'})
         assert_success_contains(self, result, "YZ")
 
+    def test_invalid_plane_rejected_instead_of_silent_xy(self):
+        """An unrecognized plane used to leave sketch.Placement at
+        doc.addObject's default (identical to the XY branch) while still
+        reporting "Created sketch: ... on {plane} plane" as success —
+        e.g. plane="ZY" silently creating an XY-oriented sketch labeled
+        "on ZY plane"."""
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_sketch({'plane': 'ZY', 'name': 'S'})
+
+        assert_error_contains(self, result, "invalid plane", "zy")
+        doc.addObject.assert_not_called()
+
     def test_attaches_to_active_partdesign_body(self):
         body = make_body("Body")
         doc = make_mock_doc([body])

@@ -24,25 +24,28 @@ class SketchOpsHandler(BaseHandler):
             if not doc:
                 return "Error creating sketch: No active document. Call view_control(operation='create_document') first."
 
+            # (x,y,z,w) quaternion args to FreeCAD.Rotation for each plane.
+            plane_rotations = {
+                'XY': (0, 0, 0, 1),
+                'XZ': (1, 0, 0, 1),
+                'YZ': (0, 1, 0, 1),
+            }
+            rotation_args = plane_rotations.get(plane.upper())
+            if rotation_args is None:
+                # Validated before creating the object — an unrecognized
+                # plane used to leave sketch.Placement at doc.addObject's
+                # default (identical to the XY branch) while still
+                # reporting "Created sketch: ... on {plane} plane" as
+                # success, e.g. plane="ZY" silently creating an
+                # XY-oriented sketch labeled "on ZY plane".
+                return f"Error creating sketch: invalid plane '{plane}' — must be 'XY', 'XZ', or 'YZ'"
+
             # Create sketch
             sketch = doc.addObject('Sketcher::SketchObject', name)
-
-            # Set plane
-            if plane.upper() == 'XY':
-                sketch.Placement = FreeCAD.Placement(
-                    FreeCAD.Vector(0, 0, 0),
-                    FreeCAD.Rotation(0, 0, 0, 1)
-                )
-            elif plane.upper() == 'XZ':
-                sketch.Placement = FreeCAD.Placement(
-                    FreeCAD.Vector(0, 0, 0),
-                    FreeCAD.Rotation(1, 0, 0, 1)
-                )
-            elif plane.upper() == 'YZ':
-                sketch.Placement = FreeCAD.Placement(
-                    FreeCAD.Vector(0, 0, 0),
-                    FreeCAD.Rotation(0, 1, 0, 1)
-                )
+            sketch.Placement = FreeCAD.Placement(
+                FreeCAD.Vector(0, 0, 0),
+                FreeCAD.Rotation(*rotation_args)
+            )
 
             # Try to add sketch to active PartDesign Body if one exists
             body = None

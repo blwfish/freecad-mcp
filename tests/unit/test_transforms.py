@@ -121,6 +121,20 @@ class TestRotateObject(unittest.TestCase):
         })
         assert_error_contains(self, result, "not found")
 
+    def test_invalid_axis_rejected_instead_of_silent_default(self):
+        """An unrecognized axis used to silently rotate around Z while the
+        success message still echoed the requested axis string, e.g.
+        axis="q" reporting "around Q-axis" while actually rotating Z."""
+        box = make_box_object("B")
+        doc = make_mock_doc([box])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.rotate_object({
+            'object_name': 'B', 'angle': 90, 'axis': 'q',
+        })
+
+        assert_error_contains(self, result, "invalid axis", "q")
+
 
 class TestCopyObject(unittest.TestCase):
     def setUp(self):
