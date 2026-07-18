@@ -28,11 +28,20 @@ HANDLER_PY = os.path.join(REPO_ROOT, 'AICopilot', 'freecad_mcp_handler.py')
 # Tools the bridge handles directly without routing to the FreeCAD-side
 # handler. Each is implemented as a function/branch inside
 # freecad_mcp_server.py and never reaches _execute_tool_inner.
+#
+# NOTE: continue_selection was removed from this list in the C1/C2 selection-
+# subsystem fix — it now routes through the smart-dispatcher elif name in
+# [...] list and reaches a real _execute_tool_inner branch
+# (tool_name == "continue_selection"), so it must not be exempted here.
+# test_echo stays bridge-only for the client-facing MCP tool (the bridge
+# answers it directly with no FreeCAD round-trip); a *different*, unregistered
+# use of the same string as a raw internal socket command (restart_freecad's
+# readiness poll) is handled by a tool_name == "test_echo" branch in the
+# handler, invisible to this MCP-tool-name-based static analysis.
 BRIDGE_ONLY_TOOLS = frozenset({
     "check_freecad_connection",
     "test_echo",
     "manage_connection",
-    "continue_selection",
     "spawn_freecad_instance",
     "list_freecad_instances",
     "select_freecad_instance",

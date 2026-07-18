@@ -1547,6 +1547,216 @@ class TestExecuteToolInnerRouting:
             server._execute_tool_inner(tool, {})
         assert server._call_on_gui_thread_async.call_count == 3
 
+    def test_test_echo_routing(self, server):
+        """test_echo is a raw internal liveness probe restart_freecad's
+        readiness poll sends over the socket (separate from the client-facing
+        MCP tool of the same name, which the bridge answers directly without
+        reaching FreeCAD). Any reply with no "error" key proves this instance
+        is up and dispatching — pins the restart_freecad-always-times-out fix.
+        """
+        result = json.loads(server._execute_tool_inner("test_echo", {"message": "ping"}))
+        assert "error" not in result
+        assert result["echo"] == "ping"
+
+
+# ---------------------------------------------------------------------------
+# Interactive selection subsystem (UniversalSelector + continue_selection)
+#
+# Regression coverage: FreeCADSocketServer never set self.selector (the
+# UniversalSelector backing class had been deleted as "dead code" while 13
+# live call sites in partdesign_ops.py/view_ops.py remained), so every
+# interactive fillet/chamfer/draft/shell/thickness call raised AttributeError,
+# silently swallowed and reported as a false success. continue_selection was
+# also a dead letter with no handler route. Hidden for ~5 months because
+# tests/unit/_freecad_mocks.py unconditionally injects
+# server.selector = MagicMock(), which the production code never had.
+# ---------------------------------------------------------------------------
+
+class TestUniversalSelector:
+    """Direct unit tests for UniversalSelector, independent of the mock the
+    rest of the suite uses for server.selector."""
+
+    def test_request_selection_returns_awaiting_selection_shape(self, ss_module):
+        selector = ss_module.UniversalSelector()
+        result = selector.request_selection(
+            tool_name="fillet_edges", selection_type="edges",
+            message="pick edges", object_name="Box", radius=2.0, name="F1",
+        )
+        assert result["status"] == "awaiting_selection"
+        assert result["selection_type"] == "edges"
+        assert result["object_name"] == "Box"
+        assert "operation_id" in result
+
+    def test_request_selection_stashes_kwargs_for_resume(self, ss_module):
+        selector = ss_module.UniversalSelector()
+        result = selector.request_selection(
+            tool_name="fillet_edges", selection_type="edges",
+            message="pick edges", object_name="Box", radius=2.0, name="F1",
+        )
+        pending = selector.pending_operations[result["operation_id"]]
+        assert pending["tool"] == "fillet_edges"
+        assert pending["radius"] == 2.0
+        assert pending["name"] == "F1"
+
+    def test_complete_selection_unknown_id_returns_none(self, ss_module):
+        selector = ss_module.UniversalSelector()
+        assert selector.complete_selection("nonexistent") is None
+
+    def test_complete_selection_no_gui_returns_error(self, ss_module):
+        """Console/headless mode: FreeCADGui is None module-wide (mock_freecad
+        sets fc.GuiUp = False)."""
+        selector = ss_module.UniversalSelector()
+        result = selector.request_selection(
+            tool_name="fillet_edges", selection_type="edges", message="m", object_name="Box",
+        )
+        op_id = result["operation_id"]
+        completed = selector.complete_selection(op_id)
+        assert "error" in completed
+        # Popped even on error — a failed completion must not be retryable
+        # with stale state; a retry correctly gets "not found" instead.
+        assert op_id not in selector.pending_operations
+
+    def test_complete_selection_returns_indices_matching_edge_naming(self, ss_module):
+        """elements must be ints that round-trip through f"Edge{idx}" — the
+        exact shape fillet_edges/chamfer_edges read via
+        selection_result["selection_data"]["elements"]."""
+        selector = ss_module.UniversalSelector()
+        result = selector.request_selection(
+            tool_name="fillet_edges", selection_type="edges", message="m", object_name="Box",
+        )
+        op_id = result["operation_id"]
+
+        fake_sel = MagicMock()
+        fake_sel.SubElementNames = ["Edge1", "Edge3"]
+        with patch.object(ss_module, "FreeCADGui") as mock_gui:
+            mock_gui.Selection.getSelectionEx.return_value = [fake_sel]
+            completed = selector.complete_selection(op_id)
+
+        assert completed["status"] == "completed"
+        assert completed["selection_data"]["elements"] == [1, 3]
+        assert completed["context"]["tool"] == "fillet_edges"
+
+    def test_complete_selection_faces_parsed_by_face_prefix(self, ss_module):
+        selector = ss_module.UniversalSelector()
+        result = selector.request_selection(
+            tool_name="shell_solid", selection_type="faces", message="m", object_name="Box",
+        )
+        op_id = result["operation_id"]
+
+        fake_sel = MagicMock()
+        fake_sel.SubElementNames = ["Face2"]
+        with patch.object(ss_module, "FreeCADGui") as mock_gui:
+            mock_gui.Selection.getSelectionEx.return_value = [fake_sel]
+            completed = selector.complete_selection(op_id)
+
+        assert completed["selection_data"]["elements"] == [2]
+
+    def test_cancel_selection_removes_pending_op(self, ss_module):
+        selector = ss_module.UniversalSelector()
+        result = selector.request_selection(
+            tool_name="fillet_edges", selection_type="edges", message="m", object_name="Box",
+        )
+        op_id = result["operation_id"]
+        assert selector.cancel_selection(op_id) is True
+        assert op_id not in selector.pending_operations
+        assert selector.cancel_selection(op_id) is False
+
+    def test_get_selected_objects_headless_returns_empty_list(self, ss_module):
+        selector = ss_module.UniversalSelector()
+        assert selector.get_selected_objects() == []
+
+    def test_select_object_and_clear_selection_headless_do_not_raise(self, ss_module):
+        selector = ss_module.UniversalSelector()
+        selector.select_object(MagicMock())
+        selector.clear_selection()
+
+    def test_cleanup_old_operations_drops_expired_only(self, ss_module):
+        selector = ss_module.UniversalSelector()
+        selector.pending_operations["old"] = {
+            "tool": "x", "type": "edges", "object": "", "timestamp": 0.0,
+        }
+        selector.pending_operations["fresh"] = {
+            "tool": "x", "type": "edges", "object": "", "timestamp": time.time(),
+        }
+        selector.cleanup_old_operations(max_age_seconds=300)
+        assert "old" not in selector.pending_operations
+        assert "fresh" in selector.pending_operations
+
+
+class TestContinueSelectionDispatch:
+    """continue_selection resumes a pending selector.request_selection() by
+    re-invoking the originating handler method with _continue_selection=True
+    + _operation_id — the mechanism fillet_edges/chamfer_edges/draft_faces/
+    shell_solid/thickness_faces already use internally."""
+
+    def test_selector_is_a_real_instance_not_missing(self, server):
+        """The core regression: server.selector used to not exist at all."""
+        import freecad_mcp_handler as ss_mod
+        assert isinstance(server.selector, ss_mod.UniversalSelector)
+
+    def test_missing_operation_id_errors(self, server):
+        result = json.loads(server._execute_tool_inner("continue_selection", {}))
+        assert "error" in result
+
+    def test_unknown_operation_id_errors(self, server):
+        result = json.loads(server._execute_tool_inner(
+            "continue_selection", {"operation_id": "does_not_exist"}
+        ))
+        assert "error" in result
+        assert "not found" in result["error"].lower() or "expired" in result["error"].lower()
+
+    def test_unknown_resume_tool_errors(self, server):
+        server.selector.pending_operations["op_1"] = {
+            "tool": "not_a_real_tool", "type": "edges", "object": "Box", "timestamp": 0.0,
+        }
+        result = json.loads(server._execute_tool_inner(
+            "continue_selection", {"operation_id": "op_1"}
+        ))
+        assert "error" in result
+        assert "not_a_real_tool" in result["error"]
+
+    def test_resumes_fillet_edges_with_reconstructed_args(self, server):
+        """A pending fillet_edges selection resumes by re-calling
+        partdesign_ops.fillet_edges with the original radius/name plus the
+        continuation flags — not a generic/blank re-dispatch."""
+        server.selector.pending_operations["op_1"] = {
+            "tool": "fillet_edges", "type": "edges", "object": "Box",
+            "timestamp": 0.0, "radius": 3.5, "name": "MyFillet",
+        }
+        server._call_on_gui_thread_async = MagicMock(
+            return_value=json.dumps({"job_id": "x", "status": "submitted"})
+        )
+        server._execute_tool_inner("continue_selection", {"operation_id": "op_1"})
+
+        server._call_on_gui_thread_async.assert_called_once()
+        method, resumed_args, label = server._call_on_gui_thread_async.call_args[0]
+        assert method == server.partdesign_ops.fillet_edges
+        assert label == "fillet_edges"
+        assert resumed_args["object_name"] == "Box"
+        assert resumed_args["radius"] == 3.5
+        assert resumed_args["name"] == "MyFillet"
+        assert resumed_args["_continue_selection"] is True
+        assert resumed_args["_operation_id"] == "op_1"
+
+    def test_all_five_selection_tools_have_resume_routes(self, server):
+        """Every method that calls selector.request_selection() must be
+        resumable — a sixth interactive-selection method added later without
+        a matching resume_methods entry would silently dead-letter its
+        continuation, same as continue_selection did before this fix."""
+        for tool_name in (
+            "fillet_edges", "chamfer_edges", "draft_faces",
+            "shell_solid", "thickness_faces",
+        ):
+            server.selector.pending_operations["op_x"] = {
+                "tool": tool_name, "type": "edges", "object": "Box", "timestamp": 0.0,
+            }
+            server._call_on_gui_thread_async = MagicMock(
+                return_value=json.dumps({"job_id": "x", "status": "submitted"})
+            )
+            server._execute_tool_inner("continue_selection", {"operation_id": "op_x"})
+            method = server._call_on_gui_thread_async.call_args[0][0]
+            assert method == getattr(server.partdesign_ops, tool_name)
+
 
 # ---------------------------------------------------------------------------
 # _handle_client

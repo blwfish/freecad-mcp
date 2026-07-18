@@ -267,6 +267,150 @@ def _recv_exact(sock: socket.socket, num_bytes: int) -> Optional[bytes]:
 
 
 # =============================================================================
+# Interactive Selection Manager
+# =============================================================================
+class UniversalSelector:
+    """Selection manager backing the fillet/chamfer/draft/shell/thickness
+    interactive-selection workflow (request_selection -> user picks in the
+    FreeCAD GUI -> complete_selection), plus the simpler select/clear/get
+    operations used by view_control (select_object, clear_selection,
+    get_selection).
+    """
+
+    def __init__(self):
+        self.pending_operations: Dict[str, Dict[str, Any]] = {}
+
+    def request_selection(self, tool_name: str, selection_type: str, message: str,
+                           object_name: str = "", hints: str = "", **kwargs) -> Dict[str, Any]:
+        """Register a pending selection and prompt the user in the FreeCAD GUI."""
+        operation_id = f"{tool_name}_{int(time.time() * 1000)}"
+
+        try:
+            if FreeCADGui:
+                FreeCADGui.Selection.clearSelection()
+        except Exception:
+            pass
+
+        self.pending_operations[operation_id] = {
+            "tool": tool_name,
+            "type": selection_type,
+            "object": object_name,
+            "timestamp": time.time(),
+            **kwargs,
+        }
+
+        if object_name and selection_type in ("edges", "faces"):
+            self._highlight_object(object_name)
+
+        full_message = message
+        if hints:
+            full_message += f"\n\nTip: {hints}"
+
+        return {
+            "status": "awaiting_selection",
+            "operation_id": operation_id,
+            "selection_type": selection_type,
+            "message": full_message,
+            "object_name": object_name,
+        }
+
+    def complete_selection(self, operation_id: str) -> Optional[Dict[str, Any]]:
+        """Pop the pending operation and return the user's picks.
+
+        Returns None if operation_id is unknown/expired, {"error": "..."} if
+        the GUI selection can't be read, or on success:
+        {"status": "completed", "selection_data": {"elements": [...]},
+         "context": {...}} — elements are integer edge/face indices (parsed
+        from "Edge3"/"Face2" sub-element names), matching what
+        fillet_edges/chamfer_edges/draft_faces/shell_solid/thickness_faces
+        expect from selection_result["selection_data"]["elements"].
+        """
+        if operation_id not in self.pending_operations:
+            return None
+
+        context = self.pending_operations.pop(operation_id)
+        selection_type = context.get("type", "")
+
+        try:
+            if not FreeCADGui:
+                return {"error": "FreeCAD GUI not available for selection"}
+            selection = FreeCADGui.Selection.getSelectionEx()
+        except Exception as e:
+            return {"error": f"Could not read FreeCAD selection: {e}"}
+
+        elements = self._parse_element_indices(selection, selection_type)
+
+        return {
+            "status": "completed",
+            "selection_data": {"elements": elements},
+            "context": context,
+        }
+
+    def cancel_selection(self, operation_id: str) -> bool:
+        """Discard a pending selection without completing it."""
+        return self.pending_operations.pop(operation_id, None) is not None
+
+    def select_object(self, obj) -> None:
+        """Select a FreeCAD object in the 3D view."""
+        if FreeCADGui:
+            FreeCADGui.Selection.addSelection(obj)
+
+    def clear_selection(self) -> None:
+        """Clear the current 3D-view selection."""
+        if FreeCADGui:
+            FreeCADGui.Selection.clearSelection()
+
+    def get_selected_objects(self) -> list:
+        """Return the currently selected FreeCAD objects (whole-object, not sub-elements)."""
+        if not FreeCADGui:
+            return []
+        return list(FreeCADGui.Selection.getSelection())
+
+    def cleanup_old_operations(self, max_age_seconds: int = 300) -> None:
+        """Drop pending operations older than max_age_seconds (abandoned selections)."""
+        now = time.time()
+        expired = [op_id for op_id, op in self.pending_operations.items()
+                   if now - op["timestamp"] > max_age_seconds]
+        for op_id in expired:
+            del self.pending_operations[op_id]
+
+    @staticmethod
+    def _parse_element_indices(selection, selection_type: str) -> list:
+        """Extract integer edge/face indices from a getSelectionEx() result.
+
+        FreeCAD sub-element names are "Edge3", "Face2", etc (1-based). Callers
+        build FreeCAD API calls like f"Edge{idx}" from these indices, so the
+        parsed value must round-trip exactly.
+        """
+        prefix = {"edges": "Edge", "faces": "Face"}.get(selection_type)
+        if prefix is None:
+            return []
+        indices = []
+        for sel in selection:
+            for sub in sel.SubElementNames:
+                if sub.startswith(prefix):
+                    try:
+                        indices.append(int(sub[len(prefix):]))
+                    except ValueError:
+                        continue
+        return indices
+
+    def _highlight_object(self, object_name: str) -> None:
+        """Pre-select the target object so the user can see what to pick edges/faces on."""
+        try:
+            if not FreeCADGui:
+                return
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return
+            obj = doc.getObject(object_name)
+            if obj:
+                FreeCADGui.Selection.addSelection(obj)
+        except Exception:
+            pass
+
+
+# =============================================================================
 # FreeCAD Socket Server
 # =============================================================================
 class FreeCADSocketServer:
@@ -301,6 +445,10 @@ class FreeCADSocketServer:
         # Error responses include only the error_id; callers use get_last_traceback to fetch.
         self._last_tracebacks: collections.deque = collections.deque(maxlen=20)
         self._traceback_counter: int = 0
+
+        # Interactive selection manager (fillet/chamfer/draft/shell/thickness
+        # request_selection/complete_selection workflow, plus select/clear/get).
+        self.selector = UniversalSelector()
 
         # Initialize handlers
         self.primitives = PrimitivesHandler(self, _log_operation, _capture_state)
@@ -1065,8 +1213,55 @@ class FreeCADSocketServer:
             return self._reload_handlers()
         if tool_name == "get_instance_info":
             return self._get_instance_info()
+        if tool_name == "continue_selection":
+            return self._continue_selection(args)
+        if tool_name == "test_echo":
+            # Internal liveness probe used by restart_freecad's readiness poll
+            # (freecad_mcp_server.py sends this raw socket command directly,
+            # separate from the client-facing test_echo MCP tool the bridge
+            # answers itself). Any reply with no "error" key proves this
+            # instance is up and dispatching.
+            return json.dumps({"echo": args.get("message", "")})
 
         return json.dumps({"error": f"Unknown tool: {tool_name}"})
+
+    def _continue_selection(self, args: Dict[str, Any]) -> str:
+        """Resume an interactive selection started via selector.request_selection().
+
+        The dedicated continue_selection MCP tool sends only operation_id.
+        Look up which handler method was waiting (stashed in
+        selector.pending_operations by request_selection) and re-invoke that
+        same method with _continue_selection=True + _operation_id — each of
+        fillet_edges/chamfer_edges/draft_faces/shell_solid/thickness_faces
+        already knows how to complete its own pending selection when called
+        this way.
+        """
+        operation_id = args.get("operation_id")
+        if not operation_id:
+            return json.dumps({"error": "operation_id is required"})
+
+        pending = self.selector.pending_operations.get(operation_id)
+        if pending is None:
+            return json.dumps({"error": "Selection operation not found or expired"})
+
+        resume_tool = pending.get("tool")
+        resume_methods = {
+            "fillet_edges": self.partdesign_ops.fillet_edges,
+            "chamfer_edges": self.partdesign_ops.chamfer_edges,
+            "draft_faces": self.partdesign_ops.draft_faces,
+            "shell_solid": self.partdesign_ops.shell_solid,
+            "thickness_faces": self.partdesign_ops.thickness_faces,
+        }
+        method = resume_methods.get(resume_tool)
+        if method is None:
+            return json.dumps({"error": f"No resume handler registered for tool: {resume_tool}"})
+
+        resumed_args = {k: v for k, v in pending.items()
+                         if k not in ("tool", "type", "object", "timestamp")}
+        resumed_args["object_name"] = pending.get("object", "")
+        resumed_args["_continue_selection"] = True
+        resumed_args["_operation_id"] = operation_id
+        return self._call_on_gui_thread_async(method, resumed_args, resume_tool)
 
     def _get_instance_info(self) -> str:
         """Return identifying info about this FreeCAD process.
