@@ -651,17 +651,24 @@ class TestDispatchViewControl:
 
 class TestExecutePython:
     def _run_python(self, server, code):
-        """Helper: run _execute_python with simulated GUI thread processing."""
-        def process():
-            time.sleep(0.05)
-            req_id, task = server._gui_task_queue.get(timeout=2)
-            result = task()
-            server._gui_response_queue.put((req_id, result))
+        """Helper: run _execute_python directly.
 
-        t = threading.Thread(target=process)
-        t.start()
+        _execute_python -> _run_on_gui_thread, which takes an inline
+        fast-path (no queue) whenever QtCore is None — true throughout this
+        module in the test environment (conftest's autouse mock_freecad
+        fixture sets GuiUp=False before freecad_mcp_handler.py is imported,
+        so the module-level `QtCore = None` binding is fixed at import
+        time). A background thread simulating GUI-thread queue processing
+        was previously spun up here regardless, but nothing this class
+        exercises ever puts anything on _gui_task_queue for it to pick up —
+        it just burned up to its 2s queue.get timeout every single test
+        (9 tests x ~2.06s, ~18.5s of the suite's total runtime) waiting for
+        a task that could never arrive, then t.join() sat through it.
+        The actual GUI-queue dispatch mechanics (QtCore mocked non-None)
+        are already covered separately by TestCallOnGuiThread and
+        TestRunOnGuiThreadEdgeCases.
+        """
         response = server._execute_python({"code": code})
-        t.join()
         return json.loads(response)
 
     def test_expression_evaluation(self, server):

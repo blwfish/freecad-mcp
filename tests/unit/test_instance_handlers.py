@@ -13,6 +13,7 @@ the tests run without FreeCAD installed.
 """
 
 import asyncio
+import itertools
 import json
 import os
 import sys
@@ -271,10 +272,19 @@ class TestSpawnInstance:
         assert "headless_server.py" in result["error"]
 
     def test_spawn_timeout_kills_proc(self, bridge):
+        """_spawn's poll loop checks a real time.time() deadline (mirroring
+        the production spawn_freecad_instance handler); with socket_ready
+        never True, it previously busy-spun for the real 30s before timing
+        out. time.time() is patched to jump straight past the deadline on
+        the loop's first condition check instead — an ever-increasing
+        counter rather than a fixed pair of values, so it can't raise
+        StopIteration regardless of how many times the code under test
+        happens to call time.time()."""
         ctx = _fresh_ctx(bridge)
         proc = MagicMock()
         proc.pid = 9999
-        result = self._spawn(bridge, ctx, {}, popen_proc=proc, socket_ready=False)
+        with patch('time.time', side_effect=itertools.count(0, 1000)):
+            result = self._spawn(bridge, ctx, {}, popen_proc=proc, socket_ready=False)
         assert "error" in result
         assert "30 s" in result["error"]
         proc.kill.assert_called_once()
