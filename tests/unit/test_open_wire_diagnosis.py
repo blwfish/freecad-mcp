@@ -56,7 +56,16 @@ if 'FreeCAD' not in sys.modules:
     sys.modules['Part'] = MagicMock()
     sys.modules['Sketcher'] = MagicMock()
 
-sys.modules['FreeCAD'].Vector = FakeVectorFactory
+# NOT sys.modules['FreeCAD'].Vector = FakeVectorFactory: sys.modules['FreeCAD']
+# is the same shared singleton _freecad_mocks.py installs for every other
+# test file. An unconditional module-level overwrite here (collection-time
+# code, runs once, before any test) used to permanently replace the real
+# _Vec (full arithmetic) with this file's FakeVectorFactory for the rest of
+# the pytest session — including files collected AFTER this one. Every test
+# below that actually needs FreeCAD.Vector already does its own scoped
+# `with patch.object(base_module, 'FreeCAD') as mock_fc: mock_fc.Vector =
+# FakeVectorFactory`, so the module-level mutation was redundant as well as
+# unsafe (confirmed: full suite passes without it).
 sys.modules['FreeCAD'].ActiveDocument = None
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'AICopilot'))
