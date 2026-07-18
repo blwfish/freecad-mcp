@@ -183,6 +183,49 @@ class TestPolarArray(unittest.TestCase):
         self.assertEqual(center.y, 50)
         self.assertEqual(kwargs['angle'], 180)
 
+    def test_axis_x_is_wired_through_as_a_vector(self):
+        """axis was read but never passed to Draft.make_polar_array — the
+        caller's requested axis was silently discarded and the array
+        always rotated about whatever Draft's own default axis was."""
+        box = make_box_object("B")
+        doc = make_mock_doc([box])
+        mock_FreeCAD.ActiveDocument = doc
+        mock_Draft.make_polar_array = MagicMock(return_value=MagicMock(Name="P"))
+
+        result = self.handler.polar_array({
+            'object_name': 'B', 'count': 4, 'angle': 360, 'axis': 'x',
+        })
+
+        kwargs = mock_Draft.make_polar_array.call_args.kwargs
+        self.assertIn('axis', kwargs)
+        axis_vec = kwargs['axis']
+        self.assertEqual((axis_vec.x, axis_vec.y, axis_vec.z), (1, 0, 0))
+        assert_success_contains(self, result, "X-axis")
+
+    def test_axis_z_default_is_wired_through(self):
+        box = make_box_object("B")
+        doc = make_mock_doc([box])
+        mock_FreeCAD.ActiveDocument = doc
+        mock_Draft.make_polar_array = MagicMock(return_value=MagicMock(Name="P"))
+
+        self.handler.polar_array({'object_name': 'B', 'count': 4, 'angle': 360})
+
+        axis_vec = mock_Draft.make_polar_array.call_args.kwargs['axis']
+        self.assertEqual((axis_vec.x, axis_vec.y, axis_vec.z), (0, 0, 1))
+
+    def test_invalid_axis_errors_instead_of_silently_defaulting(self):
+        box = make_box_object("B")
+        doc = make_mock_doc([box])
+        mock_FreeCAD.ActiveDocument = doc
+        mock_Draft.make_polar_array = MagicMock(return_value=MagicMock(Name="P"))
+
+        result = self.handler.polar_array({
+            'object_name': 'B', 'count': 4, 'angle': 360, 'axis': 'q',
+        })
+
+        assert_error_contains(self, result, "invalid axis", "q")
+        mock_Draft.make_polar_array.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Path array
