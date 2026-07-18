@@ -194,7 +194,7 @@ class TestSaveAndCompareRoundTrip(unittest.TestCase):
         self.assertTrue(os.path.exists(topo_path))
         with open(topo_path) as f:
             data = json.load(f)
-        self.assertEqual(data['schema_version'], 1)
+        self.assertEqual(data['schema_version'], 2)
         self.assertEqual(data['face_count'], 10)
         self.assertEqual(data['edge_count'], 20)
         self.assertEqual(data['vertex_count'], 12)
@@ -232,6 +232,32 @@ class TestSaveAndCompareRoundTrip(unittest.TestCase):
     # ------------------------------------------------------------------
     # Diff detection: modified shape must give ok=False
     # ------------------------------------------------------------------
+
+    def test_chirality_flip_detected_via_center_of_mass(self):
+        """The motivating bug this whole module exists to catch (see the
+        module docstring: the v5.2.0 left-handed rotation matrix). Face/
+        edge/vertex counts, volume, and bbox extents are ALL invariant
+        under a mirror — a v1-schema fixture (pre-CenterOfMass) would NOT
+        have caught this exact bug. center_of_mass is the field that
+        actually shifts under a mirror; this proves the comparison now
+        catches it."""
+        obj = _make_box_obj('Shape', faces=6, edges=12, vertices=8, volume=1000.0,
+                             xmin=0, xmax=10, ymin=0, ymax=10, zmin=0, zmax=10)
+        self._setup_doc(obj)
+        self.h.save_fixture({'shape': 'Shape', 'fixture_name': 'chirality'})
+
+        # Simulate a mirrored/chirality-flipped rebuild: identical counts,
+        # volume, and bbox (all mirror-invariant) but a shifted center of
+        # mass (what a left-handed rotation matrix bug would produce).
+        obj.Shape.CenterOfMass.x = obj.Shape.CenterOfMass.x + 5.0
+
+        cmp = _parse(self.h.compare_to_fixture({
+            'shape': 'Shape', 'fixture_name': 'chirality',
+        }))
+
+        self.assertFalse(cmp['ok'], "chirality flip must be detected, not silently passed")
+        self.assertIn('center_of_mass', cmp['details']['checks'])
+        self.assertFalse(cmp['details']['checks']['center_of_mass']['ok'])
 
     def test_diff_face_count_change_detected(self):
         """ACCEPTANCE: add faces (topology change) → compare returns ok=False."""

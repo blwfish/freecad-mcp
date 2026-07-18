@@ -316,6 +316,12 @@ def _make_shape(volume=1000.0, faces=6, edges=12, vertices=8,
     bb.XMax, bb.YMax, bb.ZMax = bbox
     shape.BoundBox = bb
 
+    # Defaults to the bbox center — a plausible-but-not-necessarily-real
+    # center of mass for a uniform box. Tests that specifically need a
+    # different CenterOfMass (e.g. asymmetric/mirrored geometry) should
+    # override shape.CenterOfMass directly.
+    shape.CenterOfMass = _Vec(bbox[0] / 2, bbox[1] / 2, bbox[2] / 2)
+
     shape.isValid = MagicMock(return_value=is_valid)
     shape.isNull = MagicMock(return_value=not is_valid)
     shape.isClosed = MagicMock(return_value=is_closed)

@@ -52,7 +52,17 @@ _BBOX_ABS_TOL = 0.001     # mm
 
 # Schema version — bump only when topology.json structure changes in a
 # backwards-incompatible way.
-_SCHEMA_VERSION = 1
+#
+# v2: added center_of_mass, solids_count, shells_count. v1's fields (face/
+# edge/vertex counts, volume, bbox, is_solid, is_closed) are ALL invariant
+# under a mirror/chirality flip — this module's own docstring cites the
+# v5.2.0 left-handed rotation matrix bug as the reason this tool exists,
+# but a v1 fixture would not have caught that exact bug: CenterOfMass
+# shifts under a mirror; none of the v1 fields do.
+_SCHEMA_VERSION = 2
+
+# Center-of-mass tolerance: same order as bbox — 0.001 mm absolute per axis.
+_COM_ABS_TOL = 0.001     # mm
 
 
 # ---------------------------------------------------------------------------
@@ -89,20 +99,28 @@ def _safe_name(name: str) -> bool:
 def _extract_topology(shape) -> Dict[str, Any]:
     """Pull topology summary from a FreeCAD Part.Shape object.
 
-    Returns a dict matching the topology.json schema (schema_version 1).
+    Returns a dict matching the topology.json schema (schema_version 2).
+
+    center_of_mass is the field that actually catches a mirror/chirality
+    flip — face/edge/vertex counts, volume, and bbox are all invariant
+    under a mirror, but CenterOfMass shifts. See _SCHEMA_VERSION's comment.
     """
     bb = shape.BoundBox
+    com = shape.CenterOfMass
     return {
         "schema_version": _SCHEMA_VERSION,
         "face_count": len(shape.Faces),
         "edge_count": len(shape.Edges),
         "vertex_count": len(shape.Vertexes),
+        "solids_count": len(shape.Solids),
+        "shells_count": len(shape.Shells),
         "volume": shape.Volume,
         "bbox": {
             "x": [bb.XMin, bb.XMax],
             "y": [bb.YMin, bb.YMax],
             "z": [bb.ZMin, bb.ZMax],
         },
+        "center_of_mass": {"x": com.x, "y": com.y, "z": com.z},
         "is_solid": bool(shape.isSolid()),
         "is_closed": bool(shape.isClosed()),
     }
@@ -176,7 +194,7 @@ def _compare_values(actual, saved, tolerances: Dict[str, Any]) -> Dict[str, Any]
     all_ok = True
 
     # Integer fields — exact match by default
-    int_fields = ['face_count', 'edge_count', 'vertex_count']
+    int_fields = ['face_count', 'edge_count', 'vertex_count', 'solids_count', 'shells_count']
     for field in int_fields:
         if field not in saved:
             continue
@@ -236,6 +254,33 @@ def _compare_values(actual, saved, tolerances: Dict[str, Any]) -> Dict[str, Any]
                     bbox_ok = False
         checks['bbox'] = {'ok': bbox_ok, 'coordinates': bbox_detail}
         if not bbox_ok:
+            all_ok = False
+
+    # Center of mass — absolute tolerance per axis. This is the field that
+    # actually catches a mirror/chirality flip (see _SCHEMA_VERSION's
+    # comment) — face/edge/vertex counts, volume, and bbox extents are all
+    # invariant under a mirror.
+    com_tol = tolerances.get('center_of_mass_abs_tol', _COM_ABS_TOL)
+    if 'center_of_mass' in saved:
+        a_com = actual.get('center_of_mass', {})
+        s_com = saved['center_of_mass']
+        com_ok = True
+        com_detail = {}
+        for axis in ('x', 'y', 'z'):
+            a_v = a_com.get(axis)
+            s_v = s_com.get(axis)
+            if a_v is None or s_v is None:
+                continue
+            diff = abs(a_v - s_v)
+            axis_ok = diff <= com_tol
+            com_detail[axis] = {
+                'ok': axis_ok, 'actual': a_v, 'saved': s_v,
+                'delta': a_v - s_v, 'tolerance': com_tol,
+            }
+            if not axis_ok:
+                com_ok = False
+        checks['center_of_mass'] = {'ok': com_ok, 'coordinates': com_detail}
+        if not com_ok:
             all_ok = False
 
     # Boolean fields — exact
