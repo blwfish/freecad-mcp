@@ -105,6 +105,16 @@ class DraftOpsHandler(BaseHandler):
             if not obj:
                 return f"Object not found: {object_name}"
 
+            # make_polar_array's axis= parameter is a FreeCAD.Vector, not a
+            # string — confirmed against Draft/draftmake/make_polararray.py.
+            axis_vector = {
+                'x': FreeCAD.Vector(1, 0, 0),
+                'y': FreeCAD.Vector(0, 1, 0),
+                'z': FreeCAD.Vector(0, 0, 1),
+            }.get(axis.lower())
+            if axis_vector is None:
+                return f"Invalid axis '{axis}': must be 'x', 'y', or 'z'"
+
             import Draft
 
             center = FreeCAD.Vector(center_x, center_y, center_z)
@@ -114,12 +124,13 @@ class DraftOpsHandler(BaseHandler):
                 number=count,
                 angle=angle,
                 center=center,
+                axis=axis_vector,
                 use_link=True
             )
 
             self.recompute(doc)
 
-            return f"Created polar array: {array.Name} with {count} instances over {angle}°"
+            return f"Created polar array: {array.Name} with {count} instances over {angle}° around {axis.upper()}-axis"
 
         except ImportError:
             return "Error: Draft module not available"
