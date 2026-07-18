@@ -224,7 +224,7 @@ class ViewOpsHandler(BaseHandler):
             if not doc:
                 return "Error: No active document"
 
-            obj = doc.getObject(object_name)
+            obj = self.get_object(object_name, doc)
             if not obj:
                 return f"Error: Object '{object_name}' not found"
 
@@ -401,7 +401,7 @@ class ViewOpsHandler(BaseHandler):
             doc = FreeCAD.ActiveDocument
             if not doc:
                 return "Error: No active document"
-            obj = doc.getObject(object_name)
+            obj = self.get_object(object_name, doc)
             if not obj:
                 return f"Error: Object '{object_name}' not found"
             obj.ViewObject.Visibility = False
@@ -418,7 +418,7 @@ class ViewOpsHandler(BaseHandler):
             doc = FreeCAD.ActiveDocument
             if not doc:
                 return "Error: No active document"
-            obj = doc.getObject(object_name)
+            obj = self.get_object(object_name, doc)
             if not obj:
                 return f"Error: Object '{object_name}' not found"
             obj.ViewObject.Visibility = True
@@ -435,10 +435,12 @@ class ViewOpsHandler(BaseHandler):
             doc = FreeCAD.ActiveDocument
             if not doc:
                 return "Error: No active document"
-            obj = doc.getObject(object_name)
+            obj = self.get_object(object_name, doc)
             if not obj:
                 return f"Error: Object '{object_name}' not found"
-            doc.removeObject(object_name)
+            # removeObject needs the internal Name; object_name may be a
+            # Label that get_object resolved, so use the resolved obj.Name.
+            doc.removeObject(obj.Name)
             return f"Object '{object_name}' deleted"
         except Exception as e:
             return f"Error deleting object: {e}"
