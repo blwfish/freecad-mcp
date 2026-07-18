@@ -265,6 +265,181 @@ class TestCaptureState:
         mock_freecad.ActiveDocument = None
 
 
+class TestCaptureObjectState:
+    """Direct tests of FreeCADDebugger._capture_object_state.
+
+    capture_freecad_state previously extracted only Name/TypeId/Label per
+    object — every crash log in this system recorded object *names* with
+    none of the geometric state (Placement, Shape validity/bbox, dimensional
+    properties) needed to diagnose a geometry-related crash."""
+
+    def _make_object(self, **overrides):
+        obj = MagicMock()
+        obj.Name = overrides.get("name", "Box")
+        obj.TypeId = overrides.get("type_id", "Part::Box")
+        obj.Label = overrides.get("label", "MyBox")
+        obj.State = overrides.get("state", [])
+        obj.PropertiesList = overrides.get("properties_list", [])
+        return obj
+
+    def test_placement_is_captured(self):
+        obj = self._make_object()
+        placement = MagicMock()
+        placement.Base.x, placement.Base.y, placement.Base.z = 1.0, 2.0, 3.0
+        placement.Rotation.Axis.x, placement.Rotation.Axis.y, placement.Rotation.Axis.z = 0.0, 0.0, 1.0
+        placement.Rotation.Angle = 90.0
+        obj.Placement = placement
+
+        info = freecad_debug.FreeCADDebugger._capture_object_state(obj)
+
+        assert info["placement"]["position"] == [1.0, 2.0, 3.0]
+        assert info["placement"]["rotation_angle"] == 90.0
+
+    def test_shape_null_is_captured_without_bbox(self):
+        obj = self._make_object()
+        shape = MagicMock()
+        shape.isNull.return_value = True
+        obj.Shape = shape
+
+        info = freecad_debug.FreeCADDebugger._capture_object_state(obj)
+
+        assert info["shape"]["is_null"] is True
+        assert "bbox" not in info["shape"]
+
+    def test_shape_valid_bbox_is_captured(self):
+        obj = self._make_object()
+        shape = MagicMock()
+        shape.isNull.return_value = False
+        shape.isValid.return_value = True
+        bb = MagicMock()
+        bb.XMin, bb.YMin, bb.ZMin, bb.XMax, bb.YMax, bb.ZMax = 0, 0, 0, 10, 20, 30
+        shape.BoundBox = bb
+        obj.Shape = shape
+
+        info = freecad_debug.FreeCADDebugger._capture_object_state(obj)
+
+        assert info["shape"]["is_valid"] is True
+        assert info["shape"]["bbox"] == [0, 0, 0, 10, 20, 30]
+
+    def test_state_flags_captured(self):
+        obj = self._make_object(state=["Touched", "Invalid"])
+        info = freecad_debug.FreeCADDebugger._capture_object_state(obj)
+        assert info["state"] == ["Touched", "Invalid"]
+
+    def test_no_state_flags_key_omitted(self):
+        obj = self._make_object(state=[])
+        info = freecad_debug.FreeCADDebugger._capture_object_state(obj)
+        assert "state" not in info
+
+    def test_scalar_properties_captured(self):
+        """The actual parametric dimensions (Box.Length etc) that let
+        someone reproduce the crash — the specific gap this fix closes."""
+        obj = self._make_object(properties_list=["Length", "Width", "Label2"])
+        obj.Length = 25.0
+        obj.Width = 15.0
+        obj.Label2 = "extra"
+
+        info = freecad_debug.FreeCADDebugger._capture_object_state(obj)
+
+        assert info["properties"]["Length"] == 25.0
+        assert info["properties"]["Width"] == 15.0
+        assert info["properties"]["Label2"] == "extra"
+
+    def test_quantity_property_uses_value_attribute(self):
+        """FreeCAD Quantity-typed properties (PropertyLength etc) aren't
+        plain floats — must read .Value, matching base.py's own
+        feed_to_mm_min precedent for not string-splitting Quantities."""
+        obj = self._make_object(properties_list=["Radius"])
+        quantity = MagicMock()
+        quantity.Value = 5.0
+        # A bare MagicMock isinstance-checks as none of (int, float, str,
+        # bool); hasattr(val, "Value") is what routes it down the Quantity path.
+        obj.Radius = quantity
+
+        info = freecad_debug.FreeCADDebugger._capture_object_state(obj)
+
+        assert info["properties"]["Radius"] == 5.0
+
+    def test_shape_and_placement_and_state_excluded_from_properties_dict(self):
+        """These are captured in their own dedicated sections above — must
+        not also appear duplicated inside "properties"."""
+        obj = self._make_object(properties_list=["Shape", "Placement", "State", "Length"])
+        obj.Length = 10.0
+
+        info = freecad_debug.FreeCADDebugger._capture_object_state(obj)
+
+        assert "properties" in info
+        assert set(info["properties"].keys()) == {"Length"}
+
+    def test_property_read_raising_is_skipped_not_fatal(self):
+        """One malformed property must not abort the whole per-object
+        capture — this runs inside a crash-diagnosis path where a second
+        failure must not mask the original one."""
+        obj = self._make_object(properties_list=["Good", "Bad"])
+        obj.Good = 1.0
+        type(obj).Bad = property(lambda self: (_ for _ in ()).throw(RuntimeError("boom")))
+
+        info = freecad_debug.FreeCADDebugger._capture_object_state(obj)
+
+        assert info["properties"] == {"Good": 1.0}
+
+    def test_shapeless_object_omits_shape_key(self):
+        """A non-geometric object (e.g. a Spreadsheet) has no Shape at all."""
+        obj = self._make_object()
+        obj.Shape = None
+        info = freecad_debug.FreeCADDebugger._capture_object_state(obj)
+        assert "shape" not in info
+
+
+class TestCaptureStateObjectCountCap:
+    def test_large_document_truncates_detailed_capture_and_flags_it(self, tmp_path, mock_freecad):
+        """No cap previously existed at all — unlike list_objects's
+        documented 500-object cap for the same 1000+-object DXF-import case.
+        A truncated capture must say so, not silently look complete."""
+        doc = MagicMock()
+        doc.Name = "Big"
+        doc.Label = "Big"
+        doc.FileName = ""
+        objs = []
+        for i in range(600):
+            o = MagicMock()
+            o.Name = f"Obj{i}"
+            o.TypeId = "Part::Box"
+            o.Label = f"Obj{i}"
+            o.State = []
+            o.PropertiesList = []
+            objs.append(o)
+        doc.Objects = objs
+        mock_freecad.ActiveDocument = doc
+
+        d = make_debugger(tmp_path)
+        state = d.capture_freecad_state()
+
+        assert state["object_count"] == 600
+        assert state["objects_truncated"] is True
+        assert len(state["objects"]) == 500
+
+    def test_small_document_not_truncated(self, tmp_path, mock_freecad):
+        doc = MagicMock()
+        doc.Name = "Small"
+        doc.Label = "Small"
+        doc.FileName = ""
+        o = MagicMock()
+        o.Name = "Obj0"
+        o.TypeId = "Part::Box"
+        o.Label = "Obj0"
+        o.State = []
+        o.PropertiesList = []
+        doc.Objects = [o]
+        mock_freecad.ActiveDocument = doc
+
+        d = make_debugger(tmp_path)
+        state = d.capture_freecad_state()
+
+        assert state["objects_truncated"] is False
+        assert len(state["objects"]) == 1
+
+
 # ---------------------------------------------------------------------------
 # log_state_change / compare_states
 # ---------------------------------------------------------------------------
