@@ -161,10 +161,16 @@ class FreeCADDebugger:
             duration: Operation duration in seconds
         """
         if error:
-            # Always log errors, even in LEAN mode
+            # Always log errors, even in LEAN mode. parameters/duration were
+            # previously dropped here even though the success branch below
+            # includes them — the exact operation args and how long it ran
+            # before failing are diagnostically useful for a crash/timeout,
+            # not just for a success.
             log_entry = {
                 "timestamp": datetime.now().isoformat(),
                 "operation": operation,
+                "parameters": self._serialize_params(parameters),
+                "duration_seconds": duration,
                 "success": False,
                 "error": {
                     "type": type(error).__name__,

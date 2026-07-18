@@ -354,6 +354,39 @@ class TestProcessCommand:
         server._process_command('{"tool": "create_box"}')
         server._execute_tool.assert_called_once_with("create_box", {})
 
+    def test_typo_d_args_key_rejected_not_silently_empty(self, server):
+        """H16: a key typo'd as 'arg' instead of 'args' previously fell
+        through `command.get("args", {})` to an empty dict indistinguishable
+        from a legitimate no-args call — the tool would then run with no
+        args and fail several layers deeper with a confusing error instead
+        of a clear one here."""
+        server._execute_tool = MagicMock(return_value=json.dumps({"result": "ok"}))
+        response = server._process_command('{"tool": "create_box", "arg": {"length": 10}}')
+        parsed = json.loads(response)
+        assert "error" in parsed
+        assert "arg" in parsed["error"]
+        server._execute_tool.assert_not_called()
+
+    def test_unrecognized_extra_key_rejected(self, server):
+        server._execute_tool = MagicMock(return_value=json.dumps({"result": "ok"}))
+        response = server._process_command(
+            '{"tool": "create_box", "args": {}, "request_id": "abc"}'
+        )
+        parsed = json.loads(response)
+        assert "error" in parsed
+        assert "request_id" in parsed["error"]
+        server._execute_tool.assert_not_called()
+
+    def test_non_dict_command_rejected(self, server):
+        """A JSON array or scalar at the top level previously reached
+        `.get("tool", "")`, which would raise AttributeError caught by the
+        generic except-Exception branch — a confusing internal error instead
+        of a clear "malformed request" message."""
+        response = server._process_command('["not", "a", "dict"]')
+        parsed = json.loads(response)
+        assert "error" in parsed
+        assert "malformed" in parsed["error"].lower()
+
 
 # ---------------------------------------------------------------------------
 # _execute_tool routing
@@ -1863,6 +1896,37 @@ class TestHandleClient:
                 error_msg = json.loads(mock_send.call_args[0][1])
                 assert "error" in error_msg
         mock_sock.close.assert_called_once()
+
+    def test_send_failure_retries_with_fallback_error(self, server):
+        """H16: send_message's bool return (False on oversized response or
+        socket error) was previously discarded — the client saw only a
+        closed connection with no explanation. Must retry once with a
+        small, guaranteed-to-fit error payload."""
+        import freecad_mcp_handler as ss_mod
+        mock_sock = MagicMock()
+
+        cmd = json.dumps({"tool": "test_echo", "args": {}})
+        server._process_command = MagicMock(return_value='{"result":"a huge payload"}')
+
+        with patch.object(ss_mod, 'receive_message', return_value=cmd), \
+             patch.object(ss_mod, 'send_message', return_value=False) as mock_send:
+            server._handle_client(mock_sock)
+
+            assert mock_send.call_count == 2
+            fallback_payload = json.loads(mock_send.call_args_list[1][0][1])
+            assert "error" in fallback_payload
+        mock_sock.close.assert_called_once()
+
+    def test_send_success_does_not_retry(self, server):
+        import freecad_mcp_handler as ss_mod
+        mock_sock = MagicMock()
+        cmd = json.dumps({"tool": "test_echo", "args": {}})
+        server._process_command = MagicMock(return_value='{"result":"ok"}')
+
+        with patch.object(ss_mod, 'receive_message', return_value=cmd), \
+             patch.object(ss_mod, 'send_message', return_value=True) as mock_send:
+            server._handle_client(mock_sock)
+            assert mock_send.call_count == 1
 
 
 # ---------------------------------------------------------------------------

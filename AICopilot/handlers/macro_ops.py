@@ -295,12 +295,23 @@ class MacroOpsHandler(BaseHandler):
                     "error": f"SyntaxError in macro: {e}",
                     "name": os.path.basename(path),
                     "traceback": traceback.format_exc(),
+                    # Whatever the macro printed before the syntax error was
+                    # caught at compile time — usually empty, kept for
+                    # symmetry with the runtime-error branch below.
+                    "stdout": captured.getvalue().rstrip("\n"),
+                    "stderr": captured_err.getvalue().rstrip("\n"),
                 })
             except Exception as e:
+                # A macro that prints diagnostic output before crashing had
+                # that output silently discarded — only the traceback of the
+                # final exception survived, losing the printed context that
+                # often explains *why* it crashed (H16).
                 return json.dumps({
                     "error": f"Macro execution error: {e}",
                     "name": os.path.basename(path),
                     "traceback": traceback.format_exc(),
+                    "stdout": captured.getvalue().rstrip("\n"),
+                    "stderr": captured_err.getvalue().rstrip("\n"),
                 })
         finally:
             sys.stdout = old_stdout

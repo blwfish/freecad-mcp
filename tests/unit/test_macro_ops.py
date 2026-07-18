@@ -252,6 +252,23 @@ class TestRun:
         assert "error" in result
         assert "ZeroDivisionError" in result["traceback"]
 
+    def test_run_crash_includes_stdout_printed_before_the_error(self, handler, macro_dir):
+        """Diagnostic prints before a crash explain *why* it crashed — these
+        were silently discarded on the error path (only the success path
+        included stdout) (H16)."""
+        _write_macro(macro_dir, "diag_then_boom.FCMacro",
+                     "print('about to divide')\n1/0\n")
+        result = json.loads(handler.run({"name": "diag_then_boom.FCMacro", "confirmed": True}))
+        assert "error" in result
+        assert result["stdout"] == "about to divide"
+
+    def test_run_crash_includes_stderr_printed_before_the_error(self, handler, macro_dir):
+        _write_macro(macro_dir, "warn_then_boom.FCMacro",
+                     "import sys\nsys.stderr.write('warning: deprecated\\n')\n1/0\n")
+        result = json.loads(handler.run({"name": "warn_then_boom.FCMacro", "confirmed": True}))
+        assert "error" in result
+        assert result["stderr"] == "warning: deprecated"
+
     def test_run_missing_name(self, handler, macro_dir):
         result = json.loads(handler.run({}))
         assert "error" in result

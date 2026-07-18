@@ -76,6 +76,45 @@ class TestIpsParsing:
         assert "Crashed thread 1" in out
         assert "boom" in out
 
+    def test_asi_field_extracted(self):
+        """Application Specific Information (body['asi']) is often the
+        single highest-signal field for non-EXC_BAD_ACCESS crashes (e.g.
+        an assertion failure or an embedded Python traceback) — previously
+        never read at all (H16)."""
+        header = {"app_name": "FreeCADCmd"}
+        body = {
+            "exception": {"type": "EXC_CRASH", "signal": "SIGABRT"},
+            "asi": {"libsystem_c.dylib": [
+                "abort() called",
+                "Assertion failed: (x != NULL), function foo, file bar.c, line 42.",
+            ]},
+            "threads": [{"triggered": True, "frames": []}],
+            "usedImages": [],
+        }
+        out = cr._parse_crash_report(_ips(header, body), "/x/FreeCADCmd-3.ips")
+        assert "Application Specific Information" in out
+        assert "abort() called" in out
+        assert "Assertion failed" in out
+
+    def test_asi_absent_produces_no_asi_section(self):
+        out = cr._parse_crash_report(self._sample(), "/x/FreeCADCmd-1.ips")
+        assert "Application Specific Information" not in out
+
+    def test_valid_json_with_bad_field_shape_does_not_fall_back_to_legacy_parser(self):
+        """If .ips JSON parses but a field has an unexpected shape (e.g.
+        'threads' is a string instead of a list), summary generation raises
+        inside _parse_ips_report. Falling back to the legacy plaintext
+        parser on that exception previously ran a text-prefix scanner
+        against raw JSON content, silently producing near-empty output
+        instead of surfacing the real failure (H16)."""
+        header = {"app_name": "FreeCAD"}
+        body = {"exception": {"type": "EXC_BAD_ACCESS"}, "threads": "not-a-list"}
+        out = cr._parse_crash_report(_ips(header, body), "/x/FreeCAD-4.ips")
+        # Must not silently degrade to the legacy parser's near-empty
+        # header-only output for JSON content it can't understand.
+        assert "summary generation failed" in out
+        assert "FreeCAD-4.ips" in out
+
 
 class TestLegacyCrashParsing:
     def test_picks_actual_crashed_thread_not_thread_0(self):

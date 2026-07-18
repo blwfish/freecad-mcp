@@ -193,6 +193,16 @@ except ImportError as e:
 
 MAX_MESSAGE_SIZE = 50 * 1024  # 50KB — matches bridge-side limit
 
+# The bridge (freecad_mcp_server.py) only ever sends {"tool": ..., "args": ...}.
+# A request with any other top-level key is either a bug in the bridge or a
+# manually-crafted malformed request — either way it must fail loudly here
+# rather than have the typo silently swallowed. Without this, a key typo'd
+# as "arg" instead of "args" previously fell through `command.get("args", {})`
+# to an empty dict indistinguishable from a legitimate no-args call, then
+# failed several layers deeper with a confusing "not found" instead of a
+# clear "malformed request" error.
+_KNOWN_REQUEST_KEYS = frozenset({"tool", "args"})
+
 
 def send_message(sock: socket.socket, message_str: str) -> bool:
     """Send a length-prefixed message over the socket."""
@@ -1013,7 +1023,20 @@ class FreeCADSocketServer:
             message_str = receive_message(client_socket)
             if message_str:
                 response = self._process_command(message_str)
-                send_message(client_socket, response)
+                if not send_message(client_socket, response):
+                    # send_message already logged the specific cause
+                    # (oversized frame or socket error) — but silently
+                    # falling through here leaves the client with nothing
+                    # but a closed connection and no explanation. Best-effort
+                    # one retry with a small guaranteed-to-fit payload,
+                    # mirroring the fallback-send already used in the
+                    # except branch below.
+                    try:
+                        send_message(client_socket, json.dumps({
+                            "error": "Failed to send response (oversized or socket error); result discarded."
+                        }))
+                    except Exception:
+                        pass
         except Exception as e:
             FreeCAD.Console.PrintError(f"Client handler error: {e}\n")
             if DEBUG_ENABLED:
@@ -1043,6 +1066,18 @@ class FreeCADSocketServer:
 
         try:
             command = json.loads(command_str)
+            if not isinstance(command, dict):
+                return json.dumps({
+                    "error": f"Malformed request: expected a JSON object, got {type(command).__name__}"
+                })
+
+            unknown_keys = set(command.keys()) - _KNOWN_REQUEST_KEYS
+            if unknown_keys:
+                return json.dumps({
+                    "error": f"Unrecognized request key(s): {sorted(unknown_keys)}. "
+                             f"Expected only {sorted(_KNOWN_REQUEST_KEYS)}."
+                })
+
             tool_name = command.get("tool", "")
             args = command.get("args", {})
 
