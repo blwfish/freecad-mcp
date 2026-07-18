@@ -2098,25 +2098,6 @@ async def main():
                     out["crash_loop_risk"] = any(not f["valid"] for f in rec)
                 return [types.TextContent(type="text", text=json.dumps(out))]
 
-        # Handle continue_selection tool
-        elif name == "continue_selection":
-            operation_id = arguments.get("operation_id") if arguments else None
-            if not operation_id:
-                return [types.TextContent(
-                    type="text",
-                    text="Error: operation_id is required to continue selection"
-                )]
-            
-            # Send continuation command to FreeCAD
-            response = await send_to_freecad("continue_selection", {
-                "operation_id": operation_id
-            })
-            
-            return [types.TextContent(
-                type="text",
-                text=response
-            )]
-            
         # build_sketch: route directly to FreeCAD handler
         elif name == "build_sketch":
             result = await send_to_freecad("build_sketch", arguments or {})
@@ -2181,7 +2162,7 @@ async def main():
                       "spreadsheet_operations", "draft_operations", "get_debug_logs",
                       "macro_operations", "api_introspection",
                       "execute_python_async", "poll_job", "list_jobs",
-                      "cancel_operation", "cancel_job"]:
+                      "cancel_operation", "cancel_job", "continue_selection"]:
             args = arguments or {}
 
             # Check if this is a continuation from interactive selection
