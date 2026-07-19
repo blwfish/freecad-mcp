@@ -646,3 +646,51 @@ class TestCheckFeatureStateParity:
         directly inspects the class's own __dict__ instead)."""
         from handlers.partdesign_ops import PartDesignOpsHandler
         assert "_check_feature_state" not in PartDesignOpsHandler.__dict__
+
+
+class TestFindGeoForPoint:
+    """M17: _find_geo_for_point's default tolerance=0.5 had no boundary
+    coverage. best_dist starts at tolerance; comparison is `if d <
+    best_dist:` — a point at EXACTLY the tolerance distance must NOT
+    match (0.5 < 0.5 is False)."""
+
+    def _make_sketch_with_start_point(self, x, y):
+        sketch = MagicMock()
+        sketch.GeometryCount = 1
+        sketch.getConstruction.return_value = False
+        geo = MagicMock()
+        geo.StartPoint = MagicMock(x=x, y=y)
+        geo.EndPoint = MagicMock(x=1000.0, y=1000.0)  # far away, never the match
+        sketch.Geometry = [geo]
+        return sketch
+
+    def test_point_exactly_at_default_tolerance_is_not_matched(self, base_handler, mock_freecad):
+        mock_freecad.Vector = lambda x, y, z: MagicMock(Length=((x ** 2 + y ** 2) ** 0.5))
+        vertex = MagicMock(x=0.0, y=0.0)
+        sketch = self._make_sketch_with_start_point(0.5, 0.0)
+
+        result = base_handler._find_geo_for_point(sketch, vertex)
+
+        assert result is None
+
+    def test_point_just_inside_default_tolerance_is_matched(self, base_handler, mock_freecad):
+        mock_freecad.Vector = lambda x, y, z: MagicMock(Length=((x ** 2 + y ** 2) ** 0.5))
+        vertex = MagicMock(x=0.0, y=0.0)
+        sketch = self._make_sketch_with_start_point(0.49, 0.0)
+
+        result = base_handler._find_geo_for_point(sketch, vertex)
+
+        assert result is not None
+        geo_id, pos_id, dist = result
+        assert geo_id == 0
+        assert pos_id == 1
+        assert abs(dist - 0.49) < 1e-9
+
+    def test_point_just_outside_default_tolerance_is_not_matched(self, base_handler, mock_freecad):
+        mock_freecad.Vector = lambda x, y, z: MagicMock(Length=((x ** 2 + y ** 2) ** 0.5))
+        vertex = MagicMock(x=0.0, y=0.0)
+        sketch = self._make_sketch_with_start_point(0.51, 0.0)
+
+        result = base_handler._find_geo_for_point(sketch, vertex)
+
+        assert result is None

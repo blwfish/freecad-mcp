@@ -253,6 +253,36 @@ class TestMeasureDistance(unittest.TestCase):
         result = self.handler.measure_distance({'object1': 'A', 'object2': 'B'})
         self.assertIn("touching", result.lower())
 
+    def test_distance_just_below_touching_threshold_reports_touching(self):
+        """M17: the 1e-7 touching/overlap threshold had no boundary
+        coverage. distance < 1e-7 -> 'touching'."""
+        a = make_part_object("A")
+        a.Shape.distToShape = MagicMock(return_value=(9e-8, [], []))
+        b = make_part_object("B")
+        doc = make_mock_doc([a, b])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.measure_distance({'object1': 'A', 'object2': 'B'})
+        self.assertIn("touching", result.lower())
+
+    def test_distance_exactly_at_threshold_does_not_report_touching(self):
+        """Strict less-than: exactly 1e-7 does NOT satisfy `distance < 1e-7`."""
+        a = make_part_object("A")
+        a.Shape.distToShape = MagicMock(return_value=(1e-7, [], []))
+        b = make_part_object("B")
+        doc = make_mock_doc([a, b])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.measure_distance({'object1': 'A', 'object2': 'B'})
+        self.assertNotIn("touching", result.lower())
+
+    def test_distance_just_above_threshold_does_not_report_touching(self):
+        a = make_part_object("A")
+        a.Shape.distToShape = MagicMock(return_value=(1.1e-7, [], []))
+        b = make_part_object("B")
+        doc = make_mock_doc([a, b])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.measure_distance({'object1': 'A', 'object2': 'B'})
+        self.assertNotIn("touching", result.lower())
+
 
 class TestGetSurfaceArea(unittest.TestCase):
     def setUp(self):
