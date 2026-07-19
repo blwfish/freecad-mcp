@@ -37,7 +37,6 @@ import platform
 import struct
 import sys
 import traceback as tb_module
-import collections
 from typing import Dict, Any, Optional
 
 from universal_selector import UniversalSelector
@@ -180,6 +179,7 @@ try:
         SketchBuilderOpsHandler,
         VerificationOpsHandler,
         FixtureOpsHandler,
+        DiagnosticsOpsHandler,
     )
     FreeCAD.Console.PrintMessage("Modular handlers loaded successfully\n")
 except ImportError as e:
@@ -309,43 +309,37 @@ class FreeCADSocketServer:
         # Variables created in one call survive to the next.
         self._python_namespace: Dict[str, Any] = {}
 
-        # Traceback ring buffer: stores last 20 tracebacks by error_id.
-        # Error responses include only the error_id; callers use get_last_traceback to fetch.
-        self._last_tracebacks: collections.deque = collections.deque(maxlen=20)
-        self._traceback_counter: int = 0
-
         # Interactive selection manager (fillet/chamfer/draft/shell/thickness
         # request_selection/complete_selection workflow, plus select/clear/get).
         self.selector = UniversalSelector()
 
         # Initialize handlers
-        self.primitives = PrimitivesHandler(self, _log_operation, _capture_state)
-        self.boolean_ops = BooleanOpsHandler(self, _log_operation, _capture_state)
-        self.transforms = TransformsHandler(self, _log_operation, _capture_state)
-        self.sketch_ops = SketchOpsHandler(self, _log_operation, _capture_state)
-        self.partdesign_ops = PartDesignOpsHandler(self, _log_operation, _capture_state)
-        self.part_ops = PartOpsHandler(self, _log_operation, _capture_state)
-        self.cam_ops = CAMOpsHandler(self, _log_operation, _capture_state)
-        self.cam_tools = CAMToolsHandler(self, _log_operation, _capture_state)
-        self.cam_tool_controllers = CAMToolControllersHandler(self, _log_operation, _capture_state)
-        self.draft_ops = DraftOpsHandler(self, _log_operation, _capture_state)
-        self.measurement_ops = MeasurementOpsHandler(self, _log_operation, _capture_state)
-        self.spreadsheet_ops = SpreadsheetOpsHandler(self, _log_operation, _capture_state)
-        self.mesh_ops = MeshOpsHandler(self, _log_operation, _capture_state)
-        self.spatial_ops = SpatialOpsHandler(self, _log_operation, _capture_state)
-        self.inspector_ops = InspectorOpsHandler(self, _log_operation, _capture_state)
-        self.macro_ops = MacroOpsHandler(self, _log_operation, _capture_state)
-        self.introspection_ops = IntrospectionOpsHandler(self, _log_operation, _capture_state)
-        self.sketch_builder_ops = SketchBuilderOpsHandler(self, _log_operation, _capture_state)
-        self.verification_ops = VerificationOpsHandler(self, _log_operation, _capture_state)
-        self.fixture_ops = FixtureOpsHandler(self, _log_operation, _capture_state)
-        # GUI-sensitive handlers get the task queues for thread safety
-        self.view_ops = ViewOpsHandler(
-            self, self._gui_task_queue, self._gui_response_queue, _log_operation, _capture_state
-        )
-        self.document_ops = DocumentOpsHandler(
-            self, self._gui_task_queue, self._gui_response_queue, _log_operation, _capture_state
-        )
+        self._instantiate_handlers({
+            'primitives': PrimitivesHandler,
+            'boolean_ops': BooleanOpsHandler,
+            'transforms': TransformsHandler,
+            'sketch_ops': SketchOpsHandler,
+            'partdesign_ops': PartDesignOpsHandler,
+            'part_ops': PartOpsHandler,
+            'cam_ops': CAMOpsHandler,
+            'cam_tools': CAMToolsHandler,
+            'cam_tool_controllers': CAMToolControllersHandler,
+            'draft_ops': DraftOpsHandler,
+            'measurement_ops': MeasurementOpsHandler,
+            'spreadsheet_ops': SpreadsheetOpsHandler,
+            'mesh_ops': MeshOpsHandler,
+            'spatial_ops': SpatialOpsHandler,
+            'inspector_ops': InspectorOpsHandler,
+            'macro_ops': MacroOpsHandler,
+            'introspection_ops': IntrospectionOpsHandler,
+            'sketch_builder_ops': SketchBuilderOpsHandler,
+            'verification_ops': VerificationOpsHandler,
+            'fixture_ops': FixtureOpsHandler,
+            'diagnostics_ops': DiagnosticsOpsHandler,
+            # GUI-sensitive handlers get the task queues for thread safety
+            'view_ops': ViewOpsHandler,
+            'document_ops': DocumentOpsHandler,
+        })
 
         FreeCAD.Console.PrintMessage("Socket server initialized with modular handlers\n")
 
@@ -366,6 +360,27 @@ class FreeCADSocketServer:
                 FreeCAD.Console.PrintMessage(f"[MCP] FreeCAD {major}.{minor} — OK\n")
         except Exception:
             self._fc_version = (0, 0, 0)
+
+    def _instantiate_handlers(self, handler_classes: Dict[str, type]) -> None:
+        """(Re-)create handler instances from a {attr_name: class} mapping.
+
+        Shared by __init__ (initial creation, module-level imports) and
+        _reload_handlers (hot reload, freshly re-imported classes) so each
+        handler's constructor-argument shape is defined in exactly one
+        place instead of being copy-pasted at both call sites. Callers
+        pass the classes explicitly rather than this method looking them
+        up from module globals, so reload's freshly-reloaded classes are
+        used correctly regardless of import-timing/globals subtleties.
+        """
+        _gui_sensitive = {"view_ops", "document_ops"}
+        for attr_name, cls in handler_classes.items():
+            if attr_name in _gui_sensitive:
+                setattr(self, attr_name, cls(
+                    self, self._gui_task_queue, self._gui_response_queue,
+                    _log_operation, _capture_state
+                ))
+            else:
+                setattr(self, attr_name, cls(self, _log_operation, _capture_state))
 
     # -----------------------------------------------------------------
     # Server lifecycle
@@ -543,7 +558,7 @@ class FreeCADSocketServer:
                         job.update({
                             "status": "error",
                             "error": str(e),
-                            "error_id": self._store_traceback(tb),
+                            "error_id": self.diagnostics_ops.store_traceback(tb),
                             "elapsed": time.time() - job["started"],
                             "finished": time.time(),
                         })
@@ -668,7 +683,7 @@ class FreeCADSocketServer:
                 self._async_jobs[job_id].update({
                     "status": "error",
                     "error": str(e),
-                    "error_id": self._store_traceback(tb_module.format_exc()),
+                    "error_id": self.diagnostics_ops.store_traceback(tb_module.format_exc()),
                     "elapsed": time.time() - self._async_jobs[job_id]["started"],
                     "finished": time.time(),
                 })
@@ -1116,11 +1131,11 @@ class FreeCADSocketServer:
         if tool_name == "cancel_job":
             return self._cancel_job(args)
         if tool_name == "get_debug_logs":
-            return self._get_debug_logs(args)
+            return self.diagnostics_ops.get_debug_logs(args)
         if tool_name == "get_last_traceback":
-            return self._get_last_traceback(args)
+            return self.diagnostics_ops.get_last_traceback(args)
         if tool_name == "restart_freecad":
-            return self._restart_freecad(args)
+            return self.diagnostics_ops.restart_freecad(args)
         if tool_name == "reload_modules":
             return self._reload_handlers()
         if tool_name == "get_instance_info":
@@ -1219,17 +1234,6 @@ class FreeCADSocketServer:
             }
         return self._run_on_gui_thread(task, timeout=2.0)
 
-    def _store_traceback(self, tb: str) -> str:
-        """Store a traceback in the ring buffer; return the error_id for retrieval."""
-        self._traceback_counter += 1
-        error_id = f"err-{self._traceback_counter:04d}"
-        self._last_tracebacks.append({
-            "error_id": error_id,
-            "timestamp": time.time(),
-            "traceback": tb,
-        })
-        return error_id
-
     def _call_on_gui_thread(self, method, args: Dict[str, Any], label: str, timeout: float = 120.0) -> str:
         """Wrap a handler method call for GUI-safe execution."""
         def task():
@@ -1237,7 +1241,7 @@ class FreeCADSocketServer:
                 result = method(args)
                 return {"success": True, "result": result}
             except Exception as e:
-                return {"error": f"{label} error: {e}", "error_id": self._store_traceback(tb_module.format_exc())}
+                return {"error": f"{label} error: {e}", "error_id": self.diagnostics_ops.store_traceback(tb_module.format_exc())}
         return self._run_on_gui_thread(task, timeout=timeout)
 
     def _call_on_gui_thread_async(self, method, args: Dict[str, Any], label: str) -> str:
@@ -1265,7 +1269,7 @@ class FreeCADSocketServer:
                 result = method(args)
                 return {"success": True, "result": result}
             except Exception as e:
-                return {"error": f"{label} error: {e}", "error_id": self._store_traceback(tb_module.format_exc())}
+                return {"error": f"{label} error: {e}", "error_id": self.diagnostics_ops.store_traceback(tb_module.format_exc())}
         self._run_on_gui_thread_async(job_id, task)
         return json.dumps({"job_id": job_id, "status": "submitted"})
 
@@ -1532,9 +1536,9 @@ class FreeCADSocketServer:
                     if "result" in namespace:
                         result_value = namespace["result"]
             except SyntaxError as e:
-                return {"error": f"SyntaxError: {e}", "error_id": self._store_traceback(tb_module.format_exc())}
+                return {"error": f"SyntaxError: {e}", "error_id": self.diagnostics_ops.store_traceback(tb_module.format_exc())}
         except Exception as e:
-            return {"error": f"Python execution error: {e}", "error_id": self._store_traceback(tb_module.format_exc())}
+            return {"error": f"Python execution error: {e}", "error_id": self.diagnostics_ops.store_traceback(tb_module.format_exc())}
         finally:
             sys.stdout = old_stdout
 
@@ -1634,6 +1638,7 @@ class FreeCADSocketServer:
                 'handlers.sketch_builder_ops',
                 'handlers.verification_ops',
                 'handlers.fixture_ops',
+                'handlers.diagnostics_ops',
             ]
             for mod_name in handler_modules:
                 mod = sys.modules.get(mod_name)
@@ -1669,53 +1674,60 @@ class FreeCADSocketServer:
                 SketchBuilderOpsHandler,
                 VerificationOpsHandler,
                 FixtureOpsHandler,
+                DiagnosticsOpsHandler,
             )
 
-            # _checkpoints (DocumentOpsHandler) and _clip_planes (ViewOpsHandler)
-            # are lazily-created plain instance attributes with no persistence
+            # _checkpoints (DocumentOpsHandler), _clip_planes (ViewOpsHandler),
+            # and the traceback ring buffer (DiagnosticsOpsHandler) are
+            # lazily-created plain instance attributes with no persistence
             # anywhere else. Replacing the handler instances below would
             # otherwise silently discard them: rollback_to_checkpoint would
             # report a misleading "no checkpoint named X" for a checkpoint
-            # that genuinely existed before this reload, and any pending
+            # that genuinely existed before this reload, any pending
             # clip-plane Coin3D scene-graph node would become unreachable
             # (its handle only lived in the old instance's list) and leak in
-            # the 3D view forever, since nothing could find it to remove it.
+            # the 3D view forever since nothing could find it to remove it,
+            # and get_last_traceback would silently lose crash history from
+            # right before the reload — the exact moment it's most useful.
             old_checkpoints = getattr(self, 'document_ops', None) and getattr(self.document_ops, '_checkpoints', None)
             old_clip_planes = getattr(self, 'view_ops', None) and getattr(self.view_ops, '_clip_planes', None)
+            old_diag = getattr(self, 'diagnostics_ops', None)
+            old_tracebacks = old_diag and old_diag._last_tracebacks
+            old_traceback_counter = old_diag._traceback_counter if old_diag else 0
 
             # Re-create handler instances
-            self.primitives = PrimitivesHandler(self, _log_operation, _capture_state)
-            self.boolean_ops = BooleanOpsHandler(self, _log_operation, _capture_state)
-            self.transforms = TransformsHandler(self, _log_operation, _capture_state)
-            self.sketch_ops = SketchOpsHandler(self, _log_operation, _capture_state)
-            self.partdesign_ops = PartDesignOpsHandler(self, _log_operation, _capture_state)
-            self.part_ops = PartOpsHandler(self, _log_operation, _capture_state)
-            self.cam_ops = CAMOpsHandler(self, _log_operation, _capture_state)
-            self.cam_tools = CAMToolsHandler(self, _log_operation, _capture_state)
-            self.cam_tool_controllers = CAMToolControllersHandler(self, _log_operation, _capture_state)
-            self.draft_ops = DraftOpsHandler(self, _log_operation, _capture_state)
-            self.measurement_ops = MeasurementOpsHandler(self, _log_operation, _capture_state)
-            self.spreadsheet_ops = SpreadsheetOpsHandler(self, _log_operation, _capture_state)
-            self.mesh_ops = MeshOpsHandler(self, _log_operation, _capture_state)
-            self.spatial_ops = SpatialOpsHandler(self, _log_operation, _capture_state)
-            self.inspector_ops = InspectorOpsHandler(self, _log_operation, _capture_state)
-            self.macro_ops = MacroOpsHandler(self, _log_operation, _capture_state)
-            self.introspection_ops = IntrospectionOpsHandler(self, _log_operation, _capture_state)
-            self.sketch_builder_ops = SketchBuilderOpsHandler(self, _log_operation, _capture_state)
-            self.verification_ops = VerificationOpsHandler(self, _log_operation, _capture_state)
-            self.fixture_ops = FixtureOpsHandler(self, _log_operation, _capture_state)
-            self.view_ops = ViewOpsHandler(
-                self, self._gui_task_queue, self._gui_response_queue,
-                _log_operation, _capture_state
-            )
-            self.document_ops = DocumentOpsHandler(
-                self, self._gui_task_queue, self._gui_response_queue,
-                _log_operation, _capture_state
-            )
+            self._instantiate_handlers({
+                'primitives': PrimitivesHandler,
+                'boolean_ops': BooleanOpsHandler,
+                'transforms': TransformsHandler,
+                'sketch_ops': SketchOpsHandler,
+                'partdesign_ops': PartDesignOpsHandler,
+                'part_ops': PartOpsHandler,
+                'cam_ops': CAMOpsHandler,
+                'cam_tools': CAMToolsHandler,
+                'cam_tool_controllers': CAMToolControllersHandler,
+                'draft_ops': DraftOpsHandler,
+                'measurement_ops': MeasurementOpsHandler,
+                'spreadsheet_ops': SpreadsheetOpsHandler,
+                'mesh_ops': MeshOpsHandler,
+                'spatial_ops': SpatialOpsHandler,
+                'inspector_ops': InspectorOpsHandler,
+                'macro_ops': MacroOpsHandler,
+                'introspection_ops': IntrospectionOpsHandler,
+                'sketch_builder_ops': SketchBuilderOpsHandler,
+                'verification_ops': VerificationOpsHandler,
+                'fixture_ops': FixtureOpsHandler,
+                'diagnostics_ops': DiagnosticsOpsHandler,
+                'view_ops': ViewOpsHandler,
+                'document_ops': DocumentOpsHandler,
+            })
             if old_checkpoints:
                 self.document_ops._checkpoints = old_checkpoints
             if old_clip_planes:
                 self.view_ops._clip_planes = old_clip_planes
+            if old_tracebacks:
+                self.diagnostics_ops._last_tracebacks = old_tracebacks
+            self.diagnostics_ops._traceback_counter = old_traceback_counter
 
             # Reload freecad_mcp_handler.py itself and rebind _execute_tool_inner
             # so dispatch-map changes (new tools added to generic_dispatch_map)
@@ -1734,6 +1746,7 @@ class FreeCADSocketServer:
                 '_dispatch_to_handler',
                 '_call_on_gui_thread',
                 '_reload_handlers',   # rebind self so future reloads use latest code
+                '_instantiate_handlers',
             ]
             for method_name in _dispatch_methods:
                 new_fn = getattr(new_self.FreeCADSocketServer, method_name, None)
@@ -1750,148 +1763,3 @@ class FreeCADSocketServer:
         except Exception as e:
             FreeCAD.Console.PrintError(f"[MCP] Handler reload failed: {e}\n")
             return json.dumps({"error": f"Handler reload failed: {e}"})
-
-    def _restart_freecad(self, args: Dict[str, Any]) -> str:
-        """Restart FreeCAD: save documents, spawn new instance, exit current.
-
-        The response is sent BEFORE the restart happens, so the MCP bridge
-        gets a clean response. The new FreeCAD instance will start fresh
-        with AICopilot reconnecting on the same socket path.
-        """
-        if not FreeCAD.GuiUp:
-            return json.dumps({"error": "restart_freecad is not available in headless mode"})
-
-        import subprocess
-
-        save_docs = args.get("save_documents", True)
-        reopen_docs = args.get("reopen_documents", True)
-
-        doc_paths = []
-        try:
-            for doc_name, doc in FreeCAD.listDocuments().items():
-                path = doc.FileName
-                if path:
-                    if save_docs:
-                        doc.save()
-                        FreeCAD.Console.PrintMessage(f"[MCP] Saved {doc_name}: {path}\n")
-                    if reopen_docs:
-                        doc_paths.append(path)
-        except Exception as e:
-            return json.dumps({"error": f"Failed to save documents: {e}"})
-
-        # Build the command to restart FreeCAD
-        # Use sys.executable for the Python, but we need the FreeCAD binary
-        fc_bin = FreeCAD.getHomePath() + "bin/FreeCAD"
-        if not os.path.exists(fc_bin):
-            # Try platform-specific locations
-            import shutil
-            fc_bin = shutil.which("FreeCAD") or shutil.which("freecad")
-        if not fc_bin:
-            return json.dumps({"error": "Cannot find FreeCAD binary for restart"})
-
-        # Schedule the restart on the GUI thread (after response is sent)
-        def do_restart():
-            try:
-                cmd = [fc_bin] + doc_paths
-                env = os.environ.copy()
-                subprocess.Popen(cmd, env=env, start_new_session=True)
-                FreeCAD.Console.PrintMessage("[MCP] New FreeCAD instance spawned, exiting...\n")
-                # Give the response time to be sent, then quit
-                if QtCore:
-                    QtCore.QTimer.singleShot(500, lambda: FreeCADGui.getMainWindow().close())
-            except Exception as e:
-                FreeCAD.Console.PrintError(f"[MCP] Restart failed: {e}\n")
-
-        if QtCore:
-            QtCore.QTimer.singleShot(100, do_restart)
-
-        return json.dumps({
-            "result": f"Restarting FreeCAD. Saved {len(doc_paths)} documents. "
-                      f"New instance will reconnect on same socket.",
-            "saved_documents": doc_paths,
-        })
-
-    # -----------------------------------------------------------------
-    # Debug logs
-    # -----------------------------------------------------------------
-
-    def _get_debug_logs(self, args: Dict[str, Any]) -> str:
-        """Retrieve recent debug logs for analysis."""
-        import glob
-
-        try:
-            log_dir = "/tmp/freecad_mcp_debug"
-            count = args.get("count", 20)
-            try:
-                count = int(count)
-            except (TypeError, ValueError):
-                count = 20
-            # count=0 must mean "no entries", not lines[-0:] == the entire
-            # file (Python slicing can't distinguish -0 from 0); negative
-            # count must not silently read from the FRONT of the file
-            # instead of the tail.
-            count = max(0, count)
-            operation_filter = args.get("operation", None)
-
-            if not os.path.exists(log_dir):
-                return json.dumps({"result": "No debug logs available (logging may be disabled)"})
-
-            log_files = glob.glob(os.path.join(log_dir, "*.jsonl"))
-            if not log_files:
-                return json.dumps({"result": "No log files found in /tmp/freecad_mcp_debug/"})
-
-            latest_log = max(log_files, key=os.path.getmtime)
-
-            entries = []
-            skipped_malformed = 0
-            with open(latest_log, "r") as f:
-                lines = f.readlines()
-                tail = lines[-count:] if count > 0 else []
-                for line in tail:
-                    try:
-                        entry = json.loads(line)
-                        if operation_filter and entry.get("operation") != operation_filter:
-                            continue
-                        entries.append(entry)
-                    except json.JSONDecodeError:
-                        skipped_malformed += 1
-                        continue
-
-            result = {
-                "result": f"Retrieved {len(entries)} log entries from {os.path.basename(latest_log)}",
-                "log_file": latest_log,
-                "entries": entries,
-            }
-            if skipped_malformed:
-                result["skipped_malformed"] = skipped_malformed
-            return json.dumps(result)
-
-        except Exception as e:
-            return json.dumps({"error": f"Failed to retrieve debug logs: {e}"})
-
-    def _get_last_traceback(self, args: Dict[str, Any]) -> str:
-        """Retrieve full traceback(s) from the in-memory ring buffer.
-
-        Pass error_id to fetch a specific traceback, or omit to get the most recent ones.
-        """
-        error_id = args.get("error_id")
-        if error_id:
-            for entry in self._last_tracebacks:
-                if entry["error_id"] == error_id:
-                    return json.dumps(entry)
-            return json.dumps({"error": f"No traceback found for error_id={error_id!r}. "
-                                        f"Buffer holds last {len(self._last_tracebacks)} errors."})
-        count = args.get("count", 1)
-        try:
-            count = int(count)
-        except (TypeError, ValueError):
-            count = 1
-        # Same count=0/negative hazard as _get_debug_logs: lines[-0:] is the
-        # entire list, not empty, and a negative count would silently read
-        # from the front of the buffer instead of the tail.
-        count = max(0, min(count, 20))
-        entries = list(self._last_tracebacks)[-count:] if count > 0 else []
-        return json.dumps({
-            "tracebacks": entries,
-            "total_stored": len(self._last_tracebacks),
-        })
