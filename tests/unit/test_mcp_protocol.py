@@ -168,19 +168,48 @@ class TestExecutePythonNonJsonResponse:
     def test_non_json_response_returns_clean_error_not_raise(self):
         from unittest.mock import MagicMock as _MagicMock
 
-        with patch.object(freecad_mcp_server._ctx, "resolve_target",
-                           return_value=("/tmp/fake.sock", None)), \
-             patch.object(freecad_mcp_server.socket, "socket") as mock_socket_cls, \
-             patch.object(freecad_mcp_server, "send_message", return_value=True), \
-             patch.object(freecad_mcp_server, "receive_message",
-                           return_value="not valid json {{{"):
-            # socket.socket()/.connect()/.close() are all synchronous real
-            # methods even though send_to_freecad itself is an async def —
-            # a plain MagicMock, not AsyncMock, is what a sync socket call
-            # returns.
-            mock_socket_cls.return_value = _MagicMock()
+        # freecad_mcp_server.socket IS the stdlib socket module (import
+        # socket, not a private copy), so patch.object(..., "socket")
+        # below replaces socket.socket GLOBALLY for the duration of the
+        # `with` block — not just this module's reference to it.
+        # asyncio.run() (used by the shared _call_tool() helper) creates a
+        # brand-new event loop on every call, and that bootstrap itself
+        # opens a real self-pipe socket internally (selector_events.py's
+        # _make_self_pipe). Doing that loop creation *inside* the patched
+        # block hands asyncio's own internals a MagicMock instead of a
+        # real socket, and the selector then fails registering the fake
+        # fd with the OS (PermissionError on Linux's epoll; happened to
+        # be silently tolerated on some macOS/Python combinations, which
+        # is why this wasn't caught locally). Pre-creating the loop
+        # outside the patch and reusing it via run_until_complete keeps
+        # the mock scoped to what send_to_freecad's own code actually
+        # calls, without touching asyncio's bootstrap.
+        loop = asyncio.new_event_loop()
+        try:
+            async def _call():
+                req = types.CallToolRequest(
+                    method="tools/call",
+                    params=types.CallToolRequestParams(
+                        name="execute_python", arguments={"code": "1 + 1"}),
+                )
+                result = await _SERVER.request_handlers[types.CallToolRequest](req)
+                return result.root.content
 
-            content = _call_tool("execute_python", {"code": "1 + 1"})
+            with patch.object(freecad_mcp_server._ctx, "resolve_target",
+                               return_value=("/tmp/fake.sock", None)), \
+                 patch.object(freecad_mcp_server.socket, "socket") as mock_socket_cls, \
+                 patch.object(freecad_mcp_server, "send_message", return_value=True), \
+                 patch.object(freecad_mcp_server, "receive_message",
+                               return_value="not valid json {{{"):
+                # socket.socket()/.connect()/.close() are all synchronous real
+                # methods even though send_to_freecad itself is an async def —
+                # a plain MagicMock, not AsyncMock, is what a sync socket call
+                # returns.
+                mock_socket_cls.return_value = _MagicMock()
+
+                content = loop.run_until_complete(_call())
+        finally:
+            loop.close()
 
         assert content is not None and len(content) > 0
         parsed = json.loads(content[0].text)
