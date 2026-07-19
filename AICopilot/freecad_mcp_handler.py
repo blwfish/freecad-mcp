@@ -6,7 +6,7 @@
 #                   list_freecad_instances enriched with active doc + window
 #                   title; startup banner shows handler version.
 
-__version__ = "5.11.1"
+__version__ = "5.12.0"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
