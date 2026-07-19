@@ -116,6 +116,22 @@ class TestSetCurrentOpWriteFailure:
             crash_watcher.set_current_op("execute_python", {"code": "1+1"})  # must not raise
         assert crash_watcher.get_write_failure_count() == 1
 
+    def test_refuses_planted_symlink_at_tmp_path(self, tmp_path):
+        """M14: LAST_OP_FILE is a fixed, predictable /tmp path (PID-based,
+        but PIDs are guessable/observable). Previously open(tmp, "wb")
+        would silently follow a pre-planted symlink at the .tmp path
+        instead of refusing it, writing crash-diagnosis data to wherever
+        the attacker pointed it."""
+        attacker_target = tmp_path / "attacker_controlled"
+        attacker_target.write_text("")
+        planted_tmp = crash_watcher.LAST_OP_FILE + ".tmp"
+        os.symlink(str(attacker_target), planted_tmp)
+
+        crash_watcher.set_current_op("execute_python", {"code": "1+1"})
+
+        assert crash_watcher.get_write_failure_count() == 1
+        assert attacker_target.read_text() == "", "must not have written through the symlink"
+
     def test_freecad_not_importable_does_not_crash(self):
         """FreeCAD may not always be importable when this runs; the local
         `import FreeCAD` inside the except block is itself guarded."""

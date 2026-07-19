@@ -46,6 +46,8 @@ import time
 import traceback
 from datetime import datetime
 from pathlib import Path
+
+import tmp_safety
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
@@ -87,7 +89,10 @@ class FreeCADDebugger:
             lean_logging: If True, only log start/end; skip intermediate stages
         """
         self.log_dir = Path(log_dir)
-        self.log_dir.mkdir(parents=True, exist_ok=True)
+        # log_dir defaults to a fixed, predictable /tmp path — refuse to
+        # follow a symlink an attacker with local access could have
+        # planted there before this process started.
+        tmp_safety.safe_mkdir(str(self.log_dir))
         
         self.level = level
         self.max_log_size = max_log_size

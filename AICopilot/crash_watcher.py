@@ -23,6 +23,8 @@ import json
 import os
 import time
 
+import tmp_safety
+
 # Per-instance file: each FreeCAD process writes to its own path so that
 # multiple concurrent instances don't clobber one another's crash context.
 LAST_OP_FILE = f"/tmp/freecad_mcp_last_op_{os.getpid()}.json"
@@ -66,6 +68,11 @@ def set_current_op(tool: str, args: dict) -> None:
         payload = json.dumps(data).encode()
         # Write to a temp file then rename for atomicity
         tmp = LAST_OP_FILE + ".tmp"
+        # LAST_OP_FILE is a fixed, predictable /tmp path — refuse to
+        # follow a symlink an attacker with local access could have
+        # planted there before this process started. Raises straight
+        # into the except below, which already handles/logs it.
+        tmp_safety.refuse_if_symlink(tmp)
         with open(tmp, "wb") as f:
             f.write(payload)
         os.replace(tmp, LAST_OP_FILE)
