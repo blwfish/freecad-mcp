@@ -49,3 +49,26 @@ emerges.
   *Action:* skip — the search tests already walk these modules and
   return in bounded time; if a regression appears, a unit test against a
   minimal repro is more useful than an integration test.
+
+## partdesign_operations — PartDesign Revolution
+
+- **`revolution()` produces an open surface, not a solid, for any profile.**
+  `AICopilot/handlers/partdesign_ops.py`'s `revolution()` never sets
+  `Part::Revolution.Solid`, so the resulting shape has ~0 volume regardless
+  of the sketch profile. This is a real, open bug — not merely an untested
+  edge case — so `tests/integration/test_partdesign_ops.py::TestRevolution
+  ::test_revolution_full` only checks a swept bounding-box, not volume.
+  *History:* a fix (commit `6bcc95c`, 2026-04-30) set
+  `revolution.Solid = bool(args.get('solid', True))` right after creating
+  the object. CI's `integration` check failed on that commit — the
+  tightened assertion (`assert_volume_close` against the analytic ring
+  volume) measured `2.79e-12` instead of the expected `~12566 mm³`, i.e.
+  the shape was still an open/degenerate surface even with `Solid=True`
+  set. The fix was reverted 6 minutes later (`3158d4a`) with no further
+  investigation recorded. This means the bug is deeper than the `Solid`
+  flag alone — plausibly the profile/wire isn't being treated as a closed
+  face at the point `Solid` is set, or the property needs to be set at a
+  different point relative to `Source`/recompute. *Action:* needs a fresh
+  investigation (with access to a real FreeCAD instance to inspect the
+  intermediate `Part::Revolution` shape) before attempting the fix again;
+  don't re-apply the reverted diff as-is, it was measured not to work.

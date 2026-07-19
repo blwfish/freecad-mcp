@@ -100,10 +100,10 @@ Resolution rules when no instance is explicitly selected: 0 live → error, 1 li
 ### For Developers
 
 ```bash
-# Unit tests (918 tests, no FreeCAD required)
+# Unit tests (1430 tests, no FreeCAD required)
 python3 -m pytest tests/unit/
 
-# Integration tests (91 tests, requires running FreeCAD with AICopilot loaded)
+# Integration tests (147 tests, requires running FreeCAD with AICopilot loaded)
 python3 -m pytest tests/integration/
 
 # All tests with coverage

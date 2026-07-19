@@ -24,6 +24,13 @@ Calling `FreeCAD.newDocument()` from the socket server thread causes Python GIL 
 - All handlers that use `create_if_missing=True` (primitives, sketch, partdesign) are now safe automatically
 - Falls back to direct call in headless/console mode where there is no Qt event loop
 
+**Superseded (v5.8.1, later):** the above `create_if_missing` mechanism was later
+removed entirely rather than hardened further. `base.py`'s `get_document()` now
+takes no arguments and never auto-creates a document under any circumstance —
+callers must check for `None` and return an error directing the caller to
+`view_control(operation="create_document")` first. This is a stricter fix for
+the same GIL-deadlock class, not an extension of the mechanism described above.
+
 ## Large Document Handling
 
 ### Issue: list_objects Crashes on Large DXF Imports
@@ -64,17 +71,3 @@ list_objects(type_filter="Part::Feature")
 # Get up to 500 objects
 list_objects(limit=500)
 ```
-
----
-
-## Test Coverage
-
-### Missing Comprehensive Tests
-
-The following operations have TODO markers for comprehensive testing:
-
-- `spreadsheet_operations` - Only basic smoke test exists
-- `draft_operations` - Only basic smoke test exists
-- `get_debug_logs` - Only basic smoke test exists
-
-These need comprehensive test coverage added.

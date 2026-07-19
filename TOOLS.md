@@ -23,7 +23,7 @@ MCP tools for controlling FreeCAD, grouped by function.
 | `sketch_operations` | All Sketcher workbench operations: create sketches, add geometry (rectangle, line, circle, arc, polygon, slot), add constraints (Coincident, Horizontal, Distance, Radius, Angle, …), close and verify sketches. |
 | `partdesign_operations` | Parametric solid features: pad, pocket, fillet, chamfer, shell, hole, mirror, linear pattern, polar pattern, datum plane, and more. Fillet/chamfer/hole require interactive edge selection in FreeCAD. |
 | `part_operations` | Basic Part workbench solids (box, cylinder, sphere, cone, torus) and boolean operations (fuse, cut, common), plus move, rotate, copy, scale, mirror, section, and geometry checking. |
-| `draft_operations` | Draft workbench: ShapeString (extrudable 3D text), text annotations, clone, rectangular array, polar array, path array, point array. |
+| `draft_operations` | Draft workbench: ShapeString (extrudable 3D text), text annotations, clone, rectangular array, polar array, path array, point array. `polar_array`'s `axis` parameter (non-default 'x'/'y') requires FreeCAD 1.2-dev — FreeCAD 1.1-stable's `Draft.make_polar_array()` has no `axis` argument and returns an explicit error for a non-'z' request. |
 | `spreadsheet_operations` | Create spreadsheets, read/write cells, use named aliases as parametric model inputs. |
 
 ---

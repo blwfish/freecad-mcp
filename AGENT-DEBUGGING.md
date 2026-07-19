@@ -71,8 +71,9 @@ vague or generic.
 Runs entirely on the bridge side — does not require FreeCAD to be running or
 responsive. Reports:
 - Whether the socket file exists and whether connections succeed
-- The contents of `/tmp/freecad_mcp_last_op.json` (what the crash watcher recorded
-  as the in-flight operation when FreeCAD last crashed, if anything)
+- The contents of the crash watcher's per-PID last-op file (matched via
+  `/tmp/freecad_mcp_last_op_*.json`; what the crash watcher recorded as the
+  in-flight operation when FreeCAD last crashed, if anything)
 - Whether `.FCStd` recovery files are present and whether they pass basic integrity
   checks
 
@@ -102,11 +103,15 @@ ZIP's central directory may be intact while the file data is truncated, or vice 
 Call this when a user reports that a file "won't open" or "crashes FreeCAD on open"
 before attempting to open it.
 
-### Crash watcher — `/tmp/freecad_mcp_last_op.json`
+### Crash watcher — `/tmp/freecad_mcp_last_op_<pid>.json`
 
 Written atomically by the AICopilot workbench *inside* FreeCAD immediately before
 each tool call executes. Cleared on successful completion. If FreeCAD crashes during
-an operation, this file survives and contains exactly what was in flight.
+an operation, this file survives and contains exactly what was in flight. The path
+is per-PID (`AICopilot/crash_watcher.py`'s `LAST_OP_FILE`) so multiple spawned
+FreeCAD instances don't clobber each other's crash state; the bridge-side reader
+(`freecad_crash_report.py`'s `LAST_OP_FILE_GLOB`) matches all of them via
+`/tmp/freecad_mcp_last_op_*.json`.
 
 **Contents:**
 ```json
@@ -121,7 +126,7 @@ an operation, this file survives and contains exactly what was in flight.
 `manage_connection(action="status")` reads and reports this automatically. You can
 also read it directly with `execute_python` if FreeCAD is still running:
 ```python
-execute_python("import json; json.load(open('/tmp/freecad_mcp_last_op.json'))")
+execute_python("import glob, json; json.load(open(glob.glob('/tmp/freecad_mcp_last_op_*.json')[0]))")
 ```
 
 ---

@@ -4,11 +4,11 @@ This file is for you, the AI agent. It tells you what needs to be true on this s
 
 ## What This Is
 
-freecad-mcp is a Model Context Protocol (MCP) server providing 33 tools for FreeCAD 3D CAD modeling — parametric part design, CNC toolpath generation (CAM), mesh operations, spatial analysis, screenshots, and arbitrary Python execution inside FreeCAD. Once installed and registered, these tools appear in your tool list.
+freecad-mcp is a Model Context Protocol (MCP) server providing 36 tools for FreeCAD 3D CAD modeling — parametric part design, CNC toolpath generation (CAM), mesh operations, spatial analysis, screenshots, and arbitrary Python execution inside FreeCAD. Once installed and registered, these tools appear in your tool list.
 
 **Origin:** Built by one person for personal use, on a Mac, with Claude Code. Other platforms *should* work (the code handles macOS, Windows, and Linux) but are less tested. PRs for other agents and platforms will be considered.
 
-**Client tool count limits:** MCP clients vary in how many tools they support. This server currently exposes 33 tools, which is within the limits of most clients in use today. Be aware that some clients impose hard caps — if your client silently drops tools, behavior will be unpredictable and hard to diagnose. Claude Code has no hard tool count limit.
+**Client tool count limits:** MCP clients vary in how many tools they support. This server currently exposes 36 tools, which is within the limits of most clients in use today. Be aware that some clients impose hard caps — if your client silently drops tools, behavior will be unpredictable and hard to diagnose. Claude Code has no hard tool count limit.
 
 **Reporting bugs:** If something fails in a way that looks like a bug in this MCP server (not a FreeCAD issue, not a sketch your user described wrong), please tell the user to file an issue at https://github.com/blwfish/freecad-mcp/issues/new. GitHub Discussions are intentionally off — issues are the single feedback channel. Include the tool call you made, the error/symptom, and any output from `view_control(operation="get_report_view")`.
 
@@ -161,7 +161,7 @@ The file `CLAUDE.md` in the repo root is your primary reference for **using** th
 
 ### Tool Overview
 
-**12 Dispatchers** — each accepts an `operation` parameter routing to many sub-operations:
+**14 Dispatchers** — each accepts an `operation` parameter routing to many sub-operations:
 
 | Tool | What it does |
 |------|--------------|
@@ -177,8 +177,10 @@ The file `CLAUDE.md` in the repo root is your primary reference for **using** th
 | `measurement_operations` | Bounding box, volume, faces, surface area, center of mass, element counts |
 | `spatial_query` | Interference/collision detection, clearance, containment, face relationships |
 | `view_control` | Screenshots, views, document management, checkpoint/rollback, clip planes |
+| `geometric_verification` | Post-operation solid/shape validity checks |
+| `fixture_operations` | Fixture/jig topology capture and comparison |
 
-**21 Single-Purpose Tools:**
+**22 Single-Purpose Tools:**
 - `execute_python` / `execute_python_async` — run arbitrary Python in FreeCAD (the escape hatch)
 - `poll_job` / `list_jobs` / `cancel_job` / `cancel_operation` — async job management
 - `build_sketch` — validate and emit a parametric sketch from a JSON layout descriptor
@@ -187,6 +189,7 @@ The file `CLAUDE.md` in the repo root is your primary reference for **using** th
 - `macro_operations` — list, read, and run macros from the user's FreeCAD macro directory
 - `run_inspector` — run design-rule checks on the active document
 - `get_debug_logs` — retrieve structured operation logs
+- `get_last_traceback` — retrieve the last Python traceback raised inside FreeCAD
 - `check_freecad_connection` — verify FreeCAD is running with AICopilot loaded
 - `restart_freecad` — restart FreeCAD, optionally saving documents
 - `reload_modules` — hot-reload handler modules after deploying updated code
@@ -292,7 +295,7 @@ Include: platform and version, FreeCAD version, the tool call that failed, the c
 
 - Follow the handler pattern: add new handlers in `AICopilot/handlers/`
 - The bridge and socket server use length-prefixed JSON protocol
-- Run `python3 -m pytest` before submitting (174 tests, no FreeCAD required)
+- Run `python3 -m pytest` before submitting (1430 tests, no FreeCAD required)
 - Update tool counts in README.md and CLAUDE.md if adding tools
 
 ## License

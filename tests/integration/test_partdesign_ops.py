@@ -88,8 +88,10 @@ class TestRevolution:
 
         We don't assert solid volume because the handler creates
         Part::Revolution without setting Solid=True, so the result is
-        an open surface — a separate handler concern, flagged in
-        DEFERRED_TESTS.md follow-up.
+        an open surface. An attempted fix (commit 6bcc95c, reverted as
+        3158d4a the same day) set Solid=True but the computed volume
+        stayed ~0 — the real bug is deeper than the Solid flag. See
+        DEFERRED_TESTS.md's "PartDesign Revolution" section.
         """
         send_command("execute_python", {
             "code": """
