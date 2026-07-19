@@ -393,3 +393,111 @@ class TestFeedbackFileResilience:
         handler.record_useful({"query": "q", "path": "fakecad.makeBox"})  # second call reads back valid JSON
         quarantine_files = glob.glob(feedback_file + ".corrupt-*")
         assert quarantine_files == []
+
+
+# ---------------------------------------------------------------------------
+# M17: previously-unpinned thresholds
+# ---------------------------------------------------------------------------
+
+class TestMaxMembersBoundary:
+    """_MAX_MEMBERS = 200, compared as `if len(names) > _MAX_MEMBERS:`."""
+
+    def _make_module_with_n_public_functions(self, n, module_name):
+        mod = types.ModuleType(module_name)
+        for i in range(n):
+            def fn(i=i):
+                pass
+            fn.__name__ = f"fn_{i:04d}"
+            setattr(mod, f"fn_{i:04d}", fn)
+        return mod
+
+    def test_exactly_200_members_not_truncated(self, handler, monkeypatch):
+        mod = self._make_module_with_n_public_functions(200, "big_mod_200")
+        monkeypatch.setitem(sys.modules, "big_mod_200", mod)
+        result = json.loads(handler.inspect({"path": "big_mod_200"}))
+        assert len(result["members"]) == 200
+        assert "members_truncated" not in result
+
+    def test_201_members_truncated(self, handler, monkeypatch):
+        mod = self._make_module_with_n_public_functions(201, "big_mod_201")
+        monkeypatch.setitem(sys.modules, "big_mod_201", mod)
+        result = json.loads(handler.inspect({"path": "big_mod_201"}))
+        assert len(result["members"]) == 200
+        assert result["members_truncated"] is True
+        assert result["total_members"] == 201
+
+    def test_199_members_not_truncated(self, handler, monkeypatch):
+        mod = self._make_module_with_n_public_functions(199, "big_mod_199")
+        monkeypatch.setitem(sys.modules, "big_mod_199", mod)
+        result = json.loads(handler.inspect({"path": "big_mod_199"}))
+        assert len(result["members"]) == 199
+        assert "members_truncated" not in result
+
+
+class TestWalkMaxDepthBoundary:
+    """_WALK_MAX_DEPTH = 3. walk() is called with depth=0 for the root and
+    recurses depth+1 into each submodule; `if depth > max_depth: return`
+    at the top means the deepest module actually PROCESSED is reached via
+    3 submodule hops from the root (walk(hop3_module, depth=3) still runs
+    since 3 is not > 3; walk(hop4_module, depth=4) returns immediately)."""
+
+    def _build_hop_chain(self, root_name, max_hop):
+        root = types.ModuleType(root_name)
+
+        def fn0():
+            pass
+        fn0.__name__ = "fn_hop_0"
+        setattr(root, "fn_hop_0", fn0)
+
+        current, current_name = root, root_name
+        for hop in range(1, max_hop + 1):
+            sub_name = f"{current_name}.sub{hop}"
+            sub = types.ModuleType(sub_name)
+
+            def fn(hop=hop):
+                pass
+            fn.__name__ = f"fn_hop_{hop}"
+            setattr(sub, f"fn_hop_{hop}", fn)
+
+            setattr(current, f"sub{hop}", sub)
+            current, current_name = sub, sub_name
+        return root
+
+    def test_function_reached_via_3_hops_is_found(self, handler, monkeypatch):
+        root = self._build_hop_chain("depthchain_a", 3)
+        monkeypatch.setitem(sys.modules, "depthchain_a", root)
+        result = json.loads(handler.search({"query": "fn_hop_3", "modules": ["depthchain_a"]}))
+        paths = [r["path"] for r in result["results"]]
+        assert any("fn_hop_3" in p for p in paths)
+
+    def test_function_reached_via_4_hops_is_not_found(self, handler, monkeypatch):
+        root = self._build_hop_chain("depthchain_b", 4)
+        monkeypatch.setitem(sys.modules, "depthchain_b", root)
+        result = json.loads(handler.search({"query": "fn_hop_4", "modules": ["depthchain_b"]}))
+        paths = [r["path"] for r in result["results"]]
+        assert not any("fn_hop_4" in p for p in paths)
+
+
+class TestScoreCutoffBoundary:
+    """search() filters `scored = [r for r in scored if r["score"] >= 0.35]`
+    after sorting. Mocking _fuzzy_score directly (rather than crafting real
+    query/target strings that happen to score exactly 0.35) tests the
+    filter's own `>=` boundary in isolation."""
+
+    def test_score_exactly_at_cutoff_is_included(self, handler, monkeypatch):
+        import handlers.introspection_ops as iops
+        monkeypatch.setattr(iops, "_fuzzy_score", lambda query, path: 0.35)
+        result = json.loads(handler.search({"query": "anything", "modules": ["fakecad"]}))
+        assert len(result["results"]) > 0
+
+    def test_score_just_below_cutoff_is_excluded(self, handler, monkeypatch):
+        import handlers.introspection_ops as iops
+        monkeypatch.setattr(iops, "_fuzzy_score", lambda query, path: 0.349)
+        result = json.loads(handler.search({"query": "anything", "modules": ["fakecad"]}))
+        assert result["results"] == []
+
+    def test_score_just_above_cutoff_is_included(self, handler, monkeypatch):
+        import handlers.introspection_ops as iops
+        monkeypatch.setattr(iops, "_fuzzy_score", lambda query, path: 0.351)
+        result = json.loads(handler.search({"query": "anything", "modules": ["fakecad"]}))
+        assert len(result["results"]) > 0

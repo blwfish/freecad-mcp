@@ -211,6 +211,23 @@ class TestVerifyOrientation(unittest.TestCase):
         }))
         self.assertTrue(r['ok'], r['message'])
 
+    def test_exactly_perpendicular_dot_zero_is_not_aligned(self):
+        """M17: _DOT_THRESHOLD = 0.0 with a strict `d > _DOT_THRESHOLD`
+        comparison — a face normal EXACTLY perpendicular to the expected
+        axis (dot product exactly 0.0) must not count as aligned. Prior
+        tests only used clean +1.0/-1.0 dot products, never pinning which
+        side of exactly 0.0 the boundary falls on."""
+        # (1, 0, 0) dotted with expected_axis (0, 0, 1) is exactly 0.0,
+        # regardless of normalization (already unit length here).
+        self._make_obj_with_normals([(1, 0, 0)])
+        r = _parse(self.h.verify_orientation({
+            'object_name': 'TestObj',
+            'expected_axis': [0, 0, 1],
+            'mode': 'dominant',
+        }))
+        self.assertFalse(r['ok'], r['message'])
+        self.assertEqual(r['details']['aligned_count'], 0)
+
     # --- known-bad fixtures ---
 
     def test_dominant_mode_negative_z_normals_fail(self):
