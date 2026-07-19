@@ -48,7 +48,7 @@ If the Mod directory doesn't exist, create it.
 ```bash
 mkdir -p ~/.freecad-mcp
 cp freecad_mcp_server.py mcp_bridge_framing.py ~/.freecad-mcp/
-pip3 install mcp>=0.1.0
+pip3 install "mcp>=1.28.1" "mcp-events>=0.1.0"
 ```
 
 ### Step 3: Register with Your Agent

@@ -54,7 +54,7 @@ The MCP bridge runs on the system Python (not FreeCAD's bundled Python).
 
 The bridge depends on the `mcp` and `mcp-events` packages.
 
-**Install:** `pip3 install mcp>=0.1.0 mcp-events>=0.1.0`
+**Install:** `pip3 install mcp>=1.28.1 mcp-events>=0.1.0`
 
 ## Installation
 
@@ -90,7 +90,7 @@ renumber and any future change.
 ```bash
 mkdir -p ~/.freecad-mcp
 cp freecad_mcp_server.py mcp_bridge_framing.py ~/.freecad-mcp/
-pip3 install mcp>=0.1.0 mcp-events>=0.1.0
+pip3 install mcp>=1.28.1 mcp-events>=0.1.0
 ```
 
 ### Step 4: Register as an MCP Server
