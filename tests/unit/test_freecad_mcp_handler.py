@@ -37,6 +37,7 @@ def mock_handlers(monkeypatch):
         "SpatialOpsHandler", "InspectorOpsHandler",
         "MacroOpsHandler", "IntrospectionOpsHandler", "SketchBuilderOpsHandler",
         "VerificationOpsHandler", "FixtureOpsHandler", "DiagnosticsOpsHandler",
+        "ExecutePythonOpsHandler",
     ]
 
     handlers_mod = types.ModuleType("handlers")
@@ -466,9 +467,9 @@ class TestExecuteTool:
         server._dispatch_part_operations.assert_called_once_with({"operation": "box"})
 
     def test_execute_python_routing(self, server):
-        server._execute_python = MagicMock(return_value=json.dumps({"result": "2"}))
+        server.execute_python_ops.execute = MagicMock(return_value=json.dumps({"result": "2"}))
         server._execute_tool("execute_python", {"code": "1+1"})
-        server._execute_python.assert_called_once_with({"code": "1+1"})
+        server.execute_python_ops.execute.assert_called_once_with({"code": "1+1"})
 
     def test_get_debug_logs_routing(self, server):
         server.diagnostics_ops.get_debug_logs = MagicMock(return_value=json.dumps({"result": "logs"}))
@@ -675,85 +676,6 @@ class TestDispatchViewControl:
 # ---------------------------------------------------------------------------
 # _execute_python
 # ---------------------------------------------------------------------------
-
-class TestExecutePython:
-    def _run_python(self, server, code):
-        """Helper: run _execute_python directly.
-
-        _execute_python -> _run_on_gui_thread, which takes an inline
-        fast-path (no queue) whenever QtCore is None — true throughout this
-        module in the test environment (conftest's autouse mock_freecad
-        fixture sets GuiUp=False before freecad_mcp_handler.py is imported,
-        so the module-level `QtCore = None` binding is fixed at import
-        time). A background thread simulating GUI-thread queue processing
-        was previously spun up here regardless, but nothing this class
-        exercises ever puts anything on _gui_task_queue for it to pick up —
-        it just burned up to its 2s queue.get timeout every single test
-        (9 tests x ~2.06s, ~18.5s of the suite's total runtime) waiting for
-        a task that could never arrive, then t.join() sat through it.
-        The actual GUI-queue dispatch mechanics (QtCore mocked non-None)
-        are already covered separately by TestCallOnGuiThread and
-        TestRunOnGuiThreadEdgeCases.
-        """
-        response = server._execute_python({"code": code})
-        return json.loads(response)
-
-    def test_expression_evaluation(self, server):
-        result = self._run_python(server, "1 + 1")
-        assert result["result"] == "2"
-
-    def test_string_expression(self, server):
-        result = self._run_python(server, "'hello' + ' world'")
-        assert result["result"] == "'hello world'"
-
-    def test_statement_then_expression(self, server):
-        result = self._run_python(server, "x = 5\nx * 2")
-        assert result["result"] == "10"
-
-    def test_pure_statement(self, server):
-        result = self._run_python(server, "x = 42")
-        assert result["result"] == "Code executed successfully"
-
-    def test_result_variable(self, server):
-        """If code sets 'result' variable, that should be returned."""
-        result = self._run_python(server, "result = 42")
-        assert result["result"] == "42"
-
-    def test_syntax_error(self, server):
-        result = self._run_python(server, "def (broken")
-        assert "error" in result
-        assert "SyntaxError" in result["error"]
-
-    def test_runtime_error(self, server):
-        result = self._run_python(server, "1 / 0")
-        assert "error" in result
-        assert "ZeroDivisionError" in result["error"] or "execution error" in result["error"]
-
-    def test_empty_code(self, server):
-        # Empty code doesn't go through GUI thread — returns immediately
-        result = server._execute_python({"code": ""})
-        parsed = json.loads(result)
-        assert "No code provided" in parsed["error"]
-
-    def test_no_code_key(self, server):
-        result = server._execute_python({})
-        parsed = json.loads(result)
-        assert "No code provided" in parsed["error"]
-
-    def test_multiline_code(self, server):
-        code = "a = 10\nb = 20\na + b"
-        result = self._run_python(server, code)
-        assert result["result"] == "30"
-
-    def test_list_comprehension(self, server):
-        result = self._run_python(server, "[i**2 for i in range(5)]")
-        assert result["result"] == "[0, 1, 4, 9, 16]"
-
-    def test_namespace_has_freecad(self, server):
-        """FreeCAD should be available in the execution namespace."""
-        result = self._run_python(server, "type(FreeCAD).__name__")
-        assert "error" not in result
-
 
 # ---------------------------------------------------------------------------
 # _call_on_gui_thread
@@ -1769,6 +1691,32 @@ class TestReloadHandlersPreservesState:
             {"error_id": "err-0001", "timestamp": 0, "traceback": "boom"}
         ]
         assert server.diagnostics_ops._traceback_counter == 1
+
+    def test_python_namespace_carried_over_to_new_execute_python_ops_instance(self, server):
+        """Same M4-class hazard, for execute_python's persistent namespace
+        added when _run_python_code/_execute_python were extracted into
+        ExecutePythonOpsHandler. Before the extraction this was server
+        state untouched by handler re-instantiation, so it silently
+        survived reload for free; the move makes it subject to the same
+        hazard as checkpoints/clip_planes/tracebacks and needs the same
+        fix — a variable set before a hot-reload must still be readable
+        by execute_python calls after it."""
+        server.execute_python_ops._python_namespace = {"persisted_var": 99}
+        old_execute_python_ops = server.execute_python_ops
+
+        snapshot = dict(sys.modules)
+        try:
+            self._drop_fake_handlers_package()
+            result = json.loads(server._reload_handlers())
+        finally:
+            sys.modules.clear()
+            sys.modules.update(snapshot)
+
+        assert "error" not in result, result
+        assert server.execute_python_ops is not old_execute_python_ops, (
+            "test is meaningless unless the instance was actually replaced"
+        )
+        assert server.execute_python_ops._python_namespace["persisted_var"] == 99
 
 
 # ---------------------------------------------------------------------------

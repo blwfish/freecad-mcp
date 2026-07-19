@@ -180,6 +180,7 @@ try:
         VerificationOpsHandler,
         FixtureOpsHandler,
         DiagnosticsOpsHandler,
+        ExecutePythonOpsHandler,
     )
     FreeCAD.Console.PrintMessage("Modular handlers loaded successfully\n")
 except ImportError as e:
@@ -305,10 +306,6 @@ class FreeCADSocketServer:
         # Async job tracking: job_id -> {status, started, result, error, elapsed}
         self._async_jobs: Dict[str, Dict] = {}
 
-        # Persistent namespace for execute_python calls.
-        # Variables created in one call survive to the next.
-        self._python_namespace: Dict[str, Any] = {}
-
         # Interactive selection manager (fillet/chamfer/draft/shell/thickness
         # request_selection/complete_selection workflow, plus select/clear/get).
         self.selector = UniversalSelector()
@@ -336,6 +333,7 @@ class FreeCADSocketServer:
             'verification_ops': VerificationOpsHandler,
             'fixture_ops': FixtureOpsHandler,
             'diagnostics_ops': DiagnosticsOpsHandler,
+            'execute_python_ops': ExecutePythonOpsHandler,
             # GUI-sensitive handlers get the task queues for thread safety
             'view_ops': ViewOpsHandler,
             'document_ops': DocumentOpsHandler,
@@ -725,7 +723,7 @@ class FreeCADSocketServer:
             "tool": "execute_python_async",
         }
 
-        self._run_on_gui_thread_async(job_id, lambda: self._run_python_code(code))
+        self._run_on_gui_thread_async(job_id, lambda: self.execute_python_ops.run_code(code))
         return json.dumps({"job_id": job_id, "status": "submitted"})
 
     def _poll_job(self, args: Dict[str, Any]) -> str:
@@ -1119,7 +1117,7 @@ class FreeCADSocketServer:
 
         # Special tools
         if tool_name == "execute_python":
-            return self._execute_python(args)
+            return self.execute_python_ops.execute(args)
         if tool_name == "execute_python_async":
             return self._execute_python_async(args)
         if tool_name == "poll_job":
@@ -1470,118 +1468,6 @@ class FreeCADSocketServer:
 
         return json.dumps({"error": f"Unknown view control operation: {operation}"})
 
-    # -----------------------------------------------------------------
-    # execute_python
-    # -----------------------------------------------------------------
-
-    def _run_python_code(self, code: str) -> dict:
-        """Core Python execution: runs code on the GUI thread, captures stdout.
-
-        Returns a result dict suitable for _run_on_gui_thread / _run_on_gui_thread_async.
-
-        Uses a persistent namespace so variables survive across calls.
-
-        Output priority:
-          - stdout lines (from print() calls) are always included when present
-          - the last-expression value (or `result` variable) is appended when present
-          - if neither, returns "Code executed successfully"
-        """
-        import ast, io, sys
-
-        # Ensure base modules are always available (even if user overwrites them)
-        self._python_namespace["FreeCAD"] = FreeCAD
-        self._python_namespace["FreeCADGui"] = FreeCADGui
-        self._python_namespace["App"] = FreeCAD
-        self._python_namespace["Gui"] = FreeCADGui
-        try:
-            import Part
-            self._python_namespace["Part"] = Part
-        except ImportError:
-            pass
-        try:
-            from FreeCAD import Vector
-            self._python_namespace["Vector"] = Vector
-        except ImportError:
-            pass
-        namespace = self._python_namespace
-
-        # Auto-save active document before executing user code.
-        # If the code triggers a crash (e.g., .check() on huge compounds,
-        # boolean ops on 1000+ solids), the saved file survives.
-        try:
-            doc = FreeCAD.ActiveDocument
-            if doc and getattr(doc, 'FileName', ''):
-                doc.save()
-        except Exception:
-            pass  # non-fatal; proceed with execution
-
-        result_value = None
-        old_stdout = sys.stdout
-        sys.stdout = captured = io.StringIO()
-        try:
-            try:
-                tree = ast.parse(code)
-                if tree.body and isinstance(tree.body[-1], ast.Expr):
-                    # Execute all statements except the last
-                    if len(tree.body) > 1:
-                        exec_module = ast.Module(body=tree.body[:-1], type_ignores=[])
-                        ast.fix_missing_locations(exec_module)
-                        exec(compile(exec_module, "<string>", "exec"), namespace)
-                    # Evaluate the last expression
-                    expr_ast = ast.Expression(body=tree.body[-1].value)
-                    ast.fix_missing_locations(expr_ast)
-                    result_value = eval(compile(expr_ast, "<string>", "eval"), namespace)
-                else:
-                    exec(code, namespace)
-                    if "result" in namespace:
-                        result_value = namespace["result"]
-            except SyntaxError as e:
-                return {"error": f"SyntaxError: {e}", "error_id": self.diagnostics_ops.store_traceback(tb_module.format_exc())}
-        except Exception as e:
-            return {"error": f"Python execution error: {e}", "error_id": self.diagnostics_ops.store_traceback(tb_module.format_exc())}
-        finally:
-            sys.stdout = old_stdout
-
-        stdout_output = captured.getvalue().rstrip("\n")
-        parts = []
-        if stdout_output:
-            parts.append(stdout_output)
-        if result_value is not None:
-            parts.append(repr(result_value))
-
-        if parts:
-            return {"success": True, "result": "\n".join(parts)}
-        return {"success": True, "result": "Code executed successfully"}
-
-    def _execute_python(self, args: Dict[str, Any]) -> str:
-        """Execute Python code in FreeCAD context with expression value capture (GUI-safe).
-
-        Handles both statements and expressions, returning the value
-        of the last expression if present (similar to IPython/Jupyter behavior).
-
-        Examples:
-            "1 + 1"                    -> "2"
-            "x = 5"                    -> "Code executed successfully"
-            "x = 5\\nx * 2"            -> "10"
-            "FreeCAD.ActiveDocument"   -> "<Document object>"
-            "result = 42"              -> "42" (explicit result variable)
-        """
-        code = args.get("code", "")
-        if not code:
-            return json.dumps({"error": "No code provided"})
-
-        timeout = args.get("timeout", 30.0)
-        try:
-            timeout = float(timeout)
-        except (TypeError, ValueError):
-            timeout = 30.0
-
-        return self._run_on_gui_thread(lambda: self._run_python_code(code), timeout=timeout)
-
-    # -----------------------------------------------------------------
-    # Restart FreeCAD
-    # -----------------------------------------------------------------
-
     def _reload_handlers(self) -> str:
         """Hot-reload all handler modules and re-create handler instances.
 
@@ -1639,6 +1525,7 @@ class FreeCADSocketServer:
                 'handlers.verification_ops',
                 'handlers.fixture_ops',
                 'handlers.diagnostics_ops',
+                'handlers.execute_python_ops',
             ]
             for mod_name in handler_modules:
                 mod = sys.modules.get(mod_name)
@@ -1675,10 +1562,12 @@ class FreeCADSocketServer:
                 VerificationOpsHandler,
                 FixtureOpsHandler,
                 DiagnosticsOpsHandler,
+                ExecutePythonOpsHandler,
             )
 
             # _checkpoints (DocumentOpsHandler), _clip_planes (ViewOpsHandler),
-            # and the traceback ring buffer (DiagnosticsOpsHandler) are
+            # the traceback ring buffer (DiagnosticsOpsHandler), and the
+            # execute_python namespace (ExecutePythonOpsHandler) are
             # lazily-created plain instance attributes with no persistence
             # anywhere else. Replacing the handler instances below would
             # otherwise silently discard them: rollback_to_checkpoint would
@@ -1687,13 +1576,20 @@ class FreeCADSocketServer:
             # clip-plane Coin3D scene-graph node would become unreachable
             # (its handle only lived in the old instance's list) and leak in
             # the 3D view forever since nothing could find it to remove it,
-            # and get_last_traceback would silently lose crash history from
-            # right before the reload — the exact moment it's most useful.
+            # get_last_traceback would silently lose crash history from
+            # right before the reload — the exact moment it's most useful —
+            # and execute_python's persistent namespace (variables surviving
+            # across calls, its whole documented point) would silently reset
+            # to empty. That last one used to be a non-issue when the
+            # namespace lived directly on the server (untouched by handler
+            # re-instantiation); moving it into a handler makes it subject
+            # to the same hazard as the others, so it needs the same fix.
             old_checkpoints = getattr(self, 'document_ops', None) and getattr(self.document_ops, '_checkpoints', None)
             old_clip_planes = getattr(self, 'view_ops', None) and getattr(self.view_ops, '_clip_planes', None)
             old_diag = getattr(self, 'diagnostics_ops', None)
             old_tracebacks = old_diag and old_diag._last_tracebacks
             old_traceback_counter = old_diag._traceback_counter if old_diag else 0
+            old_python_ns = getattr(self, 'execute_python_ops', None) and getattr(self.execute_python_ops, '_python_namespace', None)
 
             # Re-create handler instances
             self._instantiate_handlers({
@@ -1718,6 +1614,7 @@ class FreeCADSocketServer:
                 'verification_ops': VerificationOpsHandler,
                 'fixture_ops': FixtureOpsHandler,
                 'diagnostics_ops': DiagnosticsOpsHandler,
+                'execute_python_ops': ExecutePythonOpsHandler,
                 'view_ops': ViewOpsHandler,
                 'document_ops': DocumentOpsHandler,
             })
@@ -1728,6 +1625,8 @@ class FreeCADSocketServer:
             if old_tracebacks:
                 self.diagnostics_ops._last_tracebacks = old_tracebacks
             self.diagnostics_ops._traceback_counter = old_traceback_counter
+            if old_python_ns:
+                self.execute_python_ops._python_namespace = old_python_ns
 
             # Reload freecad_mcp_handler.py itself and rebind _execute_tool_inner
             # so dispatch-map changes (new tools added to generic_dispatch_map)
