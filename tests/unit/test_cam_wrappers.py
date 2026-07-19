@@ -333,6 +333,97 @@ class TestAddToolController(unittest.TestCase):
         self.assertAlmostEqual(controller.VertFeed, 5.0, places=4)
         self.assertAlmostEqual(controller.HorizFeed, 15.0, places=4)
 
+    def test_first_controller_with_no_tool_number_gets_1(self):
+        job = make_cam_job("Job1")
+        tool = make_tool_bit_obj("EM6", "endmill", 6)
+        doc = make_mock_doc([job, tool])
+        mock_FreeCAD.ActiveDocument = doc
+
+        controller = MagicMock()
+        mock_Path_Tool_Controller.Create = MagicMock(return_value=controller)
+
+        self.handler.add_tool_controller({'job_name': 'Job1', 'tool_name': 'EM6'})
+
+        self.assertEqual(controller.ToolNumber, 1)
+
+    def test_omitted_tool_number_auto_increments_past_existing(self):
+        """M15: every caller that didn't specify tool_number previously got
+        the same hardcoded default (1) regardless of what else was already
+        in the job — a job with several auto-added controllers collided on
+        every one of them, producing duplicate T-codes in exported G-code."""
+        job = make_cam_job("Job1")
+        existing = MagicMock()
+        existing.ToolNumber = 1
+        job.Tools.Group = [existing]
+        tool = make_tool_bit_obj("EM6", "endmill", 6)
+        doc = make_mock_doc([job, tool])
+        mock_FreeCAD.ActiveDocument = doc
+
+        controller = MagicMock()
+        mock_Path_Tool_Controller.Create = MagicMock(return_value=controller)
+
+        self.handler.add_tool_controller({'job_name': 'Job1', 'tool_name': 'EM6'})
+
+        self.assertEqual(controller.ToolNumber, 2)
+
+    def test_omitted_tool_number_skips_multiple_existing_numbers(self):
+        job = make_cam_job("Job1")
+        c1, c2 = MagicMock(), MagicMock()
+        c1.ToolNumber = 1
+        c2.ToolNumber = 2
+        job.Tools.Group = [c1, c2]
+        tool = make_tool_bit_obj("EM6", "endmill", 6)
+        doc = make_mock_doc([job, tool])
+        mock_FreeCAD.ActiveDocument = doc
+
+        controller = MagicMock()
+        mock_Path_Tool_Controller.Create = MagicMock(return_value=controller)
+
+        self.handler.add_tool_controller({'job_name': 'Job1', 'tool_name': 'EM6'})
+
+        self.assertEqual(controller.ToolNumber, 3)
+
+    def test_explicit_duplicate_tool_number_rejected(self):
+        """A caller-specified tool_number that collides with an existing
+        controller in the same job must error, not silently create a
+        second controller claiming the same T-code."""
+        job = make_cam_job("Job1")
+        existing = MagicMock()
+        existing.ToolNumber = 5
+        job.Tools.Group = [existing]
+        tool = make_tool_bit_obj("EM6", "endmill", 6)
+        doc = make_mock_doc([job, tool])
+        mock_FreeCAD.ActiveDocument = doc
+        mock_Path_Tool_Controller.Create = MagicMock()
+
+        result = self.handler.add_tool_controller({
+            'job_name': 'Job1', 'tool_name': 'EM6', 'tool_number': 5,
+        })
+
+        assert_error_contains(self, result, "5", "already used")
+        # Must not have been added to the job.
+        self.assertEqual(len(job.Tools.Group), 1)
+
+    def test_explicit_non_conflicting_tool_number_accepted(self):
+        job = make_cam_job("Job1")
+        existing = MagicMock()
+        existing.ToolNumber = 5
+        job.Tools.Group = [existing]
+        tool = make_tool_bit_obj("EM6", "endmill", 6)
+        doc = make_mock_doc([job, tool])
+        mock_FreeCAD.ActiveDocument = doc
+
+        controller = MagicMock()
+        controller.Label = "TC_EM6"
+        mock_Path_Tool_Controller.Create = MagicMock(return_value=controller)
+
+        result = self.handler.add_tool_controller({
+            'job_name': 'Job1', 'tool_name': 'EM6', 'tool_number': 7,
+        })
+
+        assert_success_contains(self, result, "TC_EM6")
+        self.assertEqual(controller.ToolNumber, 7)
+
     def test_missing_job(self):
         tool = make_tool_bit_obj("EM6", "endmill", 6)
         doc = make_mock_doc([tool])
