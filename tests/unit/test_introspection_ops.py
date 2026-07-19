@@ -11,6 +11,7 @@ breaking other test files like test_mesh_ops.
 Run with: python3 -m pytest tests/unit/test_introspection_ops.py -v
 """
 
+import glob
 import json
 import os
 import sys
@@ -357,3 +358,38 @@ class TestFeedbackFileResilience:
         assert not os.path.isfile(feedback_file)
         handler.record_useful({"query": "q", "path": "fakecad.makeBox"})
         assert os.path.isfile(feedback_file)
+
+    def test_corrupt_file_is_quarantined_not_silently_destroyed(self, handler, feedback_file):
+        """M11: the corrupt file used to be silently reset in memory, then
+        the next record_useful() overwrote it in mode 'w' — permanently
+        destroying whatever was there (e.g. fields from a future schema
+        version this code doesn't recognize) with no trace. A quarantine
+        copy must survive the overwrite."""
+        original_corrupt_content = "not valid json {{{ this had real content once"
+        with open(feedback_file, "w") as f:
+            f.write(original_corrupt_content)
+
+        handler.record_useful({"query": "q", "path": "fakecad.makeBox"})
+
+        quarantine_files = glob.glob(feedback_file + ".corrupt-*")
+        assert len(quarantine_files) == 1, "expected exactly one quarantine backup"
+        with open(quarantine_files[0]) as f:
+            assert f.read() == original_corrupt_content
+
+    def test_non_dict_top_level_json_is_quarantined(self, handler, feedback_file):
+        """A syntactically valid JSON array (not an object) hits the
+        separate `not isinstance(data, dict)` branch — must also
+        quarantine, not just the JSONDecodeError branch."""
+        with open(feedback_file, "w") as f:
+            json.dump(["not", "a", "dict"], f)
+
+        handler.record_useful({"query": "q", "path": "fakecad.makeBox"})
+
+        quarantine_files = glob.glob(feedback_file + ".corrupt-*")
+        assert len(quarantine_files) == 1
+
+    def test_valid_feedback_file_is_never_quarantined(self, handler, feedback_file):
+        handler.record_useful({"query": "q", "path": "fakecad.makeBox"})
+        handler.record_useful({"query": "q", "path": "fakecad.makeBox"})  # second call reads back valid JSON
+        quarantine_files = glob.glob(feedback_file + ".corrupt-*")
+        assert quarantine_files == []
