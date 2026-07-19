@@ -40,6 +40,8 @@ import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
+
+import tmp_safety
 from typing import Dict, List, Optional, Tuple
 
 from freecad_debug import get_debugger
@@ -75,7 +77,10 @@ class FreeCADHealthMonitor:
         self.socket_path = Path(socket_path)
         self.heartbeat_interval = heartbeat_interval
         self.crash_log_dir = Path(crash_log_dir)
-        self.crash_log_dir.mkdir(parents=True, exist_ok=True)
+        # crash_log_dir defaults to a fixed, predictable /tmp path —
+        # refuse to follow a symlink an attacker with local access could
+        # have planted there before this process started.
+        tmp_safety.safe_mkdir(str(self.crash_log_dir))
         self.max_restart_attempts = max_restart_attempts
         self.restart_cooldown = restart_cooldown
         self.lean_logging = lean_logging

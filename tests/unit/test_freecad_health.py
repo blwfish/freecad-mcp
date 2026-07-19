@@ -76,6 +76,18 @@ class TestInit:
         make_monitor(tmp_path, crash_log_dir=str(crash_dir))
         assert crash_dir.is_dir()
 
+    def test_construction_refuses_symlinked_crash_log_dir(self, tmp_path):
+        """M14: crash_log_dir defaults to a fixed, predictable /tmp path.
+        Previously self.crash_log_dir.mkdir(exist_ok=True) would silently
+        follow a pre-planted symlink instead of refusing it."""
+        attacker_target = tmp_path / "attacker_controlled"
+        attacker_target.mkdir()
+        planted = tmp_path / "planted_crash_dir"
+        planted.symlink_to(attacker_target)
+
+        with pytest.raises(RuntimeError, match="symlink"):
+            make_monitor(tmp_path, crash_log_dir=str(planted))
+
     def test_lean_vs_verbose_logging(self, tmp_path):
         m_lean = make_monitor(tmp_path, lean_logging=True)
         m_verbose = make_monitor(tmp_path, lean_logging=False)

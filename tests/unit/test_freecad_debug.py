@@ -833,3 +833,16 @@ class TestEdgeCases:
 
     def test_version_attribute(self):
         assert freecad_debug.__version__ == "1.1.0"
+
+    def test_construction_refuses_symlinked_log_dir(self, tmp_path):
+        """M14: log_dir defaults to a fixed, predictable /tmp path.
+        Previously self.log_dir.mkdir(exist_ok=True) would silently follow
+        a pre-planted symlink (os.path.isdir() resolves symlinks) instead
+        of refusing it."""
+        attacker_target = tmp_path / "attacker_controlled"
+        attacker_target.mkdir()
+        planted = tmp_path / "planted_log_dir"
+        planted.symlink_to(attacker_target)
+
+        with pytest.raises(RuntimeError, match="symlink"):
+            make_debugger(planted)
