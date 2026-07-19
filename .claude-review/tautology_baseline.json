@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "note": "Grandfathered tautology-sweep violations (Stage-1 net). Run `tautology_sweep.py --root <repo> --update-baseline` to refresh after fixing or intentionally adding. The count may only fall: --check fails on any violation NOT listed here.",
+  "tautological_tests": []
+}
