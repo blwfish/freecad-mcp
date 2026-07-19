@@ -5,6 +5,7 @@ import os
 import socket
 import sys
 import uuid
+from unittest.mock import patch
 import pytest
 
 AICOPILOT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot")
@@ -90,6 +91,52 @@ class TestWriteDiscovery:
         assert data["socket_path"] == "/tmp/new.sock"
         assert data["label"] == "new"
         assert data["gui"] is True
+
+    def test_temp_file_opened_with_explicit_0600_mode(self, isolated_dir):
+        """M13: the temp file used to be created with plain open(tmp, 'w'),
+        which gets whatever mode the process umask allows (typically
+        0o644/0o664, group/world-readable) — with a LATER chmod(0o600)
+        only tightening it after the fact. That's a real window, not just
+        cosmetic: os.stat() after write_discovery() returns can't
+        distinguish "created loose then tightened" from "created tight the
+        whole time", since both end at 0o600 — the bug is specifically in
+        the file's state DURING that window, which a final-state check
+        can't observe. Spying on os.open (wraps=os.open, so the real
+        syscall still runs — this isn't a mocked-out no-op) directly
+        verifies the file is requested at 0o600 from the moment of
+        creation, which is the actual mechanism that closes the window."""
+        u = "spyopenuuid1"
+        with patch("os.open", wraps=os.open) as spy:
+            instance_registry.write_discovery(u, "/tmp/x.sock", gui=False)
+
+        tmp_path_arg = instance_registry.discovery_path(u) + ".tmp"
+        matching_calls = [c for c in spy.call_args_list if c.args[0] == tmp_path_arg]
+        assert len(matching_calls) == 1, (
+            f"expected exactly one os.open() call for the temp file, got {spy.call_args_list}"
+        )
+        call = matching_calls[0]
+        mode_arg = call.args[2] if len(call.args) > 2 else call.kwargs.get("mode")
+        assert mode_arg == 0o600, f"expected os.open(..., mode=0o600), got {oct(mode_arg) if mode_arg is not None else None}"
+
+    def test_file_created_at_0600_even_under_permissive_umask(self, isolated_dir):
+        """Final-state check, kept alongside the os.open spy above: confirms
+        the end result is correct even with a wide-open umask (0o000), which
+        would have widened the OLD open()-then-chmod version's transient
+        window to the full 0o666 default rather than narrowing it."""
+        old_umask = os.umask(0o000)
+        try:
+            u = "umasktest001"
+            path = instance_registry.write_discovery(u, "/tmp/x.sock", gui=False)
+        finally:
+            os.umask(old_umask)
+        mode = os.stat(path).st_mode & 0o777
+        assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
+
+    def test_no_transient_tmp_file_left_behind(self, isolated_dir):
+        u = "tmpcleanup01"
+        instance_registry.write_discovery(u, "/tmp/x.sock", gui=False)
+        tmp_path = instance_registry.discovery_path(u) + ".tmp"
+        assert not os.path.exists(tmp_path)
 
 
 class TestRemoveDiscovery:
