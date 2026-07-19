@@ -488,6 +488,40 @@ class TestCsvRoundTrip(unittest.TestCase):
         payload = json.loads(result)
         self.assertIn('"a,b"', payload['csv'])
 
+    def test_truncation_check_failure_is_surfaced_not_silenced(self):
+        """M12: a bare except around the getUsedRange() truncation check
+        made truncated silently stay False whenever the CHECK ITSELF
+        failed — indistinguishable from 'verified: nothing was truncated'.
+        Must surface a truncation_check_error instead."""
+        sheet = make_spreadsheet("S")
+        sheet._cells_data['A1'] = 'x'
+        sheet.getUsedRange.side_effect = RuntimeError("scripting object invalidated")
+        doc = make_mock_doc([sheet])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.export_csv({
+            'spreadsheet_name': 'S', 'start_cell': 'A1', 'end_cell': 'A1',
+        })
+        payload = json.loads(result)
+
+        # The export itself must still succeed despite the check failing.
+        self.assertIn('x', payload['csv'])
+        self.assertFalse(payload['truncated'])
+        self.assertIn('truncation_check_error', payload)
+        self.assertIn('scripting object invalidated', payload['truncation_check_error'])
+
+    def test_no_truncation_check_error_key_when_check_succeeds(self):
+        sheet = make_spreadsheet("S")
+        sheet._cells_data['A1'] = 'x'
+        doc = make_mock_doc([sheet])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.export_csv({
+            'spreadsheet_name': 'S', 'start_cell': 'A1', 'end_cell': 'A1',
+        })
+        payload = json.loads(result)
+        self.assertNotIn('truncation_check_error', payload)
+
 
 if __name__ == '__main__':
     unittest.main()
