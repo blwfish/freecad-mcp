@@ -821,6 +821,26 @@ class TestGetObjectProperties:
         assert "Broken" not in result["properties"]
         assert result["properties_errors"]["Broken"] == "GIL threading error"
 
+    def test_getattr_raising_typeerror_lands_in_errors_not_uncaught(self, doc_handler, mock_doc):
+        """M2: if getattr() itself raises TypeError/ValueError (not just the
+        json.dumps serializability probe), a combined try/except that does
+        `except (TypeError, ValueError): repr(val)` hits an UnboundLocalError
+        — val was never assigned — which the sibling `except Exception`
+        clause does NOT catch (it doesn't wrap the except body), aborting
+        the whole property dump for every other property too. Uses
+        TypeError specifically since the sibling RuntimeError test above
+        already passed even under the old buggy code (RuntimeError skips
+        straight to the broad except)."""
+        obj = mock_doc.Objects[0]
+        obj.PropertiesList = ["Length", "Broken"]
+        obj.Length = 1.0
+        with patch.object(type(obj), "Broken", PropertyMock(side_effect=TypeError("bad property read")), create=True):
+            result = json.loads(doc_handler.get_object_properties({"object_name": "Box"}))
+
+        assert "error" not in result
+        assert result["properties"]["Length"] == 1.0
+        assert result["properties_errors"]["Broken"] == "bad property read"
+
     def test_property_count_covers_all_three_buckets(self, doc_handler, mock_doc):
         obj = mock_doc.Objects[0]
         obj.PropertiesList = ["Length", "Placement", "Broken"]

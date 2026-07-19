@@ -199,14 +199,24 @@ class DocumentOpsHandler(BaseHandler):
             unserializable = {}
             errors = {}
             for prop_name in sorted(obj.PropertiesList):
+                # getattr and the serializability probe are split into two
+                # try/excepts: if getattr itself raises TypeError/ValueError
+                # (some property getters do), the combined-try version below
+                # would land in `except (TypeError, ValueError): repr(val)`
+                # with val never assigned, raising UnboundLocalError that
+                # the sibling `except Exception` can't catch (it doesn't
+                # wrap the except body) — aborting the whole property dump
+                # instead of just this one property.
                 try:
                     val = getattr(obj, prop_name)
+                except Exception as e:
+                    errors[prop_name] = str(e)
+                    continue
+                try:
                     json.dumps(val)  # probe serializability
                     props[prop_name] = val
                 except (TypeError, ValueError):
                     unserializable[prop_name] = repr(val)
-                except Exception as e:
-                    errors[prop_name] = str(e)
             result = {
                 "object_name": name,
                 "type": obj.TypeId,
