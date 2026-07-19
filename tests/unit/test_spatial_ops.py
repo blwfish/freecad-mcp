@@ -466,6 +466,28 @@ class TestContainment(unittest.TestCase):
         self.assertIn("X-: 5.0000", result)
         self.assertIn("X+: 5.0000", result)
 
+    def test_sub_linear_tolerance_overhang_not_reported(self):
+        """M6: overhang values are linear mm distances and must be compared
+        against _OCCT_LIN_TOL (1e-7 mm), not _VOL_TOL (1e-9 mm^3) — using
+        the volume threshold made this check 100x too sensitive, flagging
+        ordinary floating-point roundoff (a value between the two
+        tolerances) as a real overhang."""
+        outer = make_box("Outer", 0, 0, 0, 20, 20, 20)
+        inner = make_box("Inner", -5e-8, 0, 0, 20, 20, 20)  # overhang 5e-8: above _VOL_TOL, below _OCCT_LIN_TOL
+
+        self.fc.ActiveDocument = make_mock_doc([inner, outer])
+        result = self.handler.containment({'object1': 'Inner', 'object2': 'Outer'})
+        self.assertIn("No bounding-box overhang", result)
+
+    def test_above_linear_tolerance_overhang_reported(self):
+        outer = make_box("Outer", 0, 0, 0, 20, 20, 20)
+        inner = make_box("Inner", -2e-7, 0, 0, 20, 20, 20)  # overhang 2e-7: above _OCCT_LIN_TOL
+
+        self.fc.ActiveDocument = make_mock_doc([inner, outer])
+        result = self.handler.containment({'object1': 'Inner', 'object2': 'Outer'})
+        self.assertIn("Overhangs:", result)
+        self.assertIn("X-:", result)
+
     def test_bb_contained_but_geometry_protrudes(self):
         outer = make_box("Outer", 0, 0, 0, 50, 50, 50)
         inner = make_box("Inner", 10, 10, 10, 10, 10, 10)
