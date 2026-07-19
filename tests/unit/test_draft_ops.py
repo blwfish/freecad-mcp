@@ -226,6 +226,54 @@ class TestPolarArray(unittest.TestCase):
         assert_error_contains(self, result, "invalid axis", "q")
         mock_Draft.make_polar_array.assert_not_called()
 
+    def test_old_signature_without_axis_param_defaults_to_z_ok(self):
+        """FreeCAD 1.1-stable's Draft.make_polar_array has no axis= parameter
+        (added in FreeCAD 1.2-dev, PR #28324) — requesting the default 'z'
+        axis must still succeed by omitting the kwarg entirely, not crash
+        with a TypeError."""
+        box = make_box_object("B")
+        doc = make_mock_doc([box])
+        mock_FreeCAD.ActiveDocument = doc
+
+        def old_make_polar_array(base_object, number=5, angle=360, center=None, use_link=True):
+            old_make_polar_array.calls.append(dict(
+                base_object=base_object, number=number, angle=angle,
+                center=center, use_link=use_link,
+            ))
+            return MagicMock(Name="P")
+        old_make_polar_array.calls = []
+        mock_Draft.make_polar_array = old_make_polar_array
+
+        result = self.handler.polar_array({
+            'object_name': 'B', 'count': 6, 'angle': 360,
+        })
+
+        self.assertEqual(len(old_make_polar_array.calls), 1)
+        self.assertEqual(old_make_polar_array.calls[0]['number'], 6)
+        assert_success_contains(self, result, "6 instances", "360")
+
+    def test_old_signature_without_axis_param_rejects_non_z_axis(self):
+        """A non-'z' axis request on a FreeCAD build lacking axis= support
+        must be rejected explicitly, not silently ignored (which would
+        rotate the array around Z while claiming to honor the caller's
+        requested axis)."""
+        box = make_box_object("B")
+        doc = make_mock_doc([box])
+        mock_FreeCAD.ActiveDocument = doc
+
+        def old_make_polar_array(base_object, number=5, angle=360, center=None, use_link=True):
+            old_make_polar_array.calls.append(1)
+            return MagicMock(Name="P")
+        old_make_polar_array.calls = []
+        mock_Draft.make_polar_array = old_make_polar_array
+
+        result = self.handler.polar_array({
+            'object_name': 'B', 'count': 4, 'angle': 360, 'axis': 'x',
+        })
+
+        self.assertEqual(old_make_polar_array.calls, [])
+        assert_error_contains(self, result, "does not support", "axis")
+
 
 # ---------------------------------------------------------------------------
 # Path array

@@ -115,18 +115,36 @@ class DraftOpsHandler(BaseHandler):
             if axis_vector is None:
                 return f"Invalid axis '{axis}': must be 'x', 'y', or 'z'"
 
+            import inspect
             import Draft
 
             center = FreeCAD.Vector(center_x, center_y, center_z)
 
-            array = Draft.make_polar_array(
-                obj,
-                number=count,
-                angle=angle,
-                center=center,
-                axis=axis_vector,
-                use_link=True
-            )
+            # axis= was only added to make_polar_array in FreeCAD 1.2-dev
+            # (PR #28324, 2026-03-14); FreeCAD 1.1-stable's signature has no
+            # such parameter and always rotates around Z. Detect support via
+            # inspect.signature rather than probing with a call-and-catch —
+            # a TypeError string match on "unexpected keyword argument" would
+            # be a syntactic stand-in for a version check that can misfire on
+            # unrelated TypeErrors from inside make_polar_array itself. A
+            # **kwargs catch-all (as unit-test mocks present) is treated as
+            # support too, since passing axis= through one can't raise.
+            _params = inspect.signature(Draft.make_polar_array).parameters
+            supports_axis = 'axis' in _params or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in _params.values())
+
+            if not supports_axis and axis.lower() != 'z':
+                return (
+                    f"This FreeCAD version's Draft.make_polar_array() does not "
+                    f"support a custom rotation axis (added in FreeCAD 1.2-dev, "
+                    f"PR #28324) — only 'z' is available here. Requested axis: '{axis}'."
+                )
+
+            kwargs = dict(number=count, angle=angle, center=center, use_link=True)
+            if supports_axis:
+                kwargs['axis'] = axis_vector
+
+            array = Draft.make_polar_array(obj, **kwargs)
 
             self.recompute(doc)
 
