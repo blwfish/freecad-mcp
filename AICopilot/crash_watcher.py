@@ -28,6 +28,15 @@ import time
 LAST_OP_FILE = f"/tmp/freecad_mcp_last_op_{os.getpid()}.json"
 _MAX_ARG_BYTES = 1500   # truncate large args (e.g. long Python scripts)
 
+# A persistent write failure (disk full, permissions, /tmp not writable)
+# used to be completely invisible — the whole crash-diagnosis mechanism
+# this module exists for would silently stop working with no counter, no
+# log line, nothing. Tracked here so it's at least observable to anything
+# that checks; a best-effort console warning fires once per failure
+# streak (not every call) so a full disk doesn't spam the Report View.
+_write_failures = 0
+_last_write_failed = False
+
 
 def set_current_op(tool: str, args: dict) -> None:
     """Write current operation to disk BEFORE executing it.
@@ -52,6 +61,7 @@ def set_current_op(tool: str, args: dict) -> None:
         "started_at": time.time(),
         "pid":        os.getpid(),
     }
+    global _write_failures, _last_write_failed
     try:
         payload = json.dumps(data).encode()
         # Write to a temp file then rename for atomicity
@@ -59,8 +69,30 @@ def set_current_op(tool: str, args: dict) -> None:
         with open(tmp, "wb") as f:
             f.write(payload)
         os.replace(tmp, LAST_OP_FILE)
-    except Exception:
-        pass    # never crash the crash watcher
+        _last_write_failed = False
+    except Exception as e:
+        # Never crash the crash watcher — but don't let the failure vanish
+        # either. _write_failures is always safe to increment; the console
+        # warning is best-effort and independently guarded so a problem
+        # writing it can't become a new crash source.
+        _write_failures += 1
+        if not _last_write_failed:
+            _last_write_failed = True
+            try:
+                import FreeCAD
+                FreeCAD.Console.PrintWarning(
+                    f"[MCP] crash_watcher: failed to write last-op file "
+                    f"({_write_failures} failure(s) so far): {e}\n"
+                )
+            except Exception:
+                pass
+
+
+def get_write_failure_count() -> int:
+    """Number of times set_current_op's atomic write has failed since this
+    process started. Persistent failures (disk full, permissions, /tmp not
+    writable) were previously invisible — nothing counted or logged them."""
+    return _write_failures
 
 
 def clear_current_op() -> None:
