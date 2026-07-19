@@ -136,6 +136,25 @@ view_control(operation="list_objects")
 
 This queries FreeCAD for scene contents. If it returns without error, the full pipeline is working.
 
+## Updating
+
+Pull the latest changes, then re-copy the workbench and bridge files (Steps 2-3 above):
+
+```bash
+git pull
+cp -r AICopilot "$MOD_DIR/"
+cp freecad_mcp_server.py mcp_bridge_framing.py ~/.freecad-mcp/
+```
+
+## Uninstalling
+
+```bash
+rm -rf "$MOD_DIR/AICopilot"
+rm -rf ~/.freecad-mcp
+```
+
+Then remove the `freecad` entry from the agent's MCP server config.
+
 ## Environment Variables
 
 All optional. The server auto-detects sensible defaults.
