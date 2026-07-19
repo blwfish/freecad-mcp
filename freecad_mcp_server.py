@@ -476,8 +476,18 @@ def _load_crash_report():
 _crash_mod = _load_crash_report()
 _op_log    = _crash_mod.get_op_log() if _crash_mod else None
 
+
+# poll_job is called ~1/sec by poll_job_until_done while an async job runs;
+# recording it would fill the 10-slot OpLog ring with poll noise within
+# ~7s, evicting the entry for the actual long-running operation that
+# diagnose() needs — exactly the jobs most likely to crash. The correct
+# completion point for the polled operation is where poll_resp["status"]
+# == "done" (already handled explicitly elsewhere via _complete_op()) —
+# not every individual poll response that merely says "still running".
+_POLL_NOISE_TOOLS = {"poll_job"}
+
 def _record_op(tool: str, args: dict) -> None:
-    if _op_log is not None:
+    if _op_log is not None and tool not in _POLL_NOISE_TOOLS:
         _op_log.record(tool, args)
 
 def _complete_op() -> None:
@@ -588,7 +598,14 @@ async def main():
             except json.JSONDecodeError:
                 pass  # Not JSON, return as-is
 
-            _complete_op()   # mark successful on the bridge side
+            # Only mark the OpLog entry complete here for tools that actually
+            # recorded one (see _POLL_NOISE_TOOLS above) — a poll_job success
+            # means "still running" or "done", not "this send_to_freecad call
+            # itself completed the underlying operation". The real completion
+            # point for a polled job is the explicit status=="done" check in
+            # its caller, which calls _complete_op() itself.
+            if tool_name not in _POLL_NOISE_TOOLS:
+                _complete_op()   # mark successful on the bridge side
             return response
 
         except Exception as e:
