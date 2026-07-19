@@ -65,9 +65,20 @@ def write_discovery(
     }
     path = discovery_path(instance_uuid)
     tmp = path + ".tmp"
-    with open(tmp, "w") as f:
+    # os.open with an explicit mode creates the file at 0o600 atomically —
+    # no window where it briefly exists at the process umask's default
+    # (typically 0o644/0o664, group/world-readable) before a later chmod()
+    # tightens it. Discovery files can contain freecad_binary/socket_path,
+    # so that window is real information exposure, not just cosmetic.
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:  # takes ownership of fd; closes it on any exit path
         json.dump(data, f, indent=2)
     os.replace(tmp, path)
+    # Belt-and-suspenders: os.replace preserves the source file's mode, so
+    # this should already be a no-op — but if the destination path somehow
+    # pre-existed with looser permissions from an older version of this
+    # code, os.replace still adopts the SOURCE's mode on POSIX, so this
+    # stays defensive rather than load-bearing.
     try:
         os.chmod(path, 0o600)
     except OSError:
