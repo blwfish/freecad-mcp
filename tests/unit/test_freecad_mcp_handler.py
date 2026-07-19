@@ -1751,6 +1751,94 @@ class TestExecuteToolInnerRouting:
         assert result["echo"] == "ping"
 
 
+class TestReloadHandlersPreservesState:
+    """M4: _reload_handlers() unconditionally builds fresh ViewOpsHandler/
+    DocumentOpsHandler instances, which would otherwise silently discard
+    _checkpoints/_clip_planes — plain lazily-created instance attributes
+    with no persistence anywhere else.
+
+    The `server` fixture's mock_handlers fixture replaces sys.modules
+    ['handlers'] with a bare types.ModuleType exposing only mocked classes
+    (no real submodules, no __path__) so the rest of this test file doesn't
+    need real handler logic — but that means _reload_handlers' own `import
+    handlers.base` (its first line) fails immediately with "'handlers' is
+    not a package", never reaching the code under test here. Deleting the
+    fake stand-in from sys.modules right before the call forces a genuine
+    import of the real on-disk handlers package (which does work — FreeCAD
+    is already mocked in sys.modules by this point, and handlers/base.py's
+    only external dependency is FreeCAD). sys.modules is snapshotted and
+    fully restored afterward so this doesn't leak into other tests, mirroring
+    what monkeypatch would do automatically if the mutation had gone through
+    it — done manually here because the deletion needs to happen mid-test,
+    not just at fixture teardown.
+    """
+
+    def _drop_fake_handlers_package(self):
+        for name in list(sys.modules):
+            if name == "handlers" or name.startswith("handlers."):
+                del sys.modules[name]
+
+    def test_checkpoints_carried_over_to_new_document_ops_instance(self, server):
+        server.document_ops._checkpoints = {"before_reload": ["Box", "Cylinder"]}
+        old_document_ops = server.document_ops
+
+        snapshot = dict(sys.modules)
+        try:
+            self._drop_fake_handlers_package()
+            result = json.loads(server._reload_handlers())
+        finally:
+            sys.modules.clear()
+            sys.modules.update(snapshot)
+
+        assert "error" not in result, result
+        assert server.document_ops is not old_document_ops, (
+            "test is meaningless unless the instance was actually replaced"
+        )
+        assert server.document_ops._checkpoints == {"before_reload": ["Box", "Cylinder"]}
+
+    def test_clip_planes_carried_over_to_new_view_ops_instance(self, server):
+        server.view_ops._clip_planes = [("scenegraph_node", "clip_node")]
+        old_view_ops = server.view_ops
+
+        snapshot = dict(sys.modules)
+        try:
+            self._drop_fake_handlers_package()
+            result = json.loads(server._reload_handlers())
+        finally:
+            sys.modules.clear()
+            sys.modules.update(snapshot)
+
+        assert "error" not in result, result
+        assert server.view_ops is not old_view_ops, (
+            "test is meaningless unless the instance was actually replaced"
+        )
+        assert server.view_ops._clip_planes == [("scenegraph_node", "clip_node")]
+
+    def test_no_prior_checkpoints_does_not_crash_or_fabricate_state(self, server):
+        """A fresh server (no checkpoints ever taken) must not error, and
+        the new instance's _checkpoints must not be fabricated out of
+        nothing. server.document_ops starts as a MagicMock() from the
+        mock_handlers fixture, and MagicMock's getattr(obj, name, default)
+        always auto-vivifies rather than honoring `default` the way a real
+        object would — so it's swapped for a real DocumentOpsHandler with
+        no _checkpoints ever set, to faithfully represent the actual
+        pre-reload production state this case is meant to cover."""
+        snapshot = dict(sys.modules)
+        try:
+            self._drop_fake_handlers_package()
+            from handlers.document_ops import DocumentOpsHandler
+            server.document_ops = DocumentOpsHandler(server)
+            assert not hasattr(server.document_ops, "_checkpoints")
+
+            result = json.loads(server._reload_handlers())
+        finally:
+            sys.modules.clear()
+            sys.modules.update(snapshot)
+
+        assert "error" not in result, result
+        assert not getattr(server.document_ops, "_checkpoints", None)
+
+
 # ---------------------------------------------------------------------------
 # Interactive selection subsystem (UniversalSelector + continue_selection)
 #
