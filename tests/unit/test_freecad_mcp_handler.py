@@ -1908,7 +1908,13 @@ class TestUniversalSelector:
 
         fake_sel = MagicMock()
         fake_sel.SubElementNames = ["Edge1", "Edge3"]
-        with patch.object(ss_module, "FreeCADGui") as mock_gui:
+        # UniversalSelector now lives in its own module (AICopilot/
+        # universal_selector.py) — its methods close over that module's
+        # FreeCADGui global, not freecad_mcp_handler's, even though the
+        # class is re-exported into ss_module via `from universal_selector
+        # import UniversalSelector`.
+        import universal_selector
+        with patch.object(universal_selector, "FreeCADGui") as mock_gui:
             mock_gui.Selection.getSelectionEx.return_value = [fake_sel]
             completed = selector.complete_selection(op_id)
 
@@ -1925,7 +1931,8 @@ class TestUniversalSelector:
 
         fake_sel = MagicMock()
         fake_sel.SubElementNames = ["Face2"]
-        with patch.object(ss_module, "FreeCADGui") as mock_gui:
+        import universal_selector
+        with patch.object(universal_selector, "FreeCADGui") as mock_gui:
             mock_gui.Selection.getSelectionEx.return_value = [fake_sel]
             completed = selector.complete_selection(op_id)
 
