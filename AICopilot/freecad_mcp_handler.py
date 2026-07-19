@@ -1941,6 +1941,15 @@ class FreeCADSocketServer:
         try:
             log_dir = "/tmp/freecad_mcp_debug"
             count = args.get("count", 20)
+            try:
+                count = int(count)
+            except (TypeError, ValueError):
+                count = 20
+            # count=0 must mean "no entries", not lines[-0:] == the entire
+            # file (Python slicing can't distinguish -0 from 0); negative
+            # count must not silently read from the FRONT of the file
+            # instead of the tail.
+            count = max(0, count)
             operation_filter = args.get("operation", None)
 
             if not os.path.exists(log_dir):
@@ -1956,7 +1965,8 @@ class FreeCADSocketServer:
             skipped_malformed = 0
             with open(latest_log, "r") as f:
                 lines = f.readlines()
-                for line in lines[-count:]:
+                tail = lines[-count:] if count > 0 else []
+                for line in tail:
                     try:
                         entry = json.loads(line)
                         if operation_filter and entry.get("operation") != operation_filter:
@@ -1990,8 +2000,16 @@ class FreeCADSocketServer:
                     return json.dumps(entry)
             return json.dumps({"error": f"No traceback found for error_id={error_id!r}. "
                                         f"Buffer holds last {len(self._last_tracebacks)} errors."})
-        count = min(args.get("count", 1), 20)
-        entries = list(self._last_tracebacks)[-count:]
+        count = args.get("count", 1)
+        try:
+            count = int(count)
+        except (TypeError, ValueError):
+            count = 1
+        # Same count=0/negative hazard as _get_debug_logs: lines[-0:] is the
+        # entire list, not empty, and a negative count would silently read
+        # from the front of the buffer instead of the tail.
+        count = max(0, min(count, 20))
+        entries = list(self._last_tracebacks)[-count:] if count > 0 else []
         return json.dumps({
             "tracebacks": entries,
             "total_stored": len(self._last_tracebacks),
