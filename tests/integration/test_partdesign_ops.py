@@ -79,19 +79,25 @@ doc.recompute()
 
 class TestRevolution:
     def test_revolution_full(self, clean_document):
-        """Revolve a sketch full circle around the Y axis.
+        """Revolve a sketch full circle around the Z axis.
 
-        Soft check: the dispatch reaches partdesign_ops.revolution and
-        produces a Part::Revolution feature with the right swept bbox
-        in the XZ plane (radius 15 → 30 mm extent each side, so X and
-        Z dimensions ≥ 30).
+        The sketch is mapped onto XZ_Plane, so its plane is spanned by
+        global X and Z, with Y as the plane's own normal. Z lies IN that
+        plane, so this sweeps real volume: a rectangle from R=5 to R=15,
+        height 20, revolved 360 deg around an in-plane axis at R=0 is a
+        hollow-cylinder ("napkin ring"): V = pi*(15^2-5^2)*20 = 4000*pi
+        = ~12566.37 mm^3. Confirmed empirically against a real FreeCAD
+        instance — this is not a guessed value.
 
-        We don't assert solid volume because the handler creates
-        Part::Revolution without setting Solid=True, so the result is
-        an open surface. An attempted fix (commit 6bcc95c, reverted as
-        3158d4a the same day) set Solid=True but the computed volume
-        stayed ~0 — the real bug is deeper than the Solid flag. See
-        DEFERRED_TESTS.md's "PartDesign Revolution" section.
+        This used to use axis="Y" instead, which is exactly the *other*
+        case: Y is this plane's own normal, so revolving around it cannot
+        sweep any volume (every point stays in the same plane) — that was
+        the real root cause of the long-standing "Revolution produces ~0
+        volume" bug (see DEFERRED_TESTS.md's now-corrected "PartDesign
+        Revolution" section), not a defect in the Solid flag, FreeCAD, or
+        OCCT. See test_revolution_axis_parallel_to_plane_normal_rejected
+        below for that degenerate case, which the handler now rejects
+        outright instead of silently producing a zero-volume "success".
         """
         send_command("execute_python", {
             "code": """
@@ -104,7 +110,7 @@ body.addObject(sketch)
 sketch.AttachmentSupport = [(doc.getObject('XZ_Plane'), '')]
 sketch.MapMode = 'FlatFace'
 
-# L-shaped profile offset from Y axis (must not cross the revolution axis)
+# L-shaped profile offset from Z axis (must not cross the revolution axis)
 sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(5,0,0), FreeCAD.Vector(15,0,0)))
 sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(15,0,0), FreeCAD.Vector(15,20,0)))
 sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(15,20,0), FreeCAD.Vector(5,20,0)))
@@ -121,19 +127,18 @@ result = None
         result = send_command("partdesign_operations", {
             "operation": "revolution",
             "sketch_name": "RevSketch",
-            "axis": "Y",
+            "axis": "Z",
             "angle": 360,
         })
         assert_op_succeeded(result, "revolution full")
-        # Soft geometry check: feature exists with non-trivial XZ extent
         props = get_shape_props(clean_document, "Revolution")
         assert props is not None, "Revolution produced no Shape"
-        bbox = props['bbox']
-        assert bbox[0] >= 25 and bbox[2] >= 25, \
-            f"Expected revolution to sweep at least 25 mm in X and Z, got {bbox}"
+        assert_volume_close(props['volume'], 12566.37, op_label="revolution full")
 
     def test_revolution_partial(self, clean_document):
-        """Revolve 180 degrees."""
+        """Revolve 180 degrees - half the full-circle volume for the same
+        annular cross-section: 0.5 * pi*(15^2-5^2)*10 = 1000*pi = ~3141.59.
+        """
         send_command("execute_python", {
             "code": """
 import Part, Sketcher
@@ -161,11 +166,56 @@ doc.recompute()
         result = send_command("partdesign_operations", {
             "operation": "revolution",
             "sketch_name": "Rev180Sketch",
-            "axis": "Y",
+            "axis": "Z",
             "angle": 180,
         })
-        result_str = str(result)
-        assert "Unknown" not in result_str
+        assert_op_succeeded(result, "revolution partial")
+        props = get_shape_props(clean_document, "Revolution")
+        assert props is not None, "Revolution produced no Shape"
+        assert_volume_close(props['volume'], 3141.59, op_label="revolution partial")
+
+    def test_revolution_axis_parallel_to_plane_normal_rejected(self, clean_document):
+        """The degenerate case: axis="Y" against this same XZ_Plane sketch
+        is exactly the combination that produced ~0 volume "successfully"
+        before this fix. Must now be an explicit, actionable error instead.
+        """
+        send_command("execute_python", {
+            "code": """
+import Part, Sketcher
+doc = FreeCAD.ActiveDocument
+body = doc.addObject('PartDesign::Body', 'Body')
+
+sketch = doc.addObject('Sketcher::SketchObject', 'RevBadAxisSketch')
+body.addObject(sketch)
+sketch.AttachmentSupport = [(doc.getObject('XZ_Plane'), '')]
+sketch.MapMode = 'FlatFace'
+
+sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(5,0,0), FreeCAD.Vector(15,0,0)))
+sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(15,0,0), FreeCAD.Vector(15,20,0)))
+sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(15,20,0), FreeCAD.Vector(5,20,0)))
+sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(5,20,0), FreeCAD.Vector(5,0,0)))
+sketch.addConstraint(Sketcher.Constraint('Coincident', 0, 2, 1, 1))
+sketch.addConstraint(Sketcher.Constraint('Coincident', 1, 2, 2, 1))
+sketch.addConstraint(Sketcher.Constraint('Coincident', 2, 2, 3, 1))
+sketch.addConstraint(Sketcher.Constraint('Coincident', 3, 2, 0, 1))
+
+doc.recompute()
+'done'
+"""
+        })
+        result = send_command("partdesign_operations", {
+            "operation": "revolution",
+            "sketch_name": "RevBadAxisSketch",
+            "axis": "Y",
+            "angle": 360,
+        })
+        text = _text(result)
+        assert "perpendicular" in text.lower(), \
+            f"Expected an explicit axis-vs-plane rejection, got: {text[:300]}"
+        # No Revolution object should have been created at all - the
+        # validation runs before doc.addObject(), not after.
+        with pytest.raises(AssertionError, match="object not found"):
+            get_shape_props(clean_document, "Revolution")
 
 
 # ---------------------------------------------------------------------------

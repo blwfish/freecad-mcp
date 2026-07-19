@@ -50,7 +50,43 @@ emerges.
   return in bounded time; if a regression appears, a unit test against a
   minimal repro is more useful than an integration test.
 
-## partdesign_operations — PartDesign Revolution
+## partdesign_operations — PartDesign Revolution (RESOLVED 2026-07-19)
+
+- **Root cause was never the `Solid` flag — it was the test's axis choice.**
+  The original diagnosis below (kept for history) concluded the bug was
+  "deeper than the `Solid` flag." That conclusion was itself wrong. The
+  actual cause: `test_revolution_full`'s sketch is mapped onto `XZ_Plane`
+  (normal = global Y), and the test revolved it around axis="Y" — the
+  plane's own normal. Revolving a planar profile around an axis
+  (anti)parallel to its own plane's normal cannot sweep any volume (every
+  point stays within that plane, tracing flat circles), regardless of what
+  software computes it. Confirmed by testing four independent code paths
+  against a real FreeCAD instance — the unmodified MCP handler, the
+  reverted `Solid=True` fix, an extra recompute, and raw OCCT
+  `Face.revolve()` bypassing FreeCAD's `Part::Revolution` App-object
+  entirely — all four produced the *exact same* bit-for-bit degenerate
+  volume (`2.7902947984069056e-12`). Revolving the identical profile
+  around Z instead (which lies in the XZ-plane) gave `12566.37 mm³` —
+  matching, almost to the digit, the "~12566mm³" the original reverted
+  commit's own CI failure cited as the *expected* value. The `Solid=True`
+  fix (`6bcc95c`) was correct all along; it was reverted (`3158d4a`) based
+  on a false-negative measurement against a geometrically-impossible test
+  case, not because the fix itself was wrong.
+- **Fixed 2026-07-19:** `revolution()` now sets `Solid = True` and validates
+  the requested axis isn't (anti)parallel to the sketch's plane normal
+  before creating anything, returning an explicit error instead of a
+  silent zero-volume "success". `groove()` had the same class of bug in a
+  simpler, unconditional form — its `axis='z'` maps to the sketch's own
+  `N_Axis` (local normal), which is *always* degenerate for every sketch,
+  not just placement-dependent — so `'z'` is now rejected outright and the
+  default axis changed from `'z'` to `'x'`. See
+  `AICopilot/handlers/partdesign_ops.py`'s `_axis_is_degenerate_for_sketch`
+  and the `TestRevolution`/`TestGroove` unit tests plus
+  `tests/integration/test_partdesign_ops.py::TestRevolution` for coverage
+  of both the fixed happy path and the now-rejected degenerate case.
+
+<details>
+<summary>Original (incorrect) diagnosis, kept for history</summary>
 
 - **`revolution()` produces an open surface, not a solid, for any profile.**
   `AICopilot/handlers/partdesign_ops.py`'s `revolution()` never sets
@@ -72,3 +108,5 @@ emerges.
   investigation (with access to a real FreeCAD instance to inspect the
   intermediate `Part::Revolution` shape) before attempting the fix again;
   don't re-apply the reverted diff as-is, it was measured not to work.
+
+</details>

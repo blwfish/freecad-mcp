@@ -566,6 +566,12 @@ class TestMirrorFeature(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestRevolution(unittest.TestCase):
+    """make_sketch()'s default Placement is identity (no rotation), so its
+    plane normal is global Z — meaning axis='z' is the *degenerate* choice
+    for these mock sketches (revolving around the plane's own normal), while
+    'x'/'y' are valid (in-plane). This mirrors a real sketch attached to
+    FreeCAD's default XY_Plane, where Z genuinely is the plane's normal.
+    """
     def setUp(self):
         reset_mocks()
         self.handler = make_handler(PartDesignOpsHandler)
@@ -576,15 +582,16 @@ class TestRevolution(unittest.TestCase):
         mock_FreeCAD.ActiveDocument = doc
 
         result = self.handler.revolution({
-            'sketch_name': 'S', 'angle': 360, 'axis': 'z',
+            'sketch_name': 'S', 'angle': 360, 'axis': 'y',
         })
 
         doc.addObject.assert_called_with("Part::Revolution", "Revolution")
         rev = doc.Objects[-1]
         self.assertEqual(rev.Source, sketch)
         self.assertEqual(rev.Angle, 360)
-        self.assertEqual(rev.Axis, (0, 0, 1))
-        assert_success_contains(self, result, "S", "360", "Z")
+        self.assertEqual(rev.Axis, (0, 1, 0))
+        self.assertIs(rev.Solid, True)
+        assert_success_contains(self, result, "S", "360", "Y")
 
     def test_invalid_state_errors_instead_of_false_success(self):
         sketch = make_sketch("S")
@@ -592,7 +599,7 @@ class TestRevolution(unittest.TestCase):
         mock_FreeCAD.ActiveDocument = doc
         _make_next_addobject_invalid(doc, "Part::Revolution")
 
-        result = self.handler.revolution({'sketch_name': 'S', 'angle': 360})
+        result = self.handler.revolution({'sketch_name': 'S', 'angle': 360, 'axis': 'x'})
 
         assert_error_contains(self, result, "failed to compute")
 
@@ -621,6 +628,35 @@ class TestRevolution(unittest.TestCase):
         assert_error_contains(self, result, "invalid axis", "q")
         doc.addObject.assert_not_called()
 
+    def test_axis_parallel_to_sketch_normal_rejected(self):
+        """Revolving a planar profile around its own plane's normal sweeps
+        zero volume by construction - confirmed empirically against a real
+        FreeCAD instance (identical near-zero volume from the handler, from
+        Part::Revolution with Solid explicitly set, and from raw OCCT
+        Face.revolve() bypassing FreeCAD entirely). Must be rejected before
+        creating anything, not silently produce a degenerate 'success'."""
+        sketch = make_sketch("S")  # identity Placement -> normal is global Z
+        doc = make_mock_doc([sketch])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.revolution({'sketch_name': 'S', 'axis': 'z'})
+
+        assert_error_contains(self, result, "perpendicular")
+        doc.addObject.assert_not_called()
+
+    def test_default_axis_is_also_rejected_for_default_placement_sketch(self):
+        """axis defaults to 'z' when omitted - for a sketch on the (very
+        common) default/identity placement, that default is *also* the
+        degenerate choice. No silent default-axis fallback here either."""
+        sketch = make_sketch("S")
+        doc = make_mock_doc([sketch])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.revolution({'sketch_name': 'S'})
+
+        assert_error_contains(self, result, "perpendicular")
+        doc.addObject.assert_not_called()
+
 
 class TestGroove(unittest.TestCase):
     def setUp(self):
@@ -641,11 +677,22 @@ class TestGroove(unittest.TestCase):
         mock_FreeCAD.ActiveDocument = doc
 
         result = self.handler.groove({
-            'sketch_name': 'S', 'angle': 180, 'axis': 'z',
+            'sketch_name': 'S', 'angle': 180, 'axis': 'x',
         })
 
         body.newObject.assert_called_with("PartDesign::Groove", "Groove")
-        assert_success_contains(self, result, "S", "180", "Z")
+        assert_success_contains(self, result, "S", "180", "X")
+
+    def test_default_axis_is_x_not_the_always_degenerate_z(self):
+        sketch = make_sketch("S")
+        body = make_body("Body", group=[sketch])
+        doc = make_mock_doc([body, sketch])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.groove({'sketch_name': 'S', 'angle': 90})
+
+        body.newObject.assert_called_with("PartDesign::Groove", "Groove")
+        assert_success_contains(self, result, "S", "90", "X")
 
     def test_invalid_axis_rejected_instead_of_silent_default(self):
         sketch = make_sketch("S")
@@ -656,6 +703,22 @@ class TestGroove(unittest.TestCase):
         result = self.handler.groove({'sketch_name': 'S', 'axis': 'q'})
 
         assert_error_contains(self, result, "invalid axis", "q")
+        body.newObject.assert_not_called()
+
+    def test_n_axis_rejected_as_always_degenerate(self):
+        """N_Axis is the sketch's own plane normal by construction, for
+        every sketch unconditionally (unlike revolution()'s global axis
+        choice, which depends on the sketch's actual placement) - so 'z'
+        here always sweeps zero volume, with no exception, and is rejected
+        outright rather than validated against placement at runtime."""
+        sketch = make_sketch("S")
+        body = make_body("Body", group=[sketch])
+        doc = make_mock_doc([body, sketch])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.groove({'sketch_name': 'S', 'axis': 'z'})
+
+        assert_error_contains(self, result, "n_axis")
         body.newObject.assert_not_called()
 
 

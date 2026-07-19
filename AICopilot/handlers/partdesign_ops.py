@@ -652,6 +652,32 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating mirror: {e}"
 
+    def _sketch_plane_normal(self, sketch) -> "FreeCAD.Vector":
+        """Global-space unit normal of sketch's own plane, from its Placement.
+
+        A Sketcher::SketchObject's 2D geometry always lies in its own local
+        XY plane (local Z is always the plane's normal) — this maps that
+        local normal into global coordinates via the sketch's Placement.
+        """
+        return sketch.Placement.Rotation.multVec(FreeCAD.Vector(0, 0, 1))
+
+    def _axis_is_degenerate_for_sketch(self, axis_vector, sketch) -> bool:
+        """True if revolving sketch around axis_vector (a global unit vector)
+        cannot sweep any volume.
+
+        A planar profile revolved around an axis (anti)parallel to its own
+        plane's normal never leaves that plane — every point stays at the
+        same coordinate along the axis, tracing flat circles instead of
+        sweeping a solid. Confirmed empirically: identical near-zero volume
+        came back from the MCP handler, from Part::Revolution with Solid
+        explicitly set, and from raw OCCT Face.revolve() bypassing FreeCAD's
+        App layer entirely — the degeneracy is in the geometry requested,
+        not any one layer of code.
+        """
+        normal = self._sketch_plane_normal(sketch)
+        axis_v = FreeCAD.Vector(*axis_vector)
+        return abs(normal.dot(axis_v)) > 1 - 1e-6
+
     def revolution(self, args: Dict[str, Any]) -> str:
         """Revolve a sketch around an axis to create solid of revolution."""
         try:
@@ -678,10 +704,20 @@ class PartDesignOpsHandler(BaseHandler):
                 # revolving around Z.
                 return f"Invalid axis '{axis}': must be 'x', 'y', or 'z'"
 
+            if self._axis_is_degenerate_for_sketch(axis_vector, sketch):
+                return (
+                    f"Axis '{axis.upper()}' is perpendicular to {sketch_name}'s "
+                    "plane (i.e. it's that plane's own normal) — revolving a "
+                    "planar profile around its own plane's normal cannot sweep "
+                    "any volume, since every point stays within that plane. "
+                    "Choose an axis that lies within the sketch's plane instead."
+                )
+
             revolution = doc.addObject("Part::Revolution", name)
             revolution.Source = sketch
             revolution.Angle = angle
             revolution.Axis = axis_vector
+            revolution.Solid = True
 
             self.recompute(doc)
 
@@ -698,7 +734,7 @@ class PartDesignOpsHandler(BaseHandler):
         """Create a groove (subtractive revolution) from a sketch."""
         try:
             sketch_name = args.get('sketch_name', '')
-            axis = args.get('axis', 'z')
+            axis = args.get('axis', 'x')
             angle = args.get('angle', 360)
             name = args.get('name', 'Groove')
 
@@ -716,13 +752,25 @@ class PartDesignOpsHandler(BaseHandler):
 
             # Map the requested revolution axis to the sketch's local axes:
             #   x -> H_Axis (horizontal), y -> V_Axis (vertical), z -> N_Axis (normal).
-            axis_refs = {'x': 'H_Axis', 'y': 'V_Axis', 'z': 'N_Axis'}
+            # N_Axis is excluded (see below) — unlike revolution()'s global
+            # axis choice, N_Axis is *unconditionally* the sketch's own plane
+            # normal for every sketch, by construction, so it can never sweep
+            # volume; there's no sketch placement that makes it valid.
+            axis_refs = {'x': 'H_Axis', 'y': 'V_Axis'}
             ref_axis = axis_refs.get(axis.lower())
             if ref_axis is None:
+                if axis.lower() == 'z':
+                    return (
+                        "Invalid axis 'z': the sketch's own normal (N_Axis) "
+                        "cannot be used as a groove axis — revolving a planar "
+                        "profile around its own plane's normal always sweeps "
+                        "zero volume, for any sketch. Use 'x' (H_Axis) or 'y' "
+                        "(V_Axis), which lie in the sketch's plane."
+                    )
                 # Validated before creating the object — see revolution()
                 # for the identical silent-default/message-lie bug this
                 # mirrors.
-                return f"Invalid axis '{axis}': must be 'x', 'y', or 'z'"
+                return f"Invalid axis '{axis}': must be 'x' or 'y'"
 
             groove = body.newObject("PartDesign::Groove", name)
             groove.Profile = sketch

@@ -17,6 +17,7 @@ the handler under test. It side-effects sys.modules so the handler's
 Tests should call reset_mocks() in setUp() to clear state between cases.
 """
 
+import math
 import os
 import sys
 from typing import Any, Dict, Iterable, List, Optional
@@ -257,12 +258,22 @@ class _Vec:
     def distanceToPoint(self, other):
         return (self - other).Length
 
+    def dot(self, other):
+        return self.x * other.x + self.y * other.y + self.z * other.z
+
+    def cross(self, other):
+        return _Vec(
+            self.y * other.z - self.z * other.y,
+            self.z * other.x - self.x * other.z,
+            self.x * other.y - self.y * other.x,
+        )
+
 
 class _Rotation:
     """Stand-in for FreeCAD.Rotation. Accepts (), (axis, angle), or (q1,q2,q3,q4).
 
     FreeCAD's real Rotation has many overloads; we only need
-    enough to survive being constructed and to support .multiply.
+    enough to survive being constructed and to support .multiply/.multVec.
     """
 
     def __init__(self, *args):
@@ -282,6 +293,27 @@ class _Rotation:
 
     def multiply(self, other):
         return _Rotation(self.axis, self.angle + other.angle)
+
+    def multVec(self, vec):
+        """Rotate vec by this axis-angle rotation (angle in degrees) via
+        Rodrigues' formula — stand-in for FreeCAD.Rotation.multVec.
+        Verified against real FreeCAD: rotating local (0,0,1) by
+        Rotation((1,0,0), 90) gives (0,-1,0), matching XZ_Plane's real
+        Placement empirically."""
+        length = self.axis.Length
+        if length == 0:
+            return _Vec(vec.x, vec.y, vec.z)
+        k = _Vec(self.axis.x / length, self.axis.y / length, self.axis.z / length)
+        theta = math.radians(self.angle)
+        cos_t, sin_t = math.cos(theta), math.sin(theta)
+        k_dot_v = k.dot(vec)
+        k_cross_v = k.cross(vec)
+        one_minus_cos = 1 - cos_t
+        return _Vec(
+            vec.x * cos_t + k_cross_v.x * sin_t + k.x * k_dot_v * one_minus_cos,
+            vec.y * cos_t + k_cross_v.y * sin_t + k.y * k_dot_v * one_minus_cos,
+            vec.z * cos_t + k_cross_v.z * sin_t + k.z * k_dot_v * one_minus_cos,
+        )
 
 
 class _Placement:
