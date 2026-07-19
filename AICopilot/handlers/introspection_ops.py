@@ -19,6 +19,7 @@ import json
 import math
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
@@ -66,12 +67,39 @@ def _load_feedback() -> Dict[str, Any]:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict):
+            _quarantine_corrupt_feedback_file(path, reason="top-level JSON was not an object")
             return {"queries": {}}
         if "queries" not in data or not isinstance(data["queries"], dict):
             data["queries"] = {}
         return data
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as e:
+        # The next record_useful() call writes this fresh empty dict back
+        # over `path` in mode 'w' — without quarantining the original
+        # first, whatever was there (including fields a future schema
+        # version added that this code doesn't recognize) would be
+        # permanently destroyed with no trace and no warning.
+        _quarantine_corrupt_feedback_file(path, reason=str(e))
         return {"queries": {}}
+
+
+def _quarantine_corrupt_feedback_file(path: str, reason: str) -> None:
+    """Best-effort: rename an unreadable/malformed feedback file aside
+    before it gets silently overwritten, and warn if possible. Never
+    raises — feedback persistence is explicitly best-effort."""
+    try:
+        quarantine_path = f"{path}.corrupt-{int(time.time())}"
+        os.replace(path, quarantine_path)
+    except OSError:
+        quarantine_path = None
+    try:
+        import FreeCAD
+        FreeCAD.Console.PrintWarning(
+            f"[MCP] introspection feedback file was unreadable ({reason}); "
+            + (f"backed up to {quarantine_path}\n" if quarantine_path
+               else "backup attempt also failed; original may be overwritten\n")
+        )
+    except Exception:
+        pass
 
 
 def _save_feedback(data: Dict[str, Any]) -> None:
