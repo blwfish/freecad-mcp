@@ -3,6 +3,7 @@
 import json
 import FreeCAD
 import FreeCADGui
+import Part
 from typing import Dict, Any
 from .base import BaseHandler
 
@@ -1178,9 +1179,14 @@ class PartDesignOpsHandler(BaseHandler):
             if not face_indices:
                 return "No faces were selected for opening"
 
+            # Part::Thickness has no Source property at all - confirmed live
+            # it raises AttributeError unconditionally ('Part.Feature'
+            # object has no attribute 'Source'). The .Faces assignment
+            # below already carries the base-object reference via its
+            # (object, subelement_names) tuple; this line was both invalid
+            # and redundant.
             shell = doc.addObject("Part::Thickness", name)
             shell.Value = thickness
-            shell.Source = obj
             shell.Join = 2
 
             if hasattr(obj, 'Shape') and obj.Shape.Faces:
@@ -1218,10 +1224,23 @@ class PartDesignOpsHandler(BaseHandler):
             if not obj:
                 return f"Object not found: {object_name}"
 
-            shell = doc.addObject("Part::Thickness", name)
-            shell.Value = thickness
-            shell.Source = obj
-            shell.Join = 2
+            # Part::Thickness (BRepOffsetAPI_MakeThickSolid) genuinely
+            # requires at least one face to remove - confirmed live that
+            # zero faces raises "shape is invalid" regardless of Join mode,
+            # so it can never produce a fully sealed (no-opening) shell.
+            # This also means shell.Source = obj below was never valid:
+            # Part::Thickness has no Source property at all - confirmed
+            # live it raises AttributeError unconditionally on every call.
+            # A truly closed hollow shape is instead built directly: cut an
+            # inward-offset copy of the solid from itself, wrapped in a
+            # generic Part::Feature. Confirmed correct live against a 20mm
+            # box at 2mm wall thickness: expected 20^3 - 16^3 = 3904 mm^3,
+            # got exactly that.
+            inner = obj.Shape.makeOffsetShape(-thickness, 1e-3, fill=False)
+            hollow_shape = obj.Shape.cut(inner)
+
+            shell = doc.addObject("Part::Feature", name)
+            shell.Shape = hollow_shape
 
             self.recompute(doc)
 
@@ -1346,12 +1365,20 @@ class PartDesignOpsHandler(BaseHandler):
             if not sketch:
                 return f"Sketch not found: {sketch_name}"
 
-            helix_curve = doc.addObject("Part::Helix", f"{name}_Path")
-            helix_curve.Pitch = pitch
-            helix_curve.Height = height
-            helix_curve.Radius = 10
-            helix_curve.Angle = 0
-            helix_curve.LeftHanded = left_handed
+            # Part::Helix (the parametric document-object type) has no
+            # LeftHanded property at all - setting it raised AttributeError
+            # unconditionally on every call ('PrimitivePy' object has no
+            # attribute 'LeftHanded'), confirmed against a real FreeCAD
+            # instance. Handedness is only exposed on the plain shape-
+            # computing function Part.makeLongHelix(pitch, height, radius,
+            # angle, hand), so the curve is built as a computed shape
+            # wrapped in a generic Part::Feature instead - the same
+            # wrap-a-computed-shape pattern already used elsewhere in this
+            # file (e.g. the compound-shape helpers), and Part::Sweep's
+            # Spine only needs an object with a .Shape, parametric or not.
+            helix_shape = Part.makeLongHelix(pitch, height, 10, 0, left_handed)
+            helix_curve = doc.addObject("Part::Feature", f"{name}_Path")
+            helix_curve.Shape = helix_shape
 
             if axis.lower() == 'x':
                 helix_curve.Placement.Rotation = FreeCAD.Rotation(FreeCAD.Vector(0, 1, 0), 90)
@@ -1392,7 +1419,12 @@ class PartDesignOpsHandler(BaseHandler):
             if not sketch:
                 return f"Sketch not found: {sketch_name}"
 
-            rib = doc.addObject("Part::Extrude", name)
+            # "Part::Extrude" is not a real FreeCAD document-object type -
+            # doc.addObject raised "not a document object type" on every
+            # call. Confirmed live: the real type is "Part::Extrusion",
+            # which has the exact same Base/Dir/LengthFwd/Solid properties
+            # this method already sets.
+            rib = doc.addObject("Part::Extrusion", name)
             rib.Base = sketch
 
             if direction.lower() == 'horizontal':

@@ -1031,7 +1031,7 @@ class TestCreateRib(unittest.TestCase):
 
         result = self.handler.create_rib({'sketch_name': 'S', 'thickness': 5})
 
-        doc.addObject.assert_called_with("Part::Extrude", "Rib")
+        doc.addObject.assert_called_with("Part::Extrusion", "Rib")
         rib = doc.Objects[-1]
         self.assertEqual(rib.Dir, (0, 1, 0))
         self.assertEqual(rib.LengthFwd, 5)
@@ -1051,7 +1051,7 @@ class TestCreateRib(unittest.TestCase):
         sketch = make_sketch("S")
         doc = make_mock_doc([sketch])
         mock_FreeCAD.ActiveDocument = doc
-        _make_next_addobject_invalid(doc, "Part::Extrude")
+        _make_next_addobject_invalid(doc, "Part::Extrusion")
 
         result = self.handler.create_rib({'sketch_name': 'S'})
 
@@ -1096,11 +1096,43 @@ class TestShellSolid(unittest.TestCase):
         doc.addObject.assert_called_with("Part::Thickness", "Shell")
         shell = doc.Objects[-1]
         self.assertEqual(shell.Value, 2)
-        self.assertEqual(shell.Source, box)
+        # Part::Thickness has no Source property at all (confirmed live:
+        # AttributeError on assignment, unconditionally) - the base object
+        # reference is carried entirely by .Faces's own (object, subelement)
+        # tuple below, not a separate .Source assignment. A MagicMock
+        # auto-vivifies any attribute access, so there's no meaningful way
+        # to assert the code *doesn't* set .Source against this mock beyond
+        # what py_compile/the live-instance verification already confirmed;
+        # the real regression protection here is that .Faces below is the
+        # only reference actually used.
         # Part::Thickness.Faces is a LinkSubList: (object, ("Face5",)) with the
         # 1-based FaceN name — not a raw 0-based int index.
         self.assertEqual(shell.Faces, (box, ("Face5",)))
         assert_success_contains(self, result, "2mm", "1 face")
+
+    def test_auto_shell_closed_uses_offset_and_cut_not_thickness_source(self):
+        """auto_shell_closed=True previously created a Part::Thickness and
+        set .Source on it - Part::Thickness has no Source property at all
+        (confirmed live: unconditional AttributeError), and separately,
+        BRepOffsetAPI_MakeThickSolid (what Part::Thickness wraps) genuinely
+        can't produce a zero-opening shell regardless of property names
+        (confirmed live: "shape is invalid" with zero faces, any Join mode).
+        The fix computes the hollow shape directly (inward offset, cut from
+        the original) and wraps it in a plain Part::Feature."""
+        box = make_box_object("B")
+        doc = make_mock_doc([box])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.shell_solid({
+            'object_name': 'B', 'thickness': 2, 'auto_shell_closed': True,
+        })
+
+        doc.addObject.assert_called_with("Part::Feature", "Shell")
+        shell = doc.Objects[-1]
+        box.Shape.makeOffsetShape.assert_called_once_with(-2, 1e-3, fill=False)
+        box.Shape.cut.assert_called_once_with(box.Shape.makeOffsetShape.return_value)
+        self.assertEqual(shell.Shape, box.Shape.cut.return_value)
+        assert_success_contains(self, result, "2mm", "no opening")
 
 
 class TestAddThickness(unittest.TestCase):
