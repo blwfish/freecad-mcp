@@ -679,7 +679,17 @@ class PartDesignOpsHandler(BaseHandler):
         return abs(normal.dot(axis_v)) > 1 - 1e-6
 
     def revolution(self, args: Dict[str, Any]) -> str:
-        """Revolve a sketch around an axis to create solid of revolution."""
+        """Revolve a sketch around an axis to create solid of revolution.
+
+        Body-aware like fillet/chamfer/thickness elsewhere in this file:
+        creates a genuine PartDesign::Revolution (chains onto the Body's
+        feature tree, gains Midplane/Reversed/UpToFace) when the sketch is
+        in a Body, falling back to standalone Part::Revolution otherwise.
+        Previously this always created Part::Revolution regardless of Body
+        membership — the only one of this operation family to skip that
+        check — confirmed via a live FreeCAD instance that PartDesign::
+        Revolution works cleanly and computes the same correct volume.
+        """
         try:
             sketch_name = args.get('sketch_name', '')
             axis = args.get('axis', 'z')
@@ -694,6 +704,47 @@ class PartDesignOpsHandler(BaseHandler):
             if not sketch:
                 return f"Sketch not found: {sketch_name}"
 
+            body = self.find_body_for_object(sketch, doc)
+
+            if body:
+                # PartDesign::Revolution's ReferenceAxis needs a sketch-local
+                # reference (H_Axis/V_Axis), not a global vector — the same
+                # mapping groove() already uses. N_Axis (axis='z') is always
+                # the sketch's own plane normal by construction, so it's
+                # always degenerate here too, for the identical reason
+                # groove() rejects it — no per-sketch computation needed.
+                axis_refs = {'x': 'H_Axis', 'y': 'V_Axis'}
+                ref_axis = axis_refs.get(axis.lower())
+                if ref_axis is None:
+                    if axis.lower() == 'z':
+                        return (
+                            "Invalid axis 'z': the sketch's own normal "
+                            "(N_Axis) cannot be used as a revolution axis — "
+                            "revolving a planar profile around its own "
+                            "plane's normal always sweeps zero volume, for "
+                            "any sketch. Use 'x' (H_Axis) or 'y' (V_Axis), "
+                            "which lie in the sketch's plane."
+                        )
+                    return f"Invalid axis '{axis}': must be 'x' or 'y'"
+
+                revolution = body.newObject("PartDesign::Revolution", name)
+                revolution.Profile = sketch
+                revolution.ReferenceAxis = (sketch, [ref_axis])
+                revolution.Angle = angle
+
+                self.recompute(doc)
+
+                err = self._check_feature_state(revolution, "Revolution", sketch=sketch)
+                if err:
+                    return err
+
+                return (
+                    f"Created revolution: {revolution.Name} from {sketch_name} "
+                    f"around {axis.upper()}-axis, {angle}° "
+                    f"(PartDesign::Revolution in {body.Name})"
+                )
+
+            # No Body — standalone Part::Revolution, axis is a global vector.
             axis_vectors = {'x': (1, 0, 0), 'y': (0, 1, 0), 'z': (0, 0, 1)}
             axis_vector = axis_vectors.get(axis.lower())
             if axis_vector is None:

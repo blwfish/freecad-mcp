@@ -78,26 +78,37 @@ doc.recompute()
 # ---------------------------------------------------------------------------
 
 class TestRevolution:
+    """All sketches below use body.addObject(sketch), so they're Body
+    members — revolution() now takes the PartDesign::Revolution path for
+    all of them (matching fillet/chamfer/thickness's existing Body-aware
+    pattern), not the standalone Part::Revolution path. That path maps
+    axis='x'/'y' to the sketch-local H_Axis/V_Axis (like groove() already
+    does), NOT the global vectors the standalone path uses — so "which
+    axis produces the swept, non-degenerate shape" is a different value
+    here than it would be for a sketch outside any Body. See
+    TestRevolutionStandalone below for the non-Body path's equivalent
+    coverage, where axis really does mean a global vector.
+    """
+
     def test_revolution_full(self, clean_document):
-        """Revolve a sketch full circle around the Z axis.
+        """Revolve a sketch full circle around H/V-Axis Y (sketch-local
+        V_Axis, which maps to global Z for this XZ_Plane-attached sketch).
 
-        The sketch is mapped onto XZ_Plane, so its plane is spanned by
-        global X and Z, with Y as the plane's own normal. Z lies IN that
-        plane, so this sweeps real volume: a rectangle from R=5 to R=15,
-        height 20, revolved 360 deg around an in-plane axis at R=0 is a
-        hollow-cylinder ("napkin ring"): V = pi*(15^2-5^2)*20 = 4000*pi
-        = ~12566.37 mm^3. Confirmed empirically against a real FreeCAD
-        instance — this is not a guessed value.
+        A rectangle from R=5 to R=15, height 20, revolved 360 deg around an
+        in-plane axis at R=0 is a hollow-cylinder ("napkin ring"):
+        V = pi*(15^2-5^2)*20 = 4000*pi = ~12566.37 mm^3. Confirmed
+        empirically against a real FreeCAD instance — not a guessed value.
 
-        This used to use axis="Y" instead, which is exactly the *other*
-        case: Y is this plane's own normal, so revolving around it cannot
-        sweep any volume (every point stays in the same plane) — that was
-        the real root cause of the long-standing "Revolution produces ~0
-        volume" bug (see DEFERRED_TESTS.md's now-corrected "PartDesign
-        Revolution" section), not a defect in the Solid flag, FreeCAD, or
-        OCCT. See test_revolution_axis_parallel_to_plane_normal_rejected
-        below for that degenerate case, which the handler now rejects
-        outright instead of silently producing a zero-volume "success".
+        This all used to work differently: prior to the Body-aware fix,
+        this exact setup created a standalone Part::Revolution and used
+        axis="Z" (a global vector) to get this same volume; axis="Y" was
+        the *degenerate* choice (Y being this plane's own normal) — that
+        mismatch was the real root cause of the long-standing "Revolution
+        produces ~0 volume" bug (see DEFERRED_TESTS.md's corrected write-up),
+        not a defect in FreeCAD or OCCT. Now that the sketch's Body
+        membership routes this through PartDesign::Revolution instead,
+        'x'/'y' mean sketch-local H_Axis/V_Axis, not global vectors — 'y'
+        (V_Axis) is the axis that reproduces the same valid geometry here.
         """
         send_command("execute_python", {
             "code": """
@@ -110,7 +121,7 @@ body.addObject(sketch)
 sketch.AttachmentSupport = [(doc.getObject('XZ_Plane'), '')]
 sketch.MapMode = 'FlatFace'
 
-# L-shaped profile offset from Z axis (must not cross the revolution axis)
+# L-shaped profile offset from the revolution axis (must not cross it)
 sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(5,0,0), FreeCAD.Vector(15,0,0)))
 sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(15,0,0), FreeCAD.Vector(15,20,0)))
 sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(15,20,0), FreeCAD.Vector(5,20,0)))
@@ -127,17 +138,23 @@ result = None
         result = send_command("partdesign_operations", {
             "operation": "revolution",
             "sketch_name": "RevSketch",
-            "axis": "Z",
+            "axis": "Y",
             "angle": 360,
         })
         assert_op_succeeded(result, "revolution full")
         props = get_shape_props(clean_document, "Revolution")
         assert props is not None, "Revolution produced no Shape"
         assert_volume_close(props['volume'], 12566.37, op_label="revolution full")
+        type_id = send_command("execute_python", {
+            "code": "FreeCAD.ActiveDocument.getObject('Revolution').TypeId"
+        })
+        assert "PartDesign::Revolution" in _text(type_id), \
+            f"Expected a genuine PartDesign::Revolution in the Body, got: {_text(type_id)}"
 
     def test_revolution_partial(self, clean_document):
         """Revolve 180 degrees - half the full-circle volume for the same
         annular cross-section: 0.5 * pi*(15^2-5^2)*10 = 1000*pi = ~3141.59.
+        Axis 'y' for the same reason as test_revolution_full above.
         """
         send_command("execute_python", {
             "code": """
@@ -166,7 +183,7 @@ doc.recompute()
         result = send_command("partdesign_operations", {
             "operation": "revolution",
             "sketch_name": "Rev180Sketch",
-            "axis": "Z",
+            "axis": "Y",
             "angle": 180,
         })
         assert_op_succeeded(result, "revolution partial")
@@ -174,10 +191,15 @@ doc.recompute()
         assert props is not None, "Revolution produced no Shape"
         assert_volume_close(props['volume'], 3141.59, op_label="revolution partial")
 
-    def test_revolution_axis_parallel_to_plane_normal_rejected(self, clean_document):
-        """The degenerate case: axis="Y" against this same XZ_Plane sketch
-        is exactly the combination that produced ~0 volume "successfully"
-        before this fix. Must now be an explicit, actionable error instead.
+    def test_revolution_n_axis_rejected_in_body(self, clean_document):
+        """The Body-path's degenerate case: axis="Z" maps to the sketch's
+        own N_Axis (its plane normal, by construction, for any sketch) —
+        unconditionally rejected, no per-sketch computation needed, unlike
+        the standalone path's placement-dependent check (see
+        TestRevolutionStandalone below). This used to be tested via
+        axis="Y" against the standalone Part::Revolution path before the
+        Body-aware fix; that axis/path combination no longer applies once
+        the sketch's Body membership routes it through PartDesign::Revolution.
         """
         send_command("execute_python", {
             "code": """
@@ -206,14 +228,98 @@ doc.recompute()
         result = send_command("partdesign_operations", {
             "operation": "revolution",
             "sketch_name": "RevBadAxisSketch",
+            "axis": "Z",
+            "angle": 360,
+        })
+        text = _text(result)
+        assert "n_axis" in text.lower(), \
+            f"Expected an explicit N_Axis rejection, got: {text[:300]}"
+        # No Revolution object should have been created at all - the
+        # validation runs before body.newObject(), not after.
+        with pytest.raises(AssertionError, match="object not found"):
+            get_shape_props(clean_document, "Revolution")
+
+
+class TestRevolutionStandalone:
+    """Coverage for the *other* half of revolution()'s dual path: a sketch
+    with no Body at all still gets the original standalone Part::Revolution
+    behavior, where axis really is a global vector and the degenerate case
+    is placement-dependent (not the Body-path's unconditional N_Axis rule).
+    Uses a directly-set Placement instead of AttachmentSupport, since a
+    document with no Body has no XZ_Plane datum object to attach to.
+    """
+
+    def test_standalone_revolution_succeeds_with_in_plane_axis(self, clean_document):
+        """Same profile and orientation as TestRevolution above (Placement
+        matches XZ_Plane's real rotation), but with no Body at all - axis
+        'Z' is a global vector here (the standalone path's mapping), and
+        it's in-plane for this sketch, giving the same known-correct volume.
+        """
+        send_command("execute_python", {
+            "code": """
+import Part, Sketcher
+doc = FreeCAD.ActiveDocument
+sketch = doc.addObject('Sketcher::SketchObject', 'StandaloneRevSketch')
+sketch.Placement = FreeCAD.Placement(FreeCAD.Vector(0,0,0), FreeCAD.Rotation(FreeCAD.Vector(1,0,0), 90))
+sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(5,0,0), FreeCAD.Vector(15,0,0)))
+sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(15,0,0), FreeCAD.Vector(15,20,0)))
+sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(15,20,0), FreeCAD.Vector(5,20,0)))
+sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(5,20,0), FreeCAD.Vector(5,0,0)))
+sketch.addConstraint(Sketcher.Constraint('Coincident', 0, 2, 1, 1))
+sketch.addConstraint(Sketcher.Constraint('Coincident', 1, 2, 2, 1))
+sketch.addConstraint(Sketcher.Constraint('Coincident', 2, 2, 3, 1))
+sketch.addConstraint(Sketcher.Constraint('Coincident', 3, 2, 0, 1))
+doc.recompute()
+'done'
+"""
+        })
+        result = send_command("partdesign_operations", {
+            "operation": "revolution",
+            "sketch_name": "StandaloneRevSketch",
+            "axis": "Z",
+            "angle": 360,
+        })
+        assert_op_succeeded(result, "standalone revolution")
+        props = get_shape_props(clean_document, "Revolution")
+        assert props is not None, "Revolution produced no Shape"
+        assert_volume_close(props['volume'], 12566.37, op_label="standalone revolution")
+        type_id = send_command("execute_python", {
+            "code": "FreeCAD.ActiveDocument.getObject('Revolution').TypeId"
+        })
+        assert "Part::Revolution" in _text(type_id) and "PartDesign" not in _text(type_id), \
+            f"Expected standalone Part::Revolution (no Body present), got: {_text(type_id)}"
+
+    def test_standalone_revolution_axis_parallel_to_plane_normal_rejected(self, clean_document):
+        """The standalone path's degenerate case: axis="Y" is this sketch's
+        own plane normal (placement-dependent check, distinct from the
+        Body path's unconditional N_Axis rejection above)."""
+        send_command("execute_python", {
+            "code": """
+import Part, Sketcher
+doc = FreeCAD.ActiveDocument
+sketch = doc.addObject('Sketcher::SketchObject', 'StandaloneBadAxisSketch')
+sketch.Placement = FreeCAD.Placement(FreeCAD.Vector(0,0,0), FreeCAD.Rotation(FreeCAD.Vector(1,0,0), 90))
+sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(5,0,0), FreeCAD.Vector(15,0,0)))
+sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(15,0,0), FreeCAD.Vector(15,20,0)))
+sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(15,20,0), FreeCAD.Vector(5,20,0)))
+sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(5,20,0), FreeCAD.Vector(5,0,0)))
+sketch.addConstraint(Sketcher.Constraint('Coincident', 0, 2, 1, 1))
+sketch.addConstraint(Sketcher.Constraint('Coincident', 1, 2, 2, 1))
+sketch.addConstraint(Sketcher.Constraint('Coincident', 2, 2, 3, 1))
+sketch.addConstraint(Sketcher.Constraint('Coincident', 3, 2, 0, 1))
+doc.recompute()
+'done'
+"""
+        })
+        result = send_command("partdesign_operations", {
+            "operation": "revolution",
+            "sketch_name": "StandaloneBadAxisSketch",
             "axis": "Y",
             "angle": 360,
         })
         text = _text(result)
         assert "perpendicular" in text.lower(), \
             f"Expected an explicit axis-vs-plane rejection, got: {text[:300]}"
-        # No Revolution object should have been created at all - the
-        # validation runs before doc.addObject(), not after.
         with pytest.raises(AssertionError, match="object not found"):
             get_shape_props(clean_document, "Revolution")
 

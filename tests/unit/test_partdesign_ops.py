@@ -657,6 +657,59 @@ class TestRevolution(unittest.TestCase):
         assert_error_contains(self, result, "perpendicular")
         doc.addObject.assert_not_called()
 
+    def test_revolution_creates_partdesign_revolution_in_body(self):
+        """When the sketch is in a Body, revolution() should behave like
+        its siblings fillet/chamfer/thickness already do: create a real
+        PartDesign::Revolution (chains onto the Body's feature tree, gains
+        Midplane/Reversed/UpToFace) instead of standalone Part::Revolution.
+        Confirmed working via a live FreeCAD instance before this was
+        implemented - PartDesign::Revolution computes the identical correct
+        volume and correctly becomes the Body's tip feature."""
+        sketch = make_sketch("S")
+        body = make_body("Body", group=[sketch])
+        doc = make_mock_doc([body, sketch])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.revolution({
+            'sketch_name': 'S', 'angle': 270, 'axis': 'x',
+        })
+
+        body.newObject.assert_called_with("PartDesign::Revolution", "Revolution")
+        doc.addObject.assert_not_called()
+        rev = body.newObject.return_value
+        self.assertEqual(rev.Profile, sketch)
+        self.assertEqual(rev.ReferenceAxis, (sketch, ['H_Axis']))
+        self.assertEqual(rev.Angle, 270)
+        assert_success_contains(self, result, "S", "270", "X", "PartDesign::Revolution", "Body")
+
+    def test_revolution_n_axis_rejected_in_body_as_always_degenerate(self):
+        """N_Axis is the sketch's own plane normal by construction, for
+        every sketch unconditionally - unlike the standalone path's
+        placement-dependent check, this needs no per-sketch computation,
+        mirroring groove()'s identical rejection."""
+        sketch = make_sketch("S")
+        body = make_body("Body", group=[sketch])
+        doc = make_mock_doc([body, sketch])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.revolution({'sketch_name': 'S', 'axis': 'z'})
+
+        assert_error_contains(self, result, "n_axis")
+        body.newObject.assert_not_called()
+        doc.addObject.assert_not_called()
+
+    def test_revolution_invalid_axis_rejected_in_body(self):
+        sketch = make_sketch("S")
+        body = make_body("Body", group=[sketch])
+        doc = make_mock_doc([body, sketch])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.revolution({'sketch_name': 'S', 'axis': 'q'})
+
+        assert_error_contains(self, result, "invalid axis", "q")
+        body.newObject.assert_not_called()
+        doc.addObject.assert_not_called()
+
 
 class TestGroove(unittest.TestCase):
     def setUp(self):
