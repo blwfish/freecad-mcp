@@ -450,6 +450,27 @@ def _find_headless_script() -> str | None:
 
     return None
 
+
+def _read_launch_log_tail(path: str, max_bytes: int = 4000) -> str:
+    """Best-effort tail of a spawned FreeCAD process's captured stdout/stderr.
+
+    Used only as a diagnostic artifact handed back to the caller verbatim —
+    never parsed or branched on. Never raises; missing/unreadable file
+    returns "".
+    """
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - max_bytes))
+            data = f.read()
+    except OSError:
+        return ""
+    text = data.decode("utf-8", errors="replace")
+    if size > max_bytes:
+        text = "…[truncated]…\n" + text
+    return text
+
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -2512,26 +2533,44 @@ async def main():
             env["FREECAD_MCP_SOCKET"] = sock_path
             if label:
                 env["FREECAD_MCP_LABEL"] = label
+
+            # Captured (not DEVNULL'd) so a fast-crashing process leaves
+            # actual evidence behind instead of a bare timeout message.
+            launch_log_path = f"{sock_path}.launch.log"
+            try:
+                launch_log = open(launch_log_path, "wb")
+            except OSError:
+                launch_log = subprocess.DEVNULL
+
             try:
                 proc = subprocess.Popen(
                     launch_cmd,
                     env=env,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=launch_log,
+                    stderr=subprocess.STDOUT,
                     start_new_session=True,
                 )
             except OSError as e:
+                if launch_log is not subprocess.DEVNULL:
+                    launch_log.close()
                 return [types.TextContent(
                     type="text",
                     text=json.dumps({"error": f"Failed to spawn FreeCAD: {e}"})
                 )]
+            if launch_log is not subprocess.DEVNULL:
+                # Child received its own dup'd fd at fork; our copy can close.
+                launch_log.close()
 
             # GUI startup (workbench load, Qt init) is noticeably slower than
             # headless — give it more time.
             ready_timeout = 60 if gui_mode else 30
             deadline = time.time() + ready_timeout
             ready = False
+            exit_code = None
             while time.time() < deadline:
+                exit_code = proc.poll()
+                if exit_code is not None:
+                    break
                 if os.path.exists(sock_path):
                     try:
                         test_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -2545,13 +2584,20 @@ async def main():
                 await asyncio.sleep(0.5)
 
             if not ready:
-                proc.kill()
                 kind = "GUI" if gui_mode else "Headless"
+                output_tail = _read_launch_log_tail(launch_log_path)
+                if exit_code is not None:
+                    error_msg = f"{kind} FreeCAD exited (code {exit_code}) before becoming ready"
+                else:
+                    proc.kill()
+                    error_msg = f"{kind} FreeCAD did not become ready within {ready_timeout} s"
                 return [types.TextContent(
                     type="text",
                     text=json.dumps({
-                        "error": f"{kind} FreeCAD did not become ready within {ready_timeout} s",
+                        "error": error_msg,
                         "socket_path": sock_path,
+                        "exit_code": exit_code,
+                        "output": output_tail,
                     })
                 )]
 

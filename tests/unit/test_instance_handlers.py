@@ -166,19 +166,34 @@ class TestSpawnInstance:
     - os.path.exists → True (socket appears immediately)
     - socket.socket.connect → succeeds immediately
     - asyncio.sleep → no-op (speeds up tests)
+    - proc.poll() → None while "running"; an int once the mock process has
+      "exited" (mirrors production's early-exit detection — see
+      _spawn's `exit_code` param)
     """
 
     def _spawn(self, bridge, ctx, arguments, *,
                freecadcmd="/fake/FreeCADCmd",
                headless_script="/fake/headless_server.py",
                popen_proc=None,
-               socket_ready=True):
+               socket_ready=True,
+               exit_code=None,
+               output=""):
         """
         Run the spawn handler logic asynchronously and return parsed JSON.
+
+        exit_code: if not None, simulates the spawned process having already
+        exited with this code before the socket became ready — production
+        checks proc.poll() each loop iteration and reports this distinctly
+        from a plain timeout (0 is a valid "exited cleanly" code, so this is
+        an `is not None` check throughout, never a truthiness check).
+        output: fake captured stdout/stderr tail, standing in for what
+        production's _read_launch_log_tail() would have read from the real
+        spawned process's log file.
         """
         if popen_proc is None:
             popen_proc = MagicMock()
             popen_proc.pid = 12345
+        popen_proc.poll.return_value = exit_code
 
         async def _inner():
             import socket as _socket
@@ -209,16 +224,26 @@ class TestSpawnInstance:
             import time as _time
             deadline = _time.time() + 30
             ready = False
+            early_exit_code = None
             while _time.time() < deadline:
+                early_exit_code = proc.poll()
+                if early_exit_code is not None:
+                    break
                 if socket_ready:
                     ready = True
                     break
                 await asyncio.sleep(0)
 
             if not ready:
-                proc.kill()
-                return {"error": "Headless FreeCAD did not become ready within 30 s",
-                        "socket_path": sock_path}
+                if early_exit_code is not None:
+                    error_msg = f"Headless FreeCAD exited (code {early_exit_code}) before becoming ready"
+                else:
+                    proc.kill()
+                    error_msg = "Headless FreeCAD did not become ready within 30 s"
+                return {"error": error_msg,
+                        "socket_path": sock_path,
+                        "exit_code": early_exit_code,
+                        "output": output}
 
             ctx.register(sock_path, proc.pid, proc, label or sock_path, headless=True)
             if select_new:
@@ -287,6 +312,50 @@ class TestSpawnInstance:
             result = self._spawn(bridge, ctx, {}, popen_proc=proc, socket_ready=False)
         assert "error" in result
         assert "30 s" in result["error"]
+        proc.kill.assert_called_once()
+
+    def test_spawn_early_exit_reports_exit_code_and_skips_kill(self, bridge):
+        """If the process has already exited (crashed on startup) before the
+        socket ever appears, production detects this via proc.poll() inside
+        the wait loop instead of waiting out the full timeout. It must not
+        call proc.kill() on an already-dead process, and the error must name
+        the real cause distinctly from a plain timeout."""
+        ctx = _fresh_ctx(bridge)
+        proc = MagicMock()
+        proc.pid = 9999
+        result = self._spawn(bridge, ctx, {}, popen_proc=proc, socket_ready=False,
+                              exit_code=1, output="Traceback...\nImportError: no module named foo")
+        assert "error" in result
+        assert "exited (code 1)" in result["error"]
+        assert "30 s" not in result["error"]
+        assert result["exit_code"] == 1
+        assert "ImportError" in result["output"]
+        proc.kill.assert_not_called()
+
+    def test_spawn_early_exit_code_zero_is_not_mistaken_for_still_running(self, bridge):
+        """exit_code=0 (clean exit) must still be treated as 'exited', not
+        as 'still running' — an `is not None` check, not a truthiness check.
+        This is the ambiguous-zero-vs-missing case this project's testing
+        rules flag explicitly."""
+        ctx = _fresh_ctx(bridge)
+        proc = MagicMock()
+        proc.pid = 9999
+        result = self._spawn(bridge, ctx, {}, popen_proc=proc, socket_ready=False, exit_code=0)
+        assert "error" in result
+        assert "exited (code 0)" in result["error"]
+        assert result["exit_code"] == 0
+        proc.kill.assert_not_called()
+
+    def test_spawn_timeout_without_early_exit_has_null_exit_code(self, bridge):
+        """A genuine timeout (process still running, socket never appears)
+        must report exit_code: null, distinguishing it from the early-exit
+        case above."""
+        ctx = _fresh_ctx(bridge)
+        proc = MagicMock()
+        proc.pid = 9999
+        with patch('time.time', side_effect=itertools.count(0, 1000)):
+            result = self._spawn(bridge, ctx, {}, popen_proc=proc, socket_ready=False)
+        assert result["exit_code"] is None
         proc.kill.assert_called_once()
 
     def test_spawn_custom_socket_path_used(self, bridge):
