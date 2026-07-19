@@ -1116,6 +1116,49 @@ class TestCleanupStaleAsyncJobs:
         assert "b" not in server._async_jobs
 
 
+class TestGetDebugLogs:
+    """M1: _get_debug_logs shares the same count<=0 slice hazard as
+    _get_last_traceback. glob.glob and os.path.exists are patched (rather
+    than writing into the real hardcoded /tmp/freecad_mcp_debug) so the
+    method reads a real tmp_path file without touching the real path."""
+
+    def _write_log(self, tmp_path):
+        log_file = tmp_path / "ops.jsonl"
+        log_file.write_text(
+            '{"operation": "a"}\n{"operation": "b"}\n{"operation": "c"}\n'
+        )
+        return log_file
+
+    def test_count_zero_returns_no_entries(self, server, tmp_path):
+        log_file = self._write_log(tmp_path)
+        with patch("os.path.exists", return_value=True), \
+             patch("glob.glob", return_value=[str(log_file)]):
+            out = json.loads(server._get_debug_logs({"count": 0}))
+        assert out["entries"] == []
+
+    def test_negative_count_returns_no_entries_not_reversed(self, server, tmp_path):
+        log_file = self._write_log(tmp_path)
+        with patch("os.path.exists", return_value=True), \
+             patch("glob.glob", return_value=[str(log_file)]):
+            out = json.loads(server._get_debug_logs({"count": -5}))
+        assert out["entries"] == []
+
+    def test_positive_count_returns_tail_entries(self, server, tmp_path):
+        log_file = self._write_log(tmp_path)
+        with patch("os.path.exists", return_value=True), \
+             patch("glob.glob", return_value=[str(log_file)]):
+            out = json.loads(server._get_debug_logs({"count": 2}))
+        assert [e["operation"] for e in out["entries"]] == ["b", "c"]
+
+    def test_non_numeric_count_falls_back_to_default(self, server, tmp_path):
+        log_file = self._write_log(tmp_path)
+        with patch("os.path.exists", return_value=True), \
+             patch("glob.glob", return_value=[str(log_file)]):
+            out = json.loads(server._get_debug_logs({"count": "not-a-number"}))
+        # default is 20, larger than the 3 available lines -> all 3
+        assert len(out["entries"]) == 3
+
+
 class TestTracebackRingBuffer:
     """Round-trip + boundary coverage for _store_traceback / _get_last_traceback
     (the error_id mechanism that get_last_traceback depends on)."""
@@ -1141,13 +1184,35 @@ class TestTracebackRingBuffer:
         assert newest["traceback"] == "tb24"
         assert json.loads(server._get_last_traceback({}))["total_stored"] == 20
 
-    def test_count_zero_returns_all_not_none(self, server):
-        """count=0 hits the `[-0:]` == `[0:]` slice → returns ALL stored, not
-        zero. Pins a surprising boundary (the author likely meant 'none')."""
+    def test_count_zero_returns_none_not_all(self, server):
+        """M1: count=0 used to hit the `[-0:]` == `[0:]` slice and return
+        ALL stored entries instead of zero — fixed to treat count<=0 as
+        'return nothing' explicitly rather than relying on slice sign."""
         for i in range(3):
             server._store_traceback(f"tb{i}")
         out = json.loads(server._get_last_traceback({"count": 0}))
-        assert len(out["tracebacks"]) == 3
+        assert out["tracebacks"] == []
+
+    def test_negative_count_returns_none_not_reversed(self, server):
+        """A negative count must not silently read from the FRONT of the
+        buffer instead of the tail."""
+        for i in range(5):
+            server._store_traceback(f"tb{i}")
+        out = json.loads(server._get_last_traceback({"count": -2}))
+        assert out["tracebacks"] == []
+
+    def test_count_one_returns_single_most_recent(self, server):
+        for i in range(3):
+            server._store_traceback(f"tb{i}")
+        out = json.loads(server._get_last_traceback({"count": 1}))
+        assert len(out["tracebacks"]) == 1
+        assert out["tracebacks"][0]["traceback"] == "tb2"
+
+    def test_non_numeric_count_falls_back_to_default(self, server):
+        for i in range(3):
+            server._store_traceback(f"tb{i}")
+        out = json.loads(server._get_last_traceback({"count": "not-a-number"}))
+        assert len(out["tracebacks"]) == 1
 
 
 # ---------------------------------------------------------------------------
