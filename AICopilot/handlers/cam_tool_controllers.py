@@ -85,7 +85,32 @@ class CAMToolControllersHandler(BaseHandler):
             spindle_speed = args.get('spindle_speed', 10000)
             feed_rate = args.get('feed_rate', 1000)           # mm/min from user
             vertical_feed_rate = args.get('vertical_feed_rate', feed_rate / 3)
-            tool_number = args.get('tool_number', 1)
+
+            # Existing tool_number values already in use in THIS job — a
+            # duplicate T-code in exported G-code loads the wrong tool
+            # during a tool change on real hardware, not just a display
+            # nit. Every caller that didn't specify tool_number previously
+            # got the same hardcoded default (1), so a job with several
+            # auto-added controllers collided on every one of them.
+            existing_controllers = job.Tools.Group if hasattr(job, 'Tools') and hasattr(job.Tools, 'Group') else []
+            existing_numbers = {tc.ToolNumber for tc in existing_controllers if hasattr(tc, 'ToolNumber')}
+
+            if 'tool_number' in args:
+                tool_number = args['tool_number']
+                if tool_number in existing_numbers:
+                    error = Exception(
+                        f"tool_number {tool_number} is already used by another tool "
+                        f"controller in job '{job_name}'. Duplicate T-codes cause the "
+                        f"wrong tool to load during a tool change. Choose a different "
+                        f"tool_number, or omit it to auto-assign the next available one."
+                    )
+                    return self.log_and_return("add_tool_controller", args, error=error, duration=time.time() - start_time)
+            else:
+                # Not specified — auto-assign the next available number
+                # instead of always defaulting to 1.
+                tool_number = 1
+                while tool_number in existing_numbers:
+                    tool_number += 1
 
             # FC 1.2 stores feed rates in mm/s internally
             controller.SpindleSpeed = float(spindle_speed)
