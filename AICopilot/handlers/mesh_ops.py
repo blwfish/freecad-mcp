@@ -582,49 +582,55 @@ class MeshOpsHandler(BaseHandler):
                 # Work on a copy to preserve original
                 mesh_copy = mesh.copy()
                 repairs_done = []
+                # Each bare `except Exception: pass` below made a repair
+                # call that actually RAISED indistinguishable from one that
+                # ran fine and simply found nothing to fix — both produced
+                # no entry in repairs_done. Track failures explicitly so
+                # the caller can tell "no such issue" from "repair failed".
+                repairs_failed = []
 
                 try:
                     mesh_copy.removeDuplicatedPoints()
                     if mesh_copy.CountPoints < orig_points:
                         repairs_done.append(f"removed {orig_points - mesh_copy.CountPoints} duplicate points")
-                except Exception:
-                    pass
+                except Exception as e:
+                    repairs_failed.append(f"removeDuplicatedPoints: {e}")
 
                 try:
                     before = mesh_copy.CountFacets
                     mesh_copy.removeDuplicatedFacets()
                     if mesh_copy.CountFacets < before:
                         repairs_done.append(f"removed {before - mesh_copy.CountFacets} duplicate facets")
-                except Exception:
-                    pass
+                except Exception as e:
+                    repairs_failed.append(f"removeDuplicatedFacets: {e}")
 
                 try:
                     before = mesh_copy.CountFacets
                     mesh_copy.fixDegenerations()
                     if mesh_copy.CountFacets != before:
                         repairs_done.append("fixed degenerate facets")
-                except Exception:
-                    pass
+                except Exception as e:
+                    repairs_failed.append(f"fixDegenerations: {e}")
 
                 try:
                     mesh_copy.fixSelfIntersections()
                     if not mesh_copy.hasSelfIntersections():
                         repairs_done.append("fixed self-intersections")
-                except Exception:
-                    pass
+                except Exception as e:
+                    repairs_failed.append(f"fixSelfIntersections: {e}")
 
                 try:
                     mesh_copy.harmonizeNormals()
                     repairs_done.append("harmonized normals")
-                except Exception:
-                    pass
+                except Exception as e:
+                    repairs_failed.append(f"harmonizeNormals: {e}")
 
                 try:
                     mesh_copy.fillupHoles()
                     if mesh_copy.isSolid():
                         repairs_done.append("filled holes (now watertight)")
-                except Exception:
-                    pass
+                except Exception as e:
+                    repairs_failed.append(f"fillupHoles: {e}")
 
                 # Apply repaired mesh
                 obj.Mesh = mesh_copy
@@ -635,6 +641,11 @@ class MeshOpsHandler(BaseHandler):
                         result += f"  + {repair}\n"
                 else:
                     result += "  (no automatic repairs succeeded)\n"
+
+                if repairs_failed:
+                    result += "\n  Repairs that raised an error (not applied):\n"
+                    for failure in repairs_failed:
+                        result += f"    ! {failure}\n"
 
                 # Re-check
                 remaining = []

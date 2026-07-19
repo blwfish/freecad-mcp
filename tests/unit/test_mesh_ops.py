@@ -681,6 +681,36 @@ class TestValidateMesh(unittest.TestCase):
         self.assertIn("harmonized normals", result)
         self.assertIn("All issues resolved", result)
 
+    def test_auto_repair_reports_raised_failures_not_silence(self):
+        """M9: each of the 6 repair calls was wrapped in a bare
+        `except Exception: pass` — a repair call that actually RAISED was
+        indistinguishable from one that ran fine and found nothing to fix.
+        Must now surface which repair(s) raised."""
+        mesh_obj = make_mesh_object("Bad", count_points=105, count_facets=210)
+        mesh_obj.Mesh.hasNonManifolds.return_value = True
+        mesh_obj.Mesh.isSolid.return_value = False
+
+        repaired = mesh_obj.Mesh.copy.return_value
+        repaired.CountPoints = 105  # unchanged: removeDuplicatedPoints raised, didn't run
+        repaired.CountFacets = 210
+        repaired.removeDuplicatedPoints.side_effect = RuntimeError("OCCT internal error")
+        repaired.hasNonManifolds.return_value = False
+        repaired.hasSelfIntersections.return_value = False
+        repaired.isSolid.return_value = True
+
+        doc = make_mock_doc([mesh_obj])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.validate_mesh({
+            'object_name': 'Bad',
+            'auto_repair': True
+        })
+        self.assertIn("Repairs that raised an error", result)
+        self.assertIn("removeDuplicatedPoints", result)
+        self.assertIn("OCCT internal error", result)
+        # Other repairs must still have run despite one raising.
+        self.assertIn("harmonized normals", result)
+
 
 class TestSimplifyMesh(unittest.TestCase):
     """Tests for simplify_mesh operation."""
