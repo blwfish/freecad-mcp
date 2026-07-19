@@ -1813,6 +1813,18 @@ class FreeCADSocketServer:
                 FixtureOpsHandler,
             )
 
+            # _checkpoints (DocumentOpsHandler) and _clip_planes (ViewOpsHandler)
+            # are lazily-created plain instance attributes with no persistence
+            # anywhere else. Replacing the handler instances below would
+            # otherwise silently discard them: rollback_to_checkpoint would
+            # report a misleading "no checkpoint named X" for a checkpoint
+            # that genuinely existed before this reload, and any pending
+            # clip-plane Coin3D scene-graph node would become unreachable
+            # (its handle only lived in the old instance's list) and leak in
+            # the 3D view forever, since nothing could find it to remove it.
+            old_checkpoints = getattr(self, 'document_ops', None) and getattr(self.document_ops, '_checkpoints', None)
+            old_clip_planes = getattr(self, 'view_ops', None) and getattr(self.view_ops, '_clip_planes', None)
+
             # Re-create handler instances
             self.primitives = PrimitivesHandler(self, _log_operation, _capture_state)
             self.boolean_ops = BooleanOpsHandler(self, _log_operation, _capture_state)
@@ -1842,6 +1854,10 @@ class FreeCADSocketServer:
                 self, self._gui_task_queue, self._gui_response_queue,
                 _log_operation, _capture_state
             )
+            if old_checkpoints:
+                self.document_ops._checkpoints = old_checkpoints
+            if old_clip_planes:
+                self.view_ops._clip_planes = old_clip_planes
 
             # Reload freecad_mcp_handler.py itself and rebind _execute_tool_inner
             # so dispatch-map changes (new tools added to generic_dispatch_map)
