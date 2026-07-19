@@ -220,11 +220,18 @@ class SpatialOpsHandler(BaseHandler):
                 'Z+': max(0, inner_bb.ZMax - outer_bb.ZMax),
             }
 
-            any_overhang = any(v > _VOL_TOL for v in overhangs.values())
+            # Overhangs are linear mm distances (bounding-box coordinate
+            # deltas), not volumes — must compare against _OCCT_LIN_TOL
+            # (1e-7 mm), not _VOL_TOL (1e-9 mm^3). Using the volume
+            # threshold here made this check 100x too sensitive, flagging
+            # ordinary floating-point roundoff as a real overhang — the
+            # identical confusion this file already fixed once in
+            # clearance() (see the comment near _OCCT_LIN_TOL's first use).
+            any_overhang = any(v > _OCCT_LIN_TOL for v in overhangs.values())
             if any_overhang:
                 lines.append(f"  Overhangs:")
                 for axis, val in overhangs.items():
-                    if val > _VOL_TOL:
+                    if val > _OCCT_LIN_TOL:
                         lines.append(f"    {axis}: {val:.4f} mm")
             else:
                 lines.append(f"  No bounding-box overhang")
