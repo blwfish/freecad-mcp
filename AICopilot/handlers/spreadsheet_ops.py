@@ -511,7 +511,13 @@ class SpreadsheetOpsHandler(BaseHandler):
             csv_data = buf.getvalue()
 
             # Flag if the sheet has populated cells beyond the exported range.
+            # A bare `except: pass` here made truncated silently stay False
+            # whenever the CHECK itself failed — indistinguishable from
+            # "verified: nothing was truncated". truncation_check_error is
+            # only present when the check couldn't run, so a caller can
+            # tell "confirmed complete" from "unknown, couldn't confirm".
             truncated = False
+            truncation_check_error = None
             try:
                 if callable(getattr(spreadsheet, 'getUsedRange', None)):
                     ur = spreadsheet.getUsedRange()
@@ -520,16 +526,19 @@ class SpreadsheetOpsHandler(BaseHandler):
                         if m and (_col_to_num(m.group(1)) > end_col_num
                                   or int(m.group(2)) > end_row):
                             truncated = True
-            except Exception:
-                pass
+            except Exception as e:
+                truncation_check_error = str(e)
 
-            return json.dumps({
+            result = {
                 "spreadsheet": spreadsheet_name,
                 "range": f"{start_cell}:{end_cell}",
                 "truncated": truncated,
                 "errors": errors,
                 "csv": csv_data
-            })
+            }
+            if truncation_check_error:
+                result["truncation_check_error"] = truncation_check_error
+            return json.dumps(result)
 
         except Exception as e:
             return f"Error exporting CSV: {e}"
