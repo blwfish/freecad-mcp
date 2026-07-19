@@ -18,6 +18,27 @@ _FACE_THRESH_HIGH  = 80_000   # above this: cap at 640x480
 _FACE_THRESH_HUGE  = 200_000  # above this: cap at 400x300
 
 
+def _read_png_dimensions(path):
+    """Read a PNG's actual width/height from its IHDR chunk, without a
+    Pillow dependency. Returns None if the file isn't a well-formed PNG.
+
+    Needed because macOS `screencapture -x` (no -R region flag) captures
+    the entire screen at its native resolution — never the caller's
+    requested width/height — so echoing the request back as if it were
+    the capture's real dimensions was simply wrong metadata.
+    """
+    import struct
+    try:
+        with open(path, "rb") as f:
+            header = f.read(24)
+        if len(header) < 24 or header[:8] != b'\x89PNG\r\n\x1a\n':
+            return None
+        width, height = struct.unpack('>II', header[16:24])
+        return width, height
+    except Exception:
+        return None
+
+
 def _estimate_scene_faces() -> int:
     """Count total visible faces across all visible objects in the active document."""
     doc = FreeCAD.ActiveDocument
@@ -296,6 +317,14 @@ class ViewOpsHandler(BaseHandler):
             # Use FreeCAD.ActiveDocument (thread-safe) instead of
             # FreeCADGui.activeDocument() which requires the GUI thread.
             if platform.system() == "Darwin":
+                # The non-Darwin branch below already refuses in headless
+                # mode; this branch was missing the same guard, so a
+                # headless macOS instance (GuiUp=False, but a document can
+                # still exist without a GUI) would run screencapture and
+                # report success while actually photographing whatever is
+                # on the physical screen — unrelated to FreeCAD entirely.
+                if not FreeCAD.GuiUp:
+                    return json.dumps({"success": False, "error": "Screenshot not available in headless mode"})
                 if FreeCAD.ActiveDocument is None:
                     return json.dumps({"success": False, "error": "No active document"})
             else:
@@ -324,12 +353,22 @@ class ViewOpsHandler(BaseHandler):
                 if proc.returncode == 0 and os.path.getsize(tmp_path) > 0:
                     with open(tmp_path, "rb") as f:
                         image_data = base64.b64encode(f.read()).decode("utf-8")
+                    # screencapture -x (no -R region flag) captures the
+                    # entire screen at its native resolution, never the
+                    # caller's requested width/height — echoing the
+                    # request back as if it were the capture's real
+                    # dimensions was simply wrong metadata. Fall back to
+                    # the request only if the PNG header can't be parsed
+                    # (should not happen for a real screencapture output,
+                    # but must not crash a successful capture over it).
+                    actual_dims = _read_png_dimensions(tmp_path)
+                    actual_width, actual_height = actual_dims if actual_dims else (req_width, req_height)
                     return json.dumps({
                         "success": True,
                         "image_data": image_data,
                         "mime_type": "image/png",
-                        "width": req_width,
-                        "height": req_height,
+                        "width": actual_width,
+                        "height": actual_height,
                         "method": "screencapture",
                     })
                 # screencapture failed — do NOT fall through to saveImage on macOS.
