@@ -18,8 +18,8 @@ jobs:
             tag: "1.1.1"
             appimage: "FreeCAD_1.1.1-Linux-x86_64-py311.AppImage"
             pytest_args: "-m 'not cam'"
-          - slot: "1.2-dev"
-            tag: "weekly-2026.04.01"
+          - slot: "dev-weekly"
+            tag: "weekly-2026.07.15"
             appimage: ""  # resolved by glob below
             pytest_args: ""
 

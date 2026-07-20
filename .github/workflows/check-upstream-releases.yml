@@ -28,9 +28,6 @@ jobs:
           # release, not necessarily what we can actually install)
           GH_LATEST_1_1=$(gh api repos/FreeCAD/FreeCAD/releases --paginate --jq '.[] | select(.tag_name | test("^1\\.1\\.[0-9]+$")) | .tag_name' | head -1 | sed 's/^v//')
 
-          # Latest 1.2 pre-release (informational)
-          LATEST_1_2=$(gh api repos/FreeCAD/FreeCAD/releases --jq '.[] | select(.prerelease) | select(.tag_name | test("^1\\.2")) | .tag_name' | head -1 | sed 's/^v//')
-
           # Latest version actually published on conda-forge — this is what the
           # Dockerfile installs (`micromamba create -c conda-forge freecad=...`),
           # so it's the only version that's actually actionable right now.
@@ -39,13 +36,41 @@ jobs:
 
           echo "gh_latest_1_1=$GH_LATEST_1_1" >> $GITHUB_OUTPUT
           echo "current_1_1=$CURRENT_1_1" >> $GITHUB_OUTPUT
-          echo "latest_1_2=$LATEST_1_2" >> $GITHUB_OUTPUT
           echo "conda_latest_1_1=$CONDA_LATEST_1_1" >> $GITHUB_OUTPUT
 
           # Only actionable if conda-forge has shipped something newer than
           # what we're pinned to. A GitHub release conda-forge hasn't packaged
-          # yet is not something we can bump to.
-          if [ "$CONDA_LATEST_1_1" != "$CURRENT_1_1" ] || [ -n "$LATEST_1_2" ]; then
+          # yet is not something we can bump to. (The dev series' own drift
+          # -- what this used to track as a "1.2 pre-release" before upstream
+          # moved to calendar-based weekly tags -- is now the separate
+          # dev_weekly check below.)
+          if [ "$CONDA_LATEST_1_1" != "$CURRENT_1_1" ]; then
+            echo "update_available=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check FreeCAD dev-weekly CI pin
+        id: dev_weekly
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Single source of truth: the "dev-weekly" slot's tag in
+          # integration-tests.yml's matrix. Grep the two-line block rather
+          # than a generic "weekly-" search so this doesn't accidentally
+          # pick up a comment or an unrelated tag elsewhere in the file.
+          CURRENT_DEV_WEEKLY=$(grep -A1 'slot: "dev-weekly"' .github/workflows/integration-tests.yml | grep -oE 'weekly-[0-9]{4}\.[0-9]{2}\.[0-9]{2}')
+
+          # Latest weekly- tag by actual publish date (not release-list
+          # order, and not just --limit 1 -- stable releases interleave
+          # with weeklies in the same feed, so filter for "weekly-" before
+          # picking the newest one).
+          LATEST_DEV_WEEKLY=$(gh api repos/FreeCAD/FreeCAD/releases --paginate --jq '
+            [.[] | select(.tag_name | startswith("weekly-"))] | sort_by(.published_at) | reverse | .[0].tag_name
+          ')
+
+          echo "current_dev_weekly=$CURRENT_DEV_WEEKLY" >> $GITHUB_OUTPUT
+          echo "latest_dev_weekly=$LATEST_DEV_WEEKLY" >> $GITHUB_OUTPUT
+
+          if [ "$LATEST_DEV_WEEKLY" != "$CURRENT_DEV_WEEKLY" ]; then
             echo "update_available=true" >> $GITHUB_OUTPUT
           fi
 
@@ -107,6 +132,7 @@ jobs:
       - name: Create issue if updates available
         if: |
           steps.freecad.outputs.update_available == 'true' ||
+          steps.dev_weekly.outputs.update_available == 'true' ||
           steps.python_deps.outputs.update_available == 'true'
         uses: actions/github-script@v7
         with:
@@ -114,7 +140,8 @@ jobs:
             const freecad_1_1_current = '${{ steps.freecad.outputs.current_1_1 }}';
             const freecad_1_1_gh_latest = '${{ steps.freecad.outputs.gh_latest_1_1 }}';
             const freecad_1_1_conda_latest = '${{ steps.freecad.outputs.conda_latest_1_1 }}';
-            const freecad_1_2_latest = '${{ steps.freecad.outputs.latest_1_2 }}';
+            const dev_weekly_current = '${{ steps.dev_weekly.outputs.current_dev_weekly }}';
+            const dev_weekly_latest = '${{ steps.dev_weekly.outputs.latest_dev_weekly }}';
             const python_deps = `${{ steps.python_deps.outputs.outdated }}`;
 
             let body = '# Upstream Dependency Updates Available\n\n';
@@ -127,9 +154,10 @@ jobs:
               if (freecad_1_1_gh_latest !== freecad_1_1_conda_latest) {
                 body += `### FYI — GitHub release ahead of conda-forge\n- Latest GitHub release: v${freecad_1_1_gh_latest}\n- Latest on conda-forge: v${freecad_1_1_conda_latest}\n- **Not actionable yet:** the Dockerfile installs FreeCAD via conda-forge, which hasn't packaged this release. No action until the conda-forge feedstock catches up.\n\n`;
               }
-              if (freecad_1_2_latest) {
-                body += `### Development (1.2-dev)\n- Latest pre-release: v${freecad_1_2_latest}\n- **Note:** CAM tools require 1.2+; all other tools work with 1.1.x stable\n\n`;
-              }
+            }
+
+            if ('${{ steps.dev_weekly.outputs.update_available }}' === 'true') {
+              body += `## FreeCAD dev-weekly CI pin\n- Current (integration-tests.yml \`dev-weekly\` slot): ${dev_weekly_current}\n- Latest weekly on GitHub: ${dev_weekly_latest}\n- **Action:** bump the \`tag:\` under the \`dev-weekly\` slot in \`.github/workflows/integration-tests.yml\` to ${dev_weekly_latest} -- test locally first (a real FreeCAD API/behavior change between weeklies has broken CI-relevant handler code before, e.g. the create_tool ToolBit.from_dict() parameter-format regression fixed 2026-07-20; see KNOWN_ISSUES.md). Do not auto-merge against a moving target -- this issue is informational, not a PR.\n\n`;
             }
 
             if (python_deps.trim()) {
