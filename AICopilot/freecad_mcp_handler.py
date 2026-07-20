@@ -279,6 +279,7 @@ def _recv_exact(sock: socket.socket, num_bytes: int) -> Optional[bytes]:
     return bytes(buf)
 
 
+
 # =============================================================================
 # FreeCAD Socket Server
 # =============================================================================
@@ -305,6 +306,10 @@ class FreeCADSocketServer:
 
         # Async job tracking: job_id -> {status, started, result, error, elapsed}
         self._async_jobs: Dict[str, Dict] = {}
+
+        # Interactive selection manager (fillet/chamfer/draft/shell/thickness
+        # request_selection/complete_selection workflow, plus select/clear/get).
+        self.selector = UniversalSelector()
 
         # Interactive selection manager (fillet/chamfer/draft/shell/thickness
         # request_selection/complete_selection workflow, plus select/clear/get).
