@@ -2,7 +2,7 @@ name: Unit Tests
 
 on:
   push:
-    branches: [main, rewrite-core]
+    branches: [main, dev, rewrite-core]
   pull_request:
     branches: [main]
 

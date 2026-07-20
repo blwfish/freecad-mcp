@@ -9,7 +9,7 @@ name: Docker Build Check
 
 on:
   push:
-    branches: [main, rewrite-core]
+    branches: [main, dev, rewrite-core]
     paths:
       - 'Dockerfile'
       - 'docker-entrypoint.sh'
