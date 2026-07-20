@@ -1,0 +1,174 @@
+{
+  "App::DocumentObjectGroup": {},
+  "App::Link": {
+    "LinkedObject": "App::PropertyXLink"
+  },
+  "Mesh::Feature": {
+    "Mesh": "Mesh::PropertyMeshKernel"
+  },
+  "Part::Box": {
+    "Height": "App::PropertyLength",
+    "Label": "App::PropertyString",
+    "Length": "App::PropertyLength",
+    "Width": "App::PropertyLength"
+  },
+  "Part::Chamfer": {
+    "Base": "App::PropertyLink",
+    "Edges": "Part::PropertyFilletEdges"
+  },
+  "Part::Cone": {
+    "Height": "App::PropertyLength",
+    "Label": "App::PropertyString",
+    "Radius1": "App::PropertyLength",
+    "Radius2": "App::PropertyLength"
+  },
+  "Part::Cut": {
+    "Base": "App::PropertyLink",
+    "Label": "App::PropertyString",
+    "Tool": "App::PropertyLink"
+  },
+  "Part::Cylinder": {
+    "Height": "App::PropertyLength",
+    "Label": "App::PropertyString",
+    "Radius": "App::PropertyLength"
+  },
+  "Part::Extrusion": {
+    "Base": "App::PropertyLink",
+    "Dir": "App::PropertyVector",
+    "LengthFwd": "App::PropertyDistance",
+    "Solid": "App::PropertyBool"
+  },
+  "Part::Feature": {
+    "Label": "App::PropertyString",
+    "Shape": "Part::PropertyPartShape"
+  },
+  "Part::Fillet": {
+    "Base": "App::PropertyLink",
+    "Edges": "Part::PropertyFilletEdges"
+  },
+  "Part::Fuse": {
+    "Base": "App::PropertyLink",
+    "Tool": "App::PropertyLink"
+  },
+  "Part::Loft": {
+    "Ruled": "App::PropertyBool",
+    "Sections": "App::PropertyLinkList",
+    "Solid": "App::PropertyBool"
+  },
+  "Part::Mirroring": {
+    "Base": "App::PropertyPosition",
+    "Normal": "App::PropertyDirection",
+    "Source": "App::PropertyLink"
+  },
+  "Part::MultiCommon": {
+    "Label": "App::PropertyString",
+    "Shapes": "App::PropertyLinkList"
+  },
+  "Part::MultiFuse": {
+    "Label": "App::PropertyString",
+    "Shapes": "App::PropertyLinkList"
+  },
+  "Part::Revolution": {
+    "Angle": "App::PropertyFloatConstraint",
+    "Axis": "App::PropertyVector",
+    "Solid": "App::PropertyBool",
+    "Source": "App::PropertyLink"
+  },
+  "Part::Sphere": {
+    "Label": "App::PropertyString",
+    "Radius": "App::PropertyLength"
+  },
+  "Part::Sweep": {
+    "Sections": "App::PropertyLinkList",
+    "Solid": "App::PropertyBool",
+    "Spine": "App::PropertyLinkSub"
+  },
+  "Part::Thickness": {
+    "Faces": "App::PropertyLinkSub",
+    "Join": "App::PropertyEnumeration",
+    "Value": "App::PropertyQuantity"
+  },
+  "Part::Torus": {
+    "Label": "App::PropertyString",
+    "Radius1": "App::PropertyLength",
+    "Radius2": "App::PropertyLength"
+  },
+  "Part::Wedge": {
+    "Label": "App::PropertyString",
+    "X2max": "App::PropertyDistance",
+    "X2min": "App::PropertyDistance",
+    "Xmax": "App::PropertyDistance",
+    "Xmin": "App::PropertyDistance",
+    "Ymax": "App::PropertyDistance",
+    "Ymin": "App::PropertyDistance",
+    "Zmax": "App::PropertyDistance",
+    "Zmin": "App::PropertyDistance"
+  },
+  "PartDesign::AdditivePipe": {
+    "Profile": "App::PropertyLinkSub",
+    "Spine": "App::PropertyLinkSub"
+  },
+  "PartDesign::Body": {},
+  "PartDesign::Chamfer": {
+    "Base": "App::PropertyLinkSub",
+    "Size": "App::PropertyQuantityConstraint"
+  },
+  "PartDesign::Draft": {
+    "Angle": "App::PropertyAngle",
+    "Base": "App::PropertyLinkSub",
+    "Reversed": "App::PropertyBool"
+  },
+  "PartDesign::Fillet": {
+    "Base": "App::PropertyLinkSub",
+    "Radius": "App::PropertyQuantityConstraint"
+  },
+  "PartDesign::Groove": {
+    "Angle": "App::PropertyAngle",
+    "Profile": "App::PropertyLinkSub",
+    "ReferenceAxis": "App::PropertyLinkSub"
+  },
+  "PartDesign::Line": {
+    "AttachmentSupport": "App::PropertyLinkSubList",
+    "MapMode": "App::PropertyEnumeration"
+  },
+  "PartDesign::Pad": {
+    "Length": "App::PropertyLength",
+    "Profile": "App::PropertyLinkSub",
+    "Reversed": "App::PropertyBool"
+  },
+  "PartDesign::Plane": {
+    "AttachmentOffset": "App::PropertyPlacement",
+    "AttachmentSupport": "App::PropertyLinkSubList",
+    "MapMode": "App::PropertyEnumeration"
+  },
+  "PartDesign::Pocket": {
+    "Length": "App::PropertyLength",
+    "Profile": "App::PropertyLinkSub",
+    "Reversed": "App::PropertyBool"
+  },
+  "PartDesign::Point": {
+    "AttachmentOffset": "App::PropertyPlacement",
+    "AttachmentSupport": "App::PropertyLinkSubList",
+    "MapMode": "App::PropertyEnumeration"
+  },
+  "PartDesign::Revolution": {
+    "Angle": "App::PropertyAngle",
+    "Profile": "App::PropertyLinkSub",
+    "ReferenceAxis": "App::PropertyLinkSub"
+  },
+  "PartDesign::SubtractiveLoft": {
+    "Sections": "App::PropertyLinkSubList"
+  },
+  "PartDesign::SubtractivePipe": {
+    "Profile": "App::PropertyLinkSub",
+    "Spine": "App::PropertyLinkSub"
+  },
+  "PartDesign::Thickness": {
+    "Base": "App::PropertyLinkSub",
+    "Value": "App::PropertyLength"
+  },
+  "Sketcher::SketchObject": {
+    "Placement": "App::PropertyPlacement"
+  },
+  "Spreadsheet::Sheet": {}
+}
