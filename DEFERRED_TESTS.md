@@ -142,10 +142,27 @@ generated against `FC-clone`'s locally-built `26.3.0-dev`
 (`weekly-2026.07.15`), not the `1.1-stable` CI slot the spec originally
 suggested as "the natural baseline" — no `FreeCADCmd` binary for
 `1.1-stable` was available in this environment at implementation time.
-All 39 scanned types resolved cleanly with no `__ERROR__` entries. Cross-
-version consistency across `1.1.1`/weekly/local-build (external-system
-assumption #1 in the spec) is still unverified — re-baselining against the
-CI slots once this test runs there would close that gap.
+All 39 scanned types resolved cleanly with no `__ERROR__` entries.
+
+**Cross-version consistency verified (2026-07-20):** downloaded FreeCAD
+1.1.1's real macOS build (`FreeCAD_1.1.1-macOS-arm64-py311.dmg` from
+`github.com/FreeCAD/FreeCAD` releases, checksum-verified) — the
+conda-forge packaging lag that normally blocks getting 1.1.1 locally
+(see the Docker pipeline's `check-upstream-releases.yml`) doesn't apply
+to a one-off local verification, and there's no need to track every
+subsequent patch build (1.1.2, etc.) the same way. `Contents/Resources/
+bin/freecadcmd` inside the DMG is a real headless binary; running it
+directly off the mounted disk image hangs indefinitely at `_dyld_start`
+(App Translocation/Gatekeeper quirk on a mounted-not-installed bundle,
+not a FreeCAD bug) — copying the `.app` to local disk first fixes it.
+Once running: the full `test_api_surface.py` suite passes against 1.1.1
+using the 26.3.0-dev-baselined snapshot unmodified, and a snapshot
+generated fresh against 1.1.1 is **byte-for-byte identical** to the
+committed one (all 39 types, all 97 property pairs). Full integration
+suite (141 tests) also passes clean against 1.1.1. This closes external-
+system assumption #1 for the Type::String mechanism specifically — the
+dotted-path/`inspect()` signature resolver was never built (see above),
+so that half of the original assumption remains untested.
 
 **Explicitly not built** (matches the spec's own scope-down, not a gap):
 Goal 2's other resolver — signature-diffing plain dotted Python paths via
