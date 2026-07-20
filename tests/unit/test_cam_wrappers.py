@@ -130,13 +130,14 @@ class TestCreateTool(unittest.TestCase):
         self.assertEqual(tool_dict['version'], 2)
         self.assertEqual(tool_dict['name'], '6mm Endmill')
         self.assertEqual(tool_dict['shape'], 'endmill')
-        # Diameter formatted as "6.0 mm" Quantity-string
-        self.assertEqual(tool_dict['parameter']['Diameter']['value'], '6.0 mm')
-        self.assertEqual(tool_dict['parameter']['Diameter']['type'], 'Length')
+        # Diameter formatted as a plain "6.0 mm" Quantity-string -- from_dict()
+        # hands "parameter" values straight to PathUtil.setProperty(), so a
+        # wrapped {"type": ..., "value": ...} dict here would reach
+        # Base::Quantity's setter as a raw dict and be rejected.
+        self.assertEqual(tool_dict['parameter']['Diameter'], '6.0 mm')
         # Optional flute_length and flutes routed correctly
-        self.assertEqual(tool_dict['parameter']['CuttingEdgeHeight']['value'],
-                         '25.0 mm')
-        self.assertEqual(tool_dict['parameter']['Flutes']['value'], 2)
+        self.assertEqual(tool_dict['parameter']['CuttingEdgeHeight'], '25.0 mm')
+        self.assertEqual(tool_dict['parameter']['Flutes'], 2)
         # attach_to_doc called with the active doc
         tool_bit.attach_to_doc.assert_called_once_with(doc=doc)
 
@@ -156,9 +157,9 @@ class TestCreateTool(unittest.TestCase):
         })
 
         params = mock_Path_Tool_Bit.ToolBit.from_dict.call_args.args[0]['parameter']
-        self.assertEqual(params['CuttingEdgeHeight']['value'], '0 mm')
-        self.assertEqual(params['ShankDiameter']['value'], '0 mm')
-        self.assertEqual(params['Flutes']['value'], 0)
+        self.assertEqual(params['CuttingEdgeHeight'], '0 mm')
+        self.assertEqual(params['ShankDiameter'], '0 mm')
+        self.assertEqual(params['Flutes'], 0)
 
     def test_v_bit_alias_normalized(self):
         """Both 'vbit' and 'v-bit' map to ShapeID 'vbit'."""

@@ -78,20 +78,29 @@ class CAMToolsHandler(BaseHandler):
             if not doc:
                 return "Error: No active document to attach tool"
 
-            # FC 1.2 API: ToolBit.from_dict() takes .fctb file dict format
+            # ToolBit.from_dict() hands "parameter" values straight to
+            # PathUtil.setProperty() (Path/Tool/toolbit/models/base.py's
+            # from_shape()) -- plain scalars, the same shape to_dict()'s
+            # round-trip produces via to_json() (FreeCAD.Units.Quantity ->
+            # .UserString) and the same shape update_tool() below already
+            # uses. An earlier {"type": ..., "value": ...} wrapper here was
+            # never unwrapped by this code path -- it reached
+            # Base::Quantity's setter as a raw dict, which
+            # QuantityPyImp.cpp rejects ("Either quantity, float with
+            # units or string expected").
             parameters = {
-                "Diameter": {"type": "Length", "value": f"{diameter} mm"},
+                "Diameter": f"{diameter} mm",
             }
             # `is not None`, not truthiness: a legitimately-supplied 0 must not be
             # silently dropped from the tool definition.
             if flute_length is not None:
-                parameters["CuttingEdgeHeight"] = {"type": "Length", "value": f"{flute_length} mm"}
+                parameters["CuttingEdgeHeight"] = f"{flute_length} mm"
             if shank_diameter is not None:
-                parameters["ShankDiameter"] = {"type": "Length", "value": f"{shank_diameter} mm"}
+                parameters["ShankDiameter"] = f"{shank_diameter} mm"
             if number_of_flutes is not None:
-                parameters["Flutes"] = {"type": "Integer", "value": number_of_flutes}
+                parameters["Flutes"] = number_of_flutes
             if material:
-                parameters["Material"] = {"type": "String", "value": material}
+                parameters["Material"] = material
 
             tool_dict = {
                 "version": 2,
