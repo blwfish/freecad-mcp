@@ -44,7 +44,7 @@ parametric generator that tiles any roof surface from a spreadsheet of parameter
 
 ## Getting Started
 
-> **FreeCAD version support:** All tools except CAM are supported on FreeCAD 1.1.x (current stable). CAM toolpath generation requires FreeCAD 1.2-dev — the Path workbench API changed incompatibly between 1.1 and 1.2. This project tracks 1.2-dev.
+> **FreeCAD version support:** All tools except CAM are supported on FreeCAD 1.1.x (current stable). CAM toolpath generation requires a current FreeCAD weekly development build (what used to be called "1.2-dev" before upstream moved to calendar-based versioning, e.g. `26.3.x`) — the Path workbench API changed incompatibly between 1.1 and the dev series. This project tracks the latest weekly.
 
 Developed on macOS with Claude Code. The code handles macOS, Windows, and Linux — other platforms *should* work but are less tested. PRs for other agents and platforms will be considered.
 

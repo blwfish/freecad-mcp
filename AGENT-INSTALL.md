@@ -28,9 +28,9 @@ Both must be installed. FreeCAD must be running with the addon loaded for tools 
 
 The following must be present on the system. Check each one. Install anything missing.
 
-### 1. FreeCAD 1.1.x or 1.2-dev (required)
+### 1. FreeCAD 1.1.x or a current dev-weekly build (required)
 
-**Version support:** FreeCAD 1.1.x (current stable) is supported for all tools except CAM. CAM toolpath generation requires 1.2-dev — the Path workbench API changed incompatibly between 1.1 and 1.2.
+**Version support:** FreeCAD 1.1.x (current stable) is supported for all tools except CAM. CAM toolpath generation requires a current FreeCAD weekly development build (what used to be called "1.2-dev" before upstream moved to calendar-based versioning) — the Path workbench API changed incompatibly between 1.1 and the dev series.
 
 **Check:** Launch FreeCAD and check Help → About. Or run `FreeCADCmd --version` if available on PATH.
 
