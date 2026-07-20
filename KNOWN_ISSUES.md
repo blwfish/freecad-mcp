@@ -68,25 +68,59 @@ pre-existing/tolerated bug: CI was green against the (then-)pinned
 `create_tool()` now builds `parameters["Diameter"] = f"{diameter} mm"`
 etc. — plain scalars, matching `update_tool()`'s existing (correct) form.
 
-#### aarch64-Linux-specific anomaly (not fixed, not CI-relevant)
+#### Second, deeper crash on Linux (both archs) — OPEN, CI is currently red
 
-While reproducing this in a local Docker container to verify the fix
-before landing the CI tag bump, the *same* `create_tool()` call
-**segfaults** (not a clean Python exception) on FreeCAD
-`weekly-2026.07.15`'s **Linux aarch64** AppImage — both before and after
-the parameter-format fix above. The identical fixed code runs cleanly (no
-crash, correct result) on FC-clone's macOS arm64 build from the same
-weekly source. Attempting to isolate whether this also affects Linux
-x86_64 (what CI actually runs) hit a real environment wall: FreeCAD's
-AppImage format fails to execute under Docker Desktop's qemu-based
-x86_64 emulation on Apple Silicon (`cannot execute binary file: Exec
-format error`, reproduced even fully inside the container's own
-filesystem — not a bind-mount artifact) even after registering binfmt
-handlers (`tonistiigi/binfmt --install all`). Left unresolved rather than
-chased further: CI's `dev-weekly` slot only runs Linux x86_64, which this
-local setup cannot reliably emulate, so CI itself (once this lands) is
-the authoritative check for that platform. If CI's `dev-weekly` slot
-starts segfaulting on CAM tests, revisit this note first.
+**Status**: OPEN (2026-07-20) — **`dev-weekly` CI slot fails because of this**,
+not just an environment anomaly. Needs a fresh investigation.
+
+The parameter-format fix above is real and necessary but **not sufficient**.
+The *same* `create_tool()` call — with the fix applied — still crashes the
+whole FreeCAD process (not a clean Python exception) on `weekly-2026.07.15`:
+first confirmed on a local Docker container's Linux aarch64 build, then
+**confirmed again on real CI** (`gh run 29740175585`, Linux x86_64,
+`ubuntu-latest`) after the dev-weekly tag bump + parameter fix were pushed
+together — `test_create_endmill` fails and kills the shared FreeCAD
+instance, cascading into ~138 downstream test errors for the rest of that
+CI job. The identical fixed code runs cleanly (no crash) on FC-clone's
+locally-built macOS arm64 from the same weekly source — this is Linux-only,
+not platform-universal, and it is **not** an aarch64-only artifact as first
+suspected; it reproduces on the actual x86_64 CI runner too.
+
+**Root cause not confirmed, despite substantial investigation.** A
+promising lead surfaced via bisection: merely importing `handlers.primitives`
+(before calling anything CAM-related) was enough to make an otherwise-clean
+`ToolBit.from_dict()` call crash. `primitives.py`, `partdesign_ops.py`,
+`document_ops.py`, and `view_ops.py` all do an *unconditional*
+`import FreeCADGui` at module level, unlike `base.py`/`execute_python_ops.py`/
+`diagnostics_ops.py`, which correctly guard it behind `if FreeCAD.GuiUp:`
+— a real, pre-existing inconsistency worth fixing regardless. But this
+lead did not hold up under closer isolation: a minimal repro built around
+exactly this guard (skipping the `FreeCADGui` import entirely when
+`FreeCAD.GuiUp` is `False`, which it is in headless mode) **still crashed**,
+while functionally-identical code typed inline into the same command
+**did not** — i.e. the crash's presence depended on *how the reproduction
+script was invoked* (read from a file vs. typed inline), not on its content.
+That is not a signature a Python-level code fix can be verified against with
+confidence; it smells of a genuine, timing/environment-sensitive native
+crash inside this FreeCAD build's CAM/Material/Gui interaction on Linux,
+not a deterministic logic bug in `cam_tools.py`.
+
+**Decision (2026-07-20):** rather than guess at a fix that can't be reliably
+verified, or block the rest of the `dev-weekly` bump (Goal 1 of
+`SPEC-fc-api-drift-detection.md`) on it, this is left as a known, open,
+tracked failure. The `dev-weekly` CI slot is expected to fail on CAM tests
+until this is properly root-caused — check CI status before relying on that
+slot as a CAM-regression gate in the meantime.
+
+**Next steps for whoever picks this up:** get a real core dump + `gdb`
+backtrace from the actual crash (not just the `SIGSEGV`/`__kernel_rt_sigreturn`
+frame this session captured, which has no useful symbol information) — that
+requires enabling core dumps in whatever environment reproduces it and
+attaching gdb post-mortem, not just watching stderr. Confirm/deny the
+`FreeCADGui`-guard lead properly by applying the guard for real (not a
+one-off repro string) to all four files and running the actual `dev-weekly`
+CI job end to end, since local reproduction has proven unreliable enough
+that CI itself may be the only trustworthy signal here.
 
 ## Large Document Handling
 
