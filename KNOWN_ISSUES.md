@@ -392,6 +392,44 @@ even headlessly) and then does any Python-level XML parsing is still
 exposed. Upstream report still worth filing (draft prepared separately,
 not yet submitted).
 
+#### 2026-07-22 update #5 — gdb-trap is NOT safe to leave on for the full suite; correcting update #4
+
+Widened `_stop_headless()`'s teardown timeout from 5s to 95s (still in
+place — correct and harmless on its own: this fixture is session-scoped,
+runs once per CI job not once per test, and `proc.wait(timeout=N)`
+returns the instant the process actually exits rather than blocking for
+the full duration, so a healthy run pays nothing extra). Re-enabled
+`FREECAD_MCP_TEST_GDB_TRAP` on the routine `dev-weekly` slot on the
+theory that the timeout widening had fixed what made it unsafe.
+
+**That theory was wrong.** The exact same `test_job_status` cascade
+failure came back — but this time with a real ~20-second stall (not
+instant EAGAIN) immediately after `test_configure_job_stock`, every time,
+and zero `GDB-STOPPED`/`SIGSEGV` output despite the wider teardown
+window. The reasoning error: `diagnose_dead_spawned_process()` is a
+**non-blocking** `proc.poll()` check made *during* the test run, at the
+moment a connection fails — it can only report a backtrace if the
+process has *already* exited by then. Widening the teardown timeout only
+changes what happens at the very *end* of a session (final cleanup); it
+cannot retroactively help a check that already ran and saw "still
+running" mid-session. Those are two different problems that happened to
+look similar.
+
+Reverted `FREECAD_MCP_TEST_GDB_TRAP` back to off on the routine suite.
+Whatever gdb-wrapping the *entire* 158-test session costs around job
+creation/configuration — a real, reproducible stall, not a false
+alarm — is a separate, unresolved problem (candidate: ptrace overhead
+interacting badly with signal-heavy code somewhere in that path, but not
+investigated further). **`FREECAD_MCP_TEST_GDB_TRAP` remains available
+and appropriate for a narrowly-scoped run** — a single test or file, via
+`bisect-cam-crash.yml` or `minimal-repro-expat-crash.yml`, both of which
+worked reliably throughout this investigation — just not wrapped around
+the full suite until this mid-session cost is separately diagnosed.
+
+Final state, confirmed via CI: **157 passed, 1 skipped, 0 failed, 0
+errors against `weekly-2026.07.15`**, gdb-trap off, wider teardown
+timeout in place.
+
 ## Large Document Handling
 
 ### Issue: list_objects Crashes on Large DXF Imports
