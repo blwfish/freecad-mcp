@@ -63,6 +63,23 @@ jobs:
           report("after import FreeCAD")
           print(f"FreeCAD.GuiUp: {FreeCAD.GuiUp}", flush=True)
 
+          # Second round (previous run of this workflow) replicated
+          # create_tool()'s exact call chain and STILL didn't crash or load
+          # libCoin. The one thing that script never did: freecad-mcp's own
+          # handler modules -- primitives.py, partdesign_ops.py,
+          # document_ops.py, view_ops.py -- do an *unconditional*
+          # `import FreeCADGui` at module level (KNOWN_ISSUES.md's
+          # 2026-07-20 note), regardless of FreeCAD.GuiUp. Our real
+          # headless_server.py imports all handler modules at startup, so
+          # every real run does this even for operations that never touch
+          # the GUI. Test directly: does importing FreeCADGui in headless
+          # mode load libCoin at all?
+          try:
+              import FreeCADGui
+              report("after import FreeCADGui (headless, GuiUp=False)")
+          except Exception as e:
+              print(f"FreeCADGui import failed: {e!r}", flush=True)
+
           # First round (previous run of this workflow): importing Path and
           # ToolBit alone never loaded libCoin and never crashed. This round
           # replicates freecad-mcp's actual create_tool() call chain
