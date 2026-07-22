@@ -137,13 +137,32 @@ def _spawn_headless(timeout: float = 30.0) -> tuple[subprocess.Popen, str]:
         # FreeCAD's own handler gets it (gdb's default signal disposition
         # is to stop first), so a real multi-frame, per-thread backtrace
         # can be captured at the actual fault site instead.
+        #
+        # gdb's `--args` loads its first argument as an executable image
+        # for symbols -- it can't do that for a shebang script (the
+        # freecadcmd-wrapper.sh CI writes, or any local equivalent), only
+        # for a real binary. Detect a shebang and launch the interpreter
+        # explicitly instead; `follow-exec-mode same` then follows the
+        # wrapper's own `exec` (and any further re-exec, e.g. AppRun into
+        # the real freecadcmd ELF) as ordinary exec() events in one gdb
+        # session, all the way to the binary that actually segfaults.
+        gdb_target = list(cmd)
+        try:
+            with open(cmd[0], "rb") as f:
+                is_script = f.read(2) == b"#!"
+            if is_script:
+                with open(cmd[0]) as f:
+                    interpreter = f.readline().strip()[2:].split()
+                gdb_target = [*interpreter, *cmd]
+        except OSError:
+            pass
         cmd = [
             "gdb", "-batch",
             "-ex", "set follow-exec-mode same",
             "-ex", "run",
             "-ex", "thread apply all bt full",
             "-ex", "quit",
-            "--args", *cmd,
+            "--args", *gdb_target,
         ]
 
     proc = subprocess.Popen(
