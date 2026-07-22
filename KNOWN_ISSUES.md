@@ -264,20 +264,32 @@ libexpat for the rest of the process's lifetime, before Coin's colliding
 symbol is even in the picture. Untested; flagged as the concrete next step
 rather than implemented speculatively.
 
-**Bisection (in progress, tooling built, not yet run to a conclusion):**
+**Bisection — DONE, regression isolated to a single week.** Using
 `.github/workflows/bisect-cam-crash.yml` (`workflow_dispatch`, takes a
-`tag` input) downloads one FreeCAD weekly AppImage and runs just the CAM
-tool-creation tests against it. 16 weekly tags exist between
-`weekly-2026.04.01` (known good) and `weekly-2026.07.15` (known broken):
-`04.08, 04.15, 04.22, 04.29, 05.06, 05.13, 05.20, 05.27, 06.03, 06.10,
-06.17, 06.20, 06.24, 07.01, 07.08, 07.09`. Binary search needs ~4 dispatches.
-Two independent things could have changed and are both worth checking once
-a build is found: whether `libCoin.so.80` newly exports `XML_ParseBuffer`
-(`nm -D` / `objdump -T` on the extracted `.so`, cheap, no live crash-test
-needed) versus whether FreeCAD's own code newly started calling
-`xml.etree.ElementTree` on document content in that window (check FreeCAD's
-own git log for the relevant files/dates) — these have different upstream
-owners and different fixes.
+`tag` input — downloads one FreeCAD weekly AppImage, runs the CAM
+tool-creation tests, and does a static `nm -D` check on `libCoin.so.80`
+for a defined `XML_ParseBuffer` export, no live crash-test needed for that
+part), binary search across the 16 weekly tags between
+`weekly-2026.04.01` (good) and `weekly-2026.07.15` (bad) converged in 4
+dispatches:
+
+| tag | CAM tests | `XML_ParseBuffer` in `libCoin.so.80` |
+|---|---|---|
+| `weekly-2026.06.03` | 5 passed | `U` (undefined — external symbol, no collision possible) |
+| `weekly-2026.06.24` | 5 passed | `U` |
+| `weekly-2026.07.08` | 5 passed | `U` |
+| **`weekly-2026.07.09`** | **1 failed, 4 errors** | **`T` (defined/exported — collides)** |
+| `weekly-2026.07.15` | crashes (original finding) | `T` |
+
+The `U` → `T` flip lands *exactly* on the `weekly-2026.07.08` →
+`weekly-2026.07.09` boundary — every earlier build checked has Coin
+dynamically linking an external expat (same shared library both Coin and
+Python would resolve to, so no ABI mismatch is possible); every build from
+`07.09` onward has Coin exporting its own `XML_ParseBuffer` with global
+visibility, which is what creates the collision. This is a single week's
+Coin3D build/packaging change, not a gradual drift — strong enough to file
+upstream against FreeCAD (or its AppImage build recipe / bundled Coin
+build) citing this exact `U`→`T` transition between those two tags.
 
 ## Large Document Handling
 
