@@ -1,0 +1,136 @@
+name: Minimal Repro - Expat Crash
+
+# One-off diagnostic workflow, not part of normal CI (workflow_dispatch
+# only). Tests whether the XML_ParseBuffer symbol collision documented in
+# KNOWN_ISSUES.md reproduces with a bare FreeCADCmd + Python script -- no
+# freecad-mcp socket server, no async job dispatch, none of our own code
+# in the loop at all. Written to close the reproduction gap in the
+# upstream FreeCAD bug report draft (our only confirmed repro so far goes
+# through freecad-mcp's own test suite).
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "FreeCAD weekly release tag to test"
+        required: true
+        default: "weekly-2026.07.15"
+        type: string
+
+jobs:
+  repro:
+    runs-on: ubuntu-latest
+    name: "Minimal repro on ${{ inputs.tag }}"
+
+    steps:
+      - name: Download FreeCAD AppImage
+        run: |
+          mkdir -p ~/freecad-appimage
+          cd ~/freecad-appimage
+          gh release download "${{ inputs.tag }}" \
+            --repo FreeCAD/FreeCAD \
+            --pattern '*Linux-x86_64.AppImage' \
+            --pattern '*Linux-x86_64.AppImage-SHA256.txt' \
+            --dir .
+          APPIMAGE=$(ls *Linux-x86_64.AppImage | head -1)
+          sha256sum -c "${APPIMAGE}-SHA256.txt"
+          chmod +x "$APPIMAGE"
+          "./$APPIMAGE" --appimage-extract
+          rm "$APPIMAGE"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Install gdb
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gdb
+
+      - name: Write minimal repro script
+        run: |
+          cat > ~/minimal_repro.py <<'PYEOF'
+          import sys
+
+          def loaded_libs():
+              with open("/proc/self/maps") as f:
+                  return set(line.split()[-1] for line in f if ".so" in line)
+
+          def report(label):
+              libs = loaded_libs()
+              coin = [l for l in libs if "libCoin" in l]
+              print(f"[{label}] libCoin loaded: {bool(coin)} {coin}", flush=True)
+
+          report("startup, before any FreeCAD import")
+
+          import FreeCAD
+          report("after import FreeCAD")
+
+          # This is the module our own crash (KNOWN_ISSUES.md) went through
+          # via Path.Tool.Bit.ToolBit.from_dict() -- import it the same way
+          # a CAM tool-creation call would, with no freecad-mcp code
+          # involved at all.
+          try:
+              import Path
+              report("after import Path")
+          except Exception as e:
+              print(f"Path import failed: {e!r}", flush=True)
+
+          try:
+              from Path.Tool.toolbit.models.base import ToolBit  # noqa: F401
+              print("Imported Path.Tool.toolbit.models.base.ToolBit", flush=True)
+          except Exception as e:
+              print(f"ToolBit import failed (module path may differ across "
+                    f"versions -- not fatal to this repro): {e!r}", flush=True)
+
+          report("final check before XML test")
+
+          print("=== Testing plain xml.etree.ElementTree.fromstring ===", flush=True)
+          import xml.etree.ElementTree as ET
+          result = ET.fromstring("<a>test</a>")
+          print(f"Plain XML parse succeeded: {result}", flush=True)
+
+          print("=== Testing FreeCAD-document-shaped XML content ===", flush=True)
+          doc_xml = (
+              "<?xml version='1.0' encoding='utf-8'?>\n"
+              "<!-- FreeCAD Document, see https://www.freecad.org -->\n"
+              '<Document SchemaVersion="4" ProgramVersion="1.2 (Git)" '
+              'FileVersion="1">\n</Document>\n'
+          )
+          result2 = ET.fromstring(doc_xml)
+          print(f"Document-shaped XML parse succeeded: {result2}", flush=True)
+
+          print("=== ALL TESTS PASSED, NO CRASH ===", flush=True)
+          PYEOF
+          cat ~/minimal_repro.py
+
+      - name: Run under gdb (same trap technique as conftest.py's gdb-trap)
+        run: |
+          SQUASHFS="$HOME/freecad-appimage/squashfs-root"
+          FREECADCMD="$SQUASHFS/AppRun"
+
+          # gdb's --args loads its first argument as an executable image
+          # for symbols -- it errors ("not in executable format") if that
+          # argument is a shebang script rather than a real ELF binary.
+          # conftest.py's _spawn_headless hit exactly this with our own
+          # generated wrapper script; AppRun itself may or may not be one,
+          # so check rather than assume either way.
+          GDB_TARGET=("$FREECADCMD" freecadcmd "$HOME/minimal_repro.py")
+          if [ "$(head -c 2 "$FREECADCMD")" = "#!" ]; then
+            INTERPRETER=$(head -1 "$FREECADCMD" | tail -c +3)
+            echo "AppRun is a shebang script, interpreter: $INTERPRETER"
+            GDB_TARGET=($INTERPRETER "$FREECADCMD" freecadcmd "$HOME/minimal_repro.py")
+          else
+            echo "AppRun is a real binary, launching directly"
+          fi
+
+          timeout -s KILL 90 \
+            gdb -batch \
+              -ex "set follow-exec-mode same" \
+              -ex "handle all nostop noprint pass" \
+              -ex "handle SIGSEGV stop print nopass" \
+              -ex "run" \
+              -ex "echo \n===GDB-STOPPED===\n" \
+              -ex "info program" \
+              -ex "bt full" \
+              -ex "quit" \
+              --args "${GDB_TARGET[@]}" \
+            2>&1 | tee gdb-repro-output.txt
+          echo "--- exit code: $? ---"
+        timeout-minutes: 3
