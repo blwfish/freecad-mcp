@@ -12,16 +12,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
           python-version: '3.12'
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt pip-audit
-
-      - name: Upgrade pip
-        run: pip install --upgrade pip
+      - name: Install package + dev deps (from lockfile)
+        run: uv sync --frozen --group dev
 
       - name: Run audit
-        run: pip-audit --desc
+        run: uv run pip-audit --desc

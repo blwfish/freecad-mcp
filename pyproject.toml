@@ -29,8 +29,18 @@ Homepage = "https://github.com/blwfish/freecad-mcp"
 Repository = "https://github.com/blwfish/freecad-mcp"
 Issues = "https://github.com/blwfish/freecad-mcp/issues"
 
-[project.optional-dependencies]
-test = ["pytest>=9.1.1", "pip-audit>=2.10.1", "pytest-cov>=7.1.0"]
+[dependency-groups]
+dev = ["pytest>=9.1.1", "pip-audit>=2.10.1", "pytest-cov>=7.1.0"]
+
+[tool.uv]
+# This repo ships as flat scripts + the AICopilot addon (no console-script
+# entry point, no packages= layout) -- it's never been an installable
+# package. `uv sync` would otherwise try to build/install it as one and hit
+# setuptools' flat-layout ambiguity (helpers/fixtures/AICopilot all look like
+# top-level packages). package = false tells uv to just resolve and sync the
+# declared dependencies, matching how this project has always actually been
+# run (`python3 freecad_mcp_server.py`, not `pip install -e .`).
+package = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]

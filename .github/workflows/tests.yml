@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, dev, rewrite-core]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 jobs:
   test:
@@ -17,16 +17,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt pytest
+      - name: Install package + dev deps (from lockfile)
+        run: uv sync --frozen --group dev
 
       - name: Run unit tests
-        run: python -m pytest tests/unit/ -v
+        run: uv run python -m pytest tests/unit/ -v
 
   all-tests-pass:
     runs-on: ubuntu-latest
