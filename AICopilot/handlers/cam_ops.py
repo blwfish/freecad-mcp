@@ -25,11 +25,21 @@ class CAMOpsHandler(BaseHandler):
         try:
             # FreeCAD 1.0+ uses new module structure
             from Path.Main.Job import Create as CreateJob
-            try:
-                from Path.Main.Gui.Job import ViewProvider
-                has_gui = True
-            except ImportError:
-                has_gui = False
+            # Path.Main.Gui.Job pulls in FreeCADGui/Coin3D as a side effect
+            # of a successful import, regardless of whether the ImportError
+            # guard below ever fires -- checking FreeCAD.GuiUp first avoids
+            # even attempting the import in headless mode. Unconditionally
+            # importing FreeCADGui in headless mode can SIGSEGV on FreeCAD
+            # weekly builds from 2026-07-09 onward (a symbol collision
+            # between Coin's bundled expat and Python's own -- see
+            # KNOWN_ISSUES.md "CAM Tool Creation").
+            has_gui = False
+            if FreeCAD.GuiUp:
+                try:
+                    from Path.Main.Gui.Job import ViewProvider
+                    has_gui = True
+                except ImportError:
+                    has_gui = False
 
             doc = self.get_document()
             if not doc:
