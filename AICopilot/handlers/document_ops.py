@@ -3,9 +3,20 @@
 import json
 import queue
 import FreeCAD
-import FreeCADGui
 from typing import Dict, Any
 from .base import BaseHandler
+
+# Conditional GUI import (not available in console/headless mode) -- see
+# base.py's identical pattern. An unconditional import here loads
+# FreeCADGui's Coin3D-backed 3D view machinery regardless of GuiUp,
+# which on FreeCAD weekly builds from 2026-07-09 onward triggers a
+# SIGSEGV the next time any Python xml.etree.ElementTree call runs (a
+# symbol collision between Coin's bundled expat and Python's own --
+# see KNOWN_ISSUES.md "CAM Tool Creation").
+if FreeCAD.GuiUp:
+    import FreeCADGui
+else:
+    FreeCADGui = None
 
 
 class DocumentOpsHandler(BaseHandler):

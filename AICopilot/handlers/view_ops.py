@@ -5,9 +5,16 @@ import queue
 import platform
 import time
 import FreeCAD
-import FreeCADGui
 from typing import Dict, Any
 from .base import BaseHandler
+
+# Conditional GUI import -- unconditional import here loaded Coin3D
+# regardless of GuiUp and could SIGSEGV on later weekly builds
+# (KNOWN_ISSUES.md "CAM Tool Creation"); matches base.py's pattern.
+if FreeCAD.GuiUp:
+    import FreeCADGui
+else:
+    FreeCADGui = None
 
 
 # Complexity thresholds for resolution scaling.

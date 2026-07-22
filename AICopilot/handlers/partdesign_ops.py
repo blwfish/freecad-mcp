@@ -2,7 +2,6 @@
 
 import json
 import FreeCAD
-import FreeCADGui
 import Part
 from typing import Dict, Any
 from .base import BaseHandler

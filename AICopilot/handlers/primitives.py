@@ -17,7 +17,6 @@
 # ───────────────────────────────────────────────────────────────────────────
 
 import FreeCAD
-import FreeCADGui
 from typing import Dict, Any, Optional
 from .base import BaseHandler
 
