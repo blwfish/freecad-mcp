@@ -122,6 +122,54 @@ one-off repro string) to all four files and running the actual `dev-weekly`
 CI job end to end, since local reproduction has proven unreliable enough
 that CI itself may be the only trustworthy signal here.
 
+#### 2026-07-22 update — first real crash evidence from CI, confirms genuine SIGSEGV
+
+`tests/integration/conftest.py`'s spawned headless instance has its
+stdout/stderr piped (`subprocess.PIPE`) but nothing ever drained those pipes
+while tests ran — a mid-run crash's own error output was captured into the
+kernel pipe buffer and then silently discarded when the session ended,
+without ever reaching the CI log. `_socket_call()` in
+`test_e2e_workflows.py` now calls `conftest.diagnose_dead_spawned_process()`
+on any connection failure, which detects the spawned process has exited and
+attaches its captured stdout/stderr tail to the raised `ConnectionError`
+(cached after the first read, since `communicate()` only works once).
+
+First real capture (`gh run 29937909054`, Linux x86_64, `dev-weekly` slot,
+still `test_create_endmill`):
+
+```
+Spawned FreeCAD process died unexpectedly: returncode=1
+--- stderr (tail) ---
+Program received signal SIGSEGV, Segmentation fault.
+#0  /lib/x86_64-linux-gnu/libc.so.6(+0x45330) [0x7ffbb1245330]
+```
+
+Two things this changes:
+
+1. **Confirms a genuine SIGSEGV**, not a hang, OOM-kill, or GH-runner-level
+   termination — `returncode=1` (not `-11`/`139`) because FreeCAD's own
+   internal crash handler intercepts the signal, prints a one-frame
+   backtrace, and exits cleanly rather than dying with the raw signal.
+2. **The crash frame is inside libc, not FreeCAD/OCCT/Coin3D code.** A
+   frame in `libc.so.6` at a `malloc`/`free`/`memcpy`-family offset (no
+   symbols to say which) is the classic signature of *heap corruption*
+   manifesting later inside an allocator call, rather than a straightforward
+   null-pointer dereference at the actual buggy call site. This weakens
+   (doesn't rule out) the `FreeCADGui`-import-guard lead above — a missing
+   GUI-thread guard would more plausibly crash inside Coin3D/Qt symbols, not
+   raw libc allocator internals.
+
+Still no symbolized backtrace of the actual corrupting write — this only
+proves *that* it's heap corruption and roughly *when* (during/shortly after
+`create_tool`'s `ToolBit.from_dict()` call), not *where*. The diagnostic
+capture above is now permanent, so every future `dev-weekly` CI failure on
+this test will automatically surface the real stderr going forward — no
+more guessing from a bare `ConnectionError`. Next real step is still a
+symbolized core dump (`ulimit -c unlimited` + `gdb -batch -ex "bt full"` in
+CI, or bisecting the exact weekly build between the last-known-good
+`weekly-2026.04.01` and broken `weekly-2026.07.15` to narrow which upstream
+change introduced the corruption).
+
 ## Large Document Handling
 
 ### Issue: list_objects Crashes on Large DXF Imports
