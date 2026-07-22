@@ -111,18 +111,20 @@ jobs:
           fi
           exit $exit_code
         timeout-minutes: 5
-        env:
-          # Standing insurance for any future native crash, not just the
-          # CAM SIGSEGV this was built for (KNOWN_ISSUES.md): FreeCAD
-          # catches its own SIGSEGV and exits cleanly, so no core file is
-          # ever produced for `gdb --core` to inspect post-mortem.
-          # Running the spawned instance under gdb from launch intercepts
-          # the fault before FreeCAD's own handler does, producing a real
-          # backtrace in its captured stdout/stderr on any connection
-          # failure (test_e2e_workflows.py's _socket_call). Previously
-          # removed because tests/integration/conftest.py's
-          # _stop_headless() had only a 5s SIGTERM grace period -- too
-          # short for a slow "bt full", so teardown was silently killing
-          # gdb mid-backtrace. That's now 95s (safely above gdb's own
-          # `timeout -s KILL 90` backstop), so this is safe to leave on.
-          FREECAD_MCP_TEST_GDB_TRAP: "1"
+        # FREECAD_MCP_TEST_GDB_TRAP=1 (KNOWN_ISSUES.md's CAM SIGSEGV
+        # investigation) is deliberately NOT set here, on the routine
+        # 158-test suite -- re-enabling it (2026-07-22, same day) after
+        # widening _stop_headless()'s teardown timeout reintroduced the
+        # exact same cascading failure at test_job_status: a real ~20s
+        # stall (not instant EAGAIN) right after test_configure_job_stock,
+        # every time, only under gdb-trap. The teardown-timeout fix was
+        # real and correct on its own, but it only helps at the very end
+        # of a session -- diagnose_dead_spawned_process() is a
+        # non-blocking proc.poll() check made *during* the run, so it
+        # can't retroactively benefit from a longer final-cleanup wait.
+        # Whatever gdb-wrapping the *entire* session costs mid-run around
+        # job creation/configuration is a separate, unresolved problem.
+        # Use FREECAD_MCP_TEST_GDB_TRAP on a narrowly scoped run (a single
+        # test or file, like bisect-cam-crash.yml /
+        # minimal-repro-expat-crash.yml) for focused investigation, not
+        # wrapped around the full suite.
