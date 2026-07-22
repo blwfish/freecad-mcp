@@ -86,9 +86,25 @@ jobs:
           echo "FREECAD_MCP_FREECAD_BIN=$HOME/freecad-appimage/freecadcmd-wrapper.sh" >> "$GITHUB_ENV"
           echo "FREECAD_MCP_MODULE_DIR=${{ github.workspace }}/AICopilot" >> "$GITHUB_ENV"
 
+      - name: Enable core dumps
+        run: |
+          # Bypass apport (which intercepts core_pattern by default on
+          # ubuntu-latest and would swallow the dump into its own report
+          # format) so a plain `core` file lands in the crashing process's
+          # cwd -- the spawned FreeCAD subprocess inherits this repo
+          # checkout as its cwd (tests/integration/conftest.py's
+          # _spawn_headless doesn't set cwd=), so cores land at
+          # ${{ github.workspace }}/core.
+          sudo sysctl -w kernel.core_pattern=core
+          echo "core_pattern: $(cat /proc/sys/kernel/core_pattern)"
+
+      - name: Install gdb
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gdb
+
       - name: Run integration tests
         shell: bash
         run: |
+          ulimit -c unlimited
           set -o pipefail
           python -m pytest tests/integration/ -v -rs --timeout=120 ${{ matrix.pytest_args }} 2>&1 | tee pytest-output.log
           exit_code=$?
@@ -108,3 +124,36 @@ jobs:
           fi
           exit $exit_code
         timeout-minutes: 5
+
+      - name: Capture crash backtrace
+        if: always()
+        run: |
+          CORE_FILE="${{ github.workspace }}/core"
+          if [ ! -f "$CORE_FILE" ]; then
+            echo "No core file at $CORE_FILE — searching workspace and /tmp."
+            CORE_FILE=$(find "${{ github.workspace }}" /tmp -maxdepth 2 -name 'core' -o -name 'core.*' 2>/dev/null | head -1)
+          fi
+          if [ -z "$CORE_FILE" ] || [ ! -f "$CORE_FILE" ]; then
+            echo "No core dump found — nothing to analyze this run."
+            exit 0
+          fi
+          echo "Found core dump: $CORE_FILE ($(stat -c%s "$CORE_FILE") bytes)"
+
+          SQUASHFS="$HOME/freecad-appimage/squashfs-root"
+          FREECAD_BIN=$(find "$SQUASHFS/usr/bin" -maxdepth 1 -type f -executable -iname '*freecad*' 2>/dev/null | head -1)
+          if [ -z "$FREECAD_BIN" ]; then
+            FREECAD_BIN=$(find "$SQUASHFS" -maxdepth 3 -type f -executable -iname '*freecad*cmd*' 2>/dev/null | head -1)
+          fi
+          echo "Using binary: ${FREECAD_BIN:-<not found>}"
+          if [ -z "$FREECAD_BIN" ]; then
+            echo "Could not locate the FreeCAD binary inside $SQUASHFS — listing usr/bin instead:"
+            ls -la "$SQUASHFS/usr/bin" 2>/dev/null || echo "  ($SQUASHFS/usr/bin doesn't exist)"
+            exit 0
+          fi
+
+          gdb -batch \
+            -ex "info sharedlibrary" \
+            -ex "thread apply all bt full" \
+            -ex "quit" \
+            "$FREECAD_BIN" "$CORE_FILE" 2>&1 | tee gdb-backtrace.txt || true
+        timeout-minutes: 3
