@@ -61,23 +61,33 @@ jobs:
 
           import FreeCAD
           report("after import FreeCAD")
+          print(f"FreeCAD.GuiUp: {FreeCAD.GuiUp}", flush=True)
 
-          # This is the module our own crash (KNOWN_ISSUES.md) went through
-          # via Path.Tool.Bit.ToolBit.from_dict() -- import it the same way
-          # a CAM tool-creation call would, with no freecad-mcp code
-          # involved at all.
-          try:
-              import Path
-              report("after import Path")
-          except Exception as e:
-              print(f"Path import failed: {e!r}", flush=True)
+          # First round (previous run of this workflow): importing Path and
+          # ToolBit alone never loaded libCoin and never crashed. This round
+          # replicates freecad-mcp's actual create_tool() call chain
+          # (AICopilot/handlers/cam_tools.py) exactly -- import, build a
+          # document, ToolBit.from_dict(), attach_to_doc() -- since the
+          # earlier round only tested imports, not execution.
+          from Path.Tool.Bit import ToolBit
+          report("after from Path.Tool.Bit import ToolBit")
 
-          try:
-              from Path.Tool.toolbit.models.base import ToolBit  # noqa: F401
-              print("Imported Path.Tool.toolbit.models.base.ToolBit", flush=True)
-          except Exception as e:
-              print(f"ToolBit import failed (module path may differ across "
-                    f"versions -- not fatal to this repro): {e!r}", flush=True)
+          doc = FreeCAD.newDocument("ReproDoc")
+          report("after FreeCAD.newDocument")
+
+          tool_dict = {
+              "version": 2,
+              "name": "6mm Endmill",
+              "shape": "endmill",
+              "attribute": {},
+              "parameter": {"Diameter": "6.0 mm"},
+          }
+          tool_bit = ToolBit.from_dict(tool_dict)
+          report("after ToolBit.from_dict")
+
+          tool_obj = tool_bit.attach_to_doc(doc=doc)
+          report("after attach_to_doc")
+          print(f"Created: {tool_obj.Label}", flush=True)
 
           report("final check before XML test")
 
