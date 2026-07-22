@@ -280,6 +280,21 @@ def get_socket_path() -> str:
 
 _death_diagnostics: str | None = None
 
+# gdb's crash backtrace (KNOWN_ISSUES.md's create_tool SIGSEGV) starts with
+# one of these; a plain trailing slice missed it entirely last time (a deep
+# CPython eval-loop stack from a single "bt full" ran the total past a
+# 2000-char tail, keeping only the *outer* frames near main() and losing
+# the actual fault site at frame #0).
+_CRASH_ANCHORS = ("Program received signal", "Thread 1 ", "#0 ")
+
+
+def _extract_relevant(text: str, max_chars: int = 20000) -> str:
+    for anchor in _CRASH_ANCHORS:
+        idx = text.find(anchor)
+        if idx != -1:
+            return text[idx : idx + max_chars]
+    return text[-max_chars:]
+
 
 def diagnose_dead_spawned_process() -> str:
     """If we spawned a headless instance and it has since died, return a
@@ -308,7 +323,7 @@ def diagnose_dead_spawned_process() -> str:
         stdout, stderr = "", f"<failed to read pipes: {e}>"
     _death_diagnostics = (
         f"\nSpawned FreeCAD process died unexpectedly: returncode={proc.returncode}\n"
-        f"--- stdout (tail) ---\n{stdout[-2000:]}\n"
-        f"--- stderr (tail) ---\n{stderr[-2000:]}\n"
+        f"--- stdout (from crash, if found, else tail) ---\n{_extract_relevant(stdout)}\n"
+        f"--- stderr (from crash, if found, else tail) ---\n{_extract_relevant(stderr)}\n"
     )
     return _death_diagnostics
