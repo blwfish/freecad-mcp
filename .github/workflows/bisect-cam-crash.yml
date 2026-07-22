@@ -58,36 +58,19 @@ jobs:
           echo "FREECAD_MCP_FREECAD_BIN=$HOME/freecad-appimage/freecadcmd-wrapper.sh" >> "$GITHUB_ENV"
           echo "FREECAD_MCP_MODULE_DIR=${{ github.workspace }}/AICopilot" >> "$GITHUB_ENV"
 
-      - name: Enable core dumps
-        run: |
-          sudo sysctl -w kernel.core_pattern=core
-          echo "core_pattern: $(cat /proc/sys/kernel/core_pattern)"
-
       - name: Install gdb
         run: sudo apt-get update -qq && sudo apt-get install -y -qq gdb
 
       - name: Run CAM tool-creation tests
         shell: bash
         run: |
-          ulimit -c unlimited
           set -o pipefail
           python -m pytest tests/integration/test_cam_workflows.py::TestCAMToolCreation -v --timeout=60 2>&1 | tee pytest-output.log
         timeout-minutes: 5
-
-      - name: Capture crash backtrace
-        if: always()
-        run: |
-          CORE_FILE="${{ github.workspace }}/core"
-          if [ ! -f "$CORE_FILE" ]; then
-            echo "No core dump — this build did not crash (or crashed differently)."
-            exit 0
-          fi
-          echo "Found core dump: $CORE_FILE ($(stat -c%s "$CORE_FILE") bytes)"
-          SQUASHFS="$HOME/freecad-appimage/squashfs-root"
-          FREECAD_BIN=$(find "$SQUASHFS/usr/bin" -maxdepth 1 -type f -executable -iname '*freecad*' 2>/dev/null | head -1)
-          echo "Using binary: ${FREECAD_BIN:-<not found>}"
-          [ -z "$FREECAD_BIN" ] && exit 0
-          gdb -batch \
-            -ex "thread apply all bt full" \
-            -ex "quit" \
-            "$FREECAD_BIN" "$CORE_FILE" 2>&1 | tee gdb-backtrace.txt || true
+        env:
+          # See tests/integration/conftest.py's _spawn_headless: FreeCAD
+          # catches its own SIGSEGV and exits cleanly (no core file ever
+          # gets produced). Running under gdb from the start intercepts the
+          # fault before FreeCAD's own handler does, surfacing a real
+          # backtrace via the captured stdout/stderr on connection failure.
+          FREECAD_MCP_TEST_GDB_TRAP: "1"

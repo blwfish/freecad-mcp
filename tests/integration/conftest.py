@@ -127,6 +127,25 @@ def _spawn_headless(timeout: float = 30.0) -> tuple[subprocess.Popen, str]:
 
     cmd = [freecadcmd, *extra_flags, headless_script]
 
+    if os.environ.get("FREECAD_MCP_TEST_GDB_TRAP"):
+        # Debugging aid for the CAM create_tool SIGSEGV (KNOWN_ISSUES.md):
+        # FreeCAD installs its own SIGSEGV handler that prints a one-frame,
+        # symbol-less backtrace and exits cleanly (returncode 1, not a
+        # signal death) -- the OS never sees an *unhandled* fatal signal,
+        # so ulimit -c / core_pattern never produce a core file to inspect
+        # afterward. Running under gdb intercepts the signal before
+        # FreeCAD's own handler gets it (gdb's default signal disposition
+        # is to stop first), so a real multi-frame, per-thread backtrace
+        # can be captured at the actual fault site instead.
+        cmd = [
+            "gdb", "-batch",
+            "-ex", "set follow-exec-mode same",
+            "-ex", "run",
+            "-ex", "thread apply all bt full",
+            "-ex", "quit",
+            "--args", *cmd,
+        ]
+
     proc = subprocess.Popen(
         cmd,
         env=env,
