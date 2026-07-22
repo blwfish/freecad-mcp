@@ -287,9 +287,61 @@ dynamically linking an external expat (same shared library both Coin and
 Python would resolve to, so no ABI mismatch is possible); every build from
 `07.09` onward has Coin exporting its own `XML_ParseBuffer` with global
 visibility, which is what creates the collision. This is a single week's
-Coin3D build/packaging change, not a gradual drift — strong enough to file
-upstream against FreeCAD (or its AppImage build recipe / bundled Coin
-build) citing this exact `U`→`T` transition between those two tags.
+Coin3D build/packaging change, not a gradual drift.
+
+Timing lines up with FreeCAD's own bundled-Coin/Pivy submodule work:
+[#31120](https://github.com/FreeCAD/FreeCAD/issues/31120) ("current build
+system no longer works due to bundled coin / pivy submodules," filed
+2026-07-03) closed via
+[#31122](https://github.com/FreeCAD/FreeCAD/pull/31122) ("3rdParty:
+install only bundled Coin runtime" — explicitly aimed at making bundled
+Coin "private to the FreeCAD install"), merged **2026-07-09T08:20 UTC**,
+the same day our bisection found the first broken build. Plausible that
+#31122 solved the *installed-file* conflict (headers, pkg-config,
+`coin-default.cfg`) it targeted but didn't reach symbol-visibility inside
+the compiled `.so` itself. Not independently confirmed against that PR's
+actual CMake changes.
+
+#### 2026-07-22 update #3 — minimal repro found: no CAM/ToolBit code needed at all
+
+Three rounds of `.github/workflows/minimal-repro-expat-crash.yml`
+(`workflow_dispatch`, bare `FreeCADCmd` + a plain Python script, no
+freecad-mcp socket server or async job dispatch in the loop) to close the
+"is this really upstream, or is our own code somehow relevant"
+question before filing anything:
+
+1. **Import `Path` and `Path.Tool.Bit.ToolBit` alone:** no crash, `libCoin`
+   never loaded. Disproves the assumption that the CAM/Path Asset-based
+   `ToolBit` code is what pulls Coin in.
+2. **Replicate `create_tool()`'s exact call chain** (`ToolBit.from_dict()`,
+   `attach_to_doc()`, on a real document): still no crash, still no
+   `libCoin`. Our CAM handler code itself is not the trigger.
+3. **Add `import FreeCADGui`** (with `FreeCAD.GuiUp == 0`, genuinely
+   headless) right after `import FreeCAD`, before anything else: **loads
+   `libCoin.so.80.0.10` immediately**, and the very next call —
+   `FreeCAD.newDocument("ReproDoc")`, nothing CAM-related — **crashes with
+   the identical signature**: `Thread 1 "freecadcmd" received signal
+   SIGSEGV` / `#0 0x0000000000000000 in ?? ()` / `#1 ... XML_ParseBuffer ()
+   from .../libCoin.so.80`.
+
+**This means the real trigger is `import FreeCADGui` itself, not CAM tool
+creation.** `create_tool` was never special — it's simply the first
+operation in the test suite's execution order that happens to run after
+all handler modules have been imported. And **this part is in our own
+control, independent of the upstream Coin/expat visibility issue**:
+`primitives.py`, `partdesign_ops.py`, `document_ops.py`, and `view_ops.py`
+all do an unconditional `import FreeCADGui` at module level, unlike
+`base.py`/`execute_python_ops.py`/`diagnostics_ops.py`, which correctly
+guard it behind `if FreeCAD.GuiUp:` — exactly the inconsistency flagged
+back on 2026-07-20 (see above), whose lead was dropped at the time because
+an *ad hoc local* differential test (file-read repro vs. inline-typed
+command) gave inconsistent results. That test wasn't isolated properly;
+this gdb-confirmed, CI-reproduced result supersedes it. **Guarding those
+four imports behind `if FreeCAD.GuiUp:` (matching the already-correct
+files) should prevent `libCoin.so` from ever loading in headless MCP
+usage, eliminating this crash for our own users regardless of whether or
+when upstream fixes Coin's symbol visibility.** Not yet implemented —
+flagged as the concrete next step.
 
 ## Large Document Handling
 
