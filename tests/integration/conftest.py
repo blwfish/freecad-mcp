@@ -157,10 +157,24 @@ def _spawn_headless(timeout: float = 30.0) -> tuple[subprocess.Popen, str]:
         except OSError:
             pass
         cmd = [
+            # First attempt used "thread apply all bt full" with no time
+            # bound: it hung the whole run (~81s, never exited per
+            # proc.poll(), sockets left listening-but-unaccepting so every
+            # later test got ECONNREFUSED/EAGAIN with no diagnostic since
+            # the process never registered as dead). "bt full" prints every
+            # local variable of every frame of every thread -- exactly the
+            # kind of deep pointer-chasing walk that heap corruption can
+            # turn into a hang or its own crash. Cheap "bt" (names/addrs,
+            # no locals) across all threads plus one "bt full" for just the
+            # thread gdb auto-selects (the one that faulted) gets both
+            # breadth and depth without that blowup. `timeout -s KILL` is
+            # a hard backstop in case it still hangs.
+            "timeout", "-s", "KILL", "45",
             "gdb", "-batch",
             "-ex", "set follow-exec-mode same",
             "-ex", "run",
-            "-ex", "thread apply all bt full",
+            "-ex", "thread apply all bt",
+            "-ex", "bt full",
             "-ex", "quit",
             "--args", *gdb_target,
         ]
