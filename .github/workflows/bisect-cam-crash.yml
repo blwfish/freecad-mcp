@@ -1,0 +1,93 @@
+name: Bisect CAM Crash
+
+# One-off diagnostic workflow, not part of normal CI (workflow_dispatch
+# only). Downloads a single specified FreeCAD weekly AppImage and runs just
+# the CAM tool-creation tests against it, to binary-search which weekly
+# build between weekly-2026.04.01 (known good) and weekly-2026.07.15
+# (known broken) introduced the create_tool SIGSEGV documented in
+# KNOWN_ISSUES.md. See that file for the crash's own background.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "FreeCAD weekly release tag to test (e.g. weekly-2026.06.03)"
+        required: true
+        type: string
+
+jobs:
+  bisect:
+    runs-on: ubuntu-latest
+    name: "Bisect ${{ inputs.tag }}"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install pytest pytest-timeout
+
+      - name: Download FreeCAD AppImage
+        run: |
+          mkdir -p ~/freecad-appimage
+          cd ~/freecad-appimage
+          gh release download "${{ inputs.tag }}" \
+            --repo FreeCAD/FreeCAD \
+            --pattern '*Linux-x86_64.AppImage' \
+            --pattern '*Linux-x86_64.AppImage-SHA256.txt' \
+            --dir .
+          APPIMAGE=$(ls *Linux-x86_64.AppImage | head -1)
+          sha256sum -c "${APPIMAGE}-SHA256.txt"
+          chmod +x "$APPIMAGE"
+          "./$APPIMAGE" --appimage-extract
+          rm "$APPIMAGE"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Set up FreeCAD environment
+        run: |
+          SQUASHFS="$HOME/freecad-appimage/squashfs-root"
+          printf '#!/bin/bash\nexec "%s/AppRun" freecadcmd "$@"\n' "$SQUASHFS" \
+            > ~/freecad-appimage/freecadcmd-wrapper.sh
+          chmod +x ~/freecad-appimage/freecadcmd-wrapper.sh
+          ln -sfn "${{ github.workspace }}/AICopilot" "$SQUASHFS/usr/Mod/AICopilot"
+          echo "FREECAD_MCP_FREECAD_BIN=$HOME/freecad-appimage/freecadcmd-wrapper.sh" >> "$GITHUB_ENV"
+          echo "FREECAD_MCP_MODULE_DIR=${{ github.workspace }}/AICopilot" >> "$GITHUB_ENV"
+
+      - name: Enable core dumps
+        run: |
+          sudo sysctl -w kernel.core_pattern=core
+          echo "core_pattern: $(cat /proc/sys/kernel/core_pattern)"
+
+      - name: Install gdb
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gdb
+
+      - name: Run CAM tool-creation tests
+        shell: bash
+        run: |
+          ulimit -c unlimited
+          set -o pipefail
+          python -m pytest tests/integration/test_cam_workflows.py::TestCAMToolCreation -v --timeout=60 2>&1 | tee pytest-output.log
+        timeout-minutes: 5
+
+      - name: Capture crash backtrace
+        if: always()
+        run: |
+          CORE_FILE="${{ github.workspace }}/core"
+          if [ ! -f "$CORE_FILE" ]; then
+            echo "No core dump — this build did not crash (or crashed differently)."
+            exit 0
+          fi
+          echo "Found core dump: $CORE_FILE ($(stat -c%s "$CORE_FILE") bytes)"
+          SQUASHFS="$HOME/freecad-appimage/squashfs-root"
+          FREECAD_BIN=$(find "$SQUASHFS/usr/bin" -maxdepth 1 -type f -executable -iname '*freecad*' 2>/dev/null | head -1)
+          echo "Using binary: ${FREECAD_BIN:-<not found>}"
+          [ -z "$FREECAD_BIN" ] && exit 0
+          gdb -batch \
+            -ex "thread apply all bt full" \
+            -ex "quit" \
+            "$FREECAD_BIN" "$CORE_FILE" 2>&1 | tee gdb-backtrace.txt || true
