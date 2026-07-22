@@ -34,7 +34,10 @@ def _socket_call(tool: str, args: dict, timeout: float = 10.0) -> dict:
     sock_path = conftest.get_socket_path()
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(timeout)
-    s.connect(sock_path)
+    try:
+        s.connect(sock_path)
+    except (ConnectionRefusedError, FileNotFoundError, OSError) as e:
+        raise ConnectionError(f"{e}{conftest.diagnose_dead_spawned_process()}") from e
     try:
         msg = json.dumps({"tool": tool, "args": args}).encode("utf-8")
         s.sendall(struct.pack("!I", len(msg)) + msg)
@@ -82,7 +85,9 @@ def _recv_exact(s, n):
     while len(data) < n:
         chunk = s.recv(n - len(data))
         if not chunk:
-            raise ConnectionError("Socket closed before all data received")
+            raise ConnectionError(
+                f"Socket closed before all data received{conftest.diagnose_dead_spawned_process()}"
+            )
         data += chunk
     return data
 

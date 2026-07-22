@@ -224,3 +224,39 @@ def freecad_instance():
 def get_socket_path() -> str:
     """Return the active FreeCAD socket path. Called by test modules."""
     return _active_socket_path or _DEFAULT_SOCKET
+
+
+_death_diagnostics: str | None = None
+
+
+def diagnose_dead_spawned_process() -> str:
+    """If we spawned a headless instance and it has since died, return a
+    diagnostic string with its exit code and captured stdout/stderr.
+
+    Nothing else ever drains _spawned_proc's stdout/stderr pipes while
+    tests are running, so a mid-run crash (e.g. a native segfault in
+    FreeCAD/OCCT) leaves whatever it printed sitting unread in the pipe
+    buffer -- silently discarded once the test session ends. Call this
+    from a connection-failure handler to surface it instead.
+
+    subprocess.communicate() closes the pipes on first use, so the result
+    is cached after the first successful read.
+    """
+    global _death_diagnostics
+    if _death_diagnostics is not None:
+        return _death_diagnostics
+    proc = _spawned_proc
+    if proc is None or proc.poll() is None:
+        return ""
+    try:
+        stdout, stderr = proc.communicate(timeout=2)
+        stdout = stdout.decode("utf-8", errors="replace") if stdout else ""
+        stderr = stderr.decode("utf-8", errors="replace") if stderr else ""
+    except Exception as e:
+        stdout, stderr = "", f"<failed to read pipes: {e}>"
+    _death_diagnostics = (
+        f"\nSpawned FreeCAD process died unexpectedly: returncode={proc.returncode}\n"
+        f"--- stdout (tail) ---\n{stdout[-2000:]}\n"
+        f"--- stderr (tail) ---\n{stderr[-2000:]}\n"
+    )
+    return _death_diagnostics
