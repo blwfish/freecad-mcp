@@ -157,34 +157,31 @@ def _spawn_headless(timeout: float = 30.0) -> tuple[subprocess.Popen, str]:
         except OSError:
             pass
         cmd = [
-            # First attempt used "thread apply all bt full" with no time
-            # bound: it hung the whole run (~81s, never exited per
-            # proc.poll(), sockets left listening-but-unaccepting so every
-            # later test got ECONNREFUSED/EAGAIN with no diagnostic since
-            # the process never registered as dead). "bt full" prints every
-            # local variable of every frame of every thread -- exactly the
-            # kind of deep pointer-chasing walk that heap corruption can
-            # turn into a hang or its own crash. Cheap "bt" (names/addrs,
-            # no locals) across all threads plus one "bt full" for just the
-            # thread gdb auto-selects (the one that faulted) gets both
-            # breadth and depth without that blowup. `timeout -s KILL` is
-            # a hard backstop in case it still hangs.
-            "timeout", "-s", "KILL", "45",
+            # Iteration history (see KNOWN_ISSUES.md): "thread apply all bt
+            # full" with no time bound hung the whole run (~81s, process
+            # never registered as dead). Passing everything but SIGSEGV
+            # through ("handle all nostop noprint pass" / "handle SIGSEGV
+            # stop print nopass") stopped a repeat of the wrong-signal
+            # theory, but "thread apply all bt" (even without locals) still
+            # ran past a 45s timeout with only a single idle thread's
+            # frames captured -- FreeCAD apparently has enough threads (or
+            # poor-enough unwind info) that enumerating *all* of them is
+            # itself slow. Drop "thread apply all" entirely: "info program"
+            # confirms *why* gdb actually stopped (in case it's still
+            # stopping on the wrong thing) and "bt full" backtraces just
+            # the one thread gdb auto-selects -- the one that received the
+            # signal -- which is the only thread that actually matters
+            # here. The "===GDB-STOPPED===" echo is an unambiguous anchor
+            # for diagnose_dead_spawned_process() to search from, instead
+            # of guessing from gdb's own free-text output.
+            "timeout", "-s", "KILL", "90",
             "gdb", "-batch",
             "-ex", "set follow-exec-mode same",
-            # gdb's default disposition stops on most signals it doesn't
-            # know the program handles, not just SIGSEGV. That fired
-            # first: the previous run's captured "Thread 1" backtrace was
-            # a thread parked in time.sleep() (clock_nanosleep), not the
-            # crash -- gdb had stopped (and then quit) on some earlier,
-            # benign signal FreeCAD/Python's own runtime uses internally,
-            # well before the real SIGSEGV. Pass everything through
-            # silently except SIGSEGV, which is the only one that should
-            # actually halt execution here.
             "-ex", "handle all nostop noprint pass",
             "-ex", "handle SIGSEGV stop print nopass",
             "-ex", "run",
-            "-ex", "thread apply all bt",
+            "-ex", "echo \\n===GDB-STOPPED===\\n",
+            "-ex", "info program",
             "-ex", "bt full",
             "-ex", "quit",
             "--args", *gdb_target,
@@ -291,15 +288,17 @@ def get_socket_path() -> str:
 
 _death_diagnostics: str | None = None
 
-# gdb's crash backtrace (KNOWN_ISSUES.md's create_tool SIGSEGV) starts with
-# one of these; a plain trailing slice missed it entirely last time (a deep
-# CPython eval-loop stack from a single "bt full" ran the total past a
-# 2000-char tail, keeping only the *outer* frames near main() and losing
-# the actual fault site at frame #0).
-_CRASH_ANCHORS = ("Program received signal", "Thread 1 ", "#0 ")
+# gdb's crash backtrace (KNOWN_ISSUES.md's create_tool SIGSEGV) starts at
+# one of these; a plain trailing slice missed it entirely in an earlier
+# iteration (a deep CPython eval-loop stack from a single "bt full" ran the
+# total past a 2000-char tail, keeping only the *outer* frames near main()
+# and losing the actual fault site at frame #0). "===GDB-STOPPED===" is our
+# own unambiguous echo'd marker (see _spawn_headless's gdb-trap branch);
+# the rest are fallbacks for gdb's own free-text output.
+_CRASH_ANCHORS = ("===GDB-STOPPED===", "Program received signal", "Thread 1 ", "#0 ")
 
 
-def _extract_relevant(text: str, max_chars: int = 20000) -> str:
+def _extract_relevant(text: str, max_chars: int = 30000) -> str:
     for anchor in _CRASH_ANCHORS:
         idx = text.find(anchor)
         if idx != -1:
