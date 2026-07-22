@@ -172,6 +172,17 @@ def _spawn_headless(timeout: float = 30.0) -> tuple[subprocess.Popen, str]:
             "timeout", "-s", "KILL", "45",
             "gdb", "-batch",
             "-ex", "set follow-exec-mode same",
+            # gdb's default disposition stops on most signals it doesn't
+            # know the program handles, not just SIGSEGV. That fired
+            # first: the previous run's captured "Thread 1" backtrace was
+            # a thread parked in time.sleep() (clock_nanosleep), not the
+            # crash -- gdb had stopped (and then quit) on some earlier,
+            # benign signal FreeCAD/Python's own runtime uses internally,
+            # well before the real SIGSEGV. Pass everything through
+            # silently except SIGSEGV, which is the only one that should
+            # actually halt execution here.
+            "-ex", "handle all nostop noprint pass",
+            "-ex", "handle SIGSEGV stop print nopass",
             "-ex", "run",
             "-ex", "thread apply all bt",
             "-ex", "bt full",
