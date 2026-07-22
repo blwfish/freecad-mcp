@@ -170,6 +170,115 @@ CI, or bisecting the exact weekly build between the last-known-good
 `weekly-2026.04.01` and broken `weekly-2026.07.15` to narrow which upstream
 change introduced the corruption).
 
+#### 2026-07-22 update #2 — root cause found: expat symbol collision between Python and Coin3D
+
+`ulimit -c`/`core_pattern` never worked as a capture mechanism: FreeCAD's
+own SIGSEGV handler (the one-frame printer above) intercepts the signal and
+exits cleanly (`returncode=1`, not a signal death) before the OS ever sees
+an *unhandled* fatal signal, so no core file is ever produced regardless of
+core-dump configuration. Fixed by running the spawned headless instance
+under `gdb -batch -ex run ...` from launch instead
+(`tests/integration/conftest.py`'s `_spawn_headless`, gated behind
+`FREECAD_MCP_TEST_GDB_TRAP=1`, now set for the `dev-weekly` CI slot and the
+`bisect-cam-crash.yml` workflow) — gdb's default signal disposition stops
+the process *before* passing the signal to FreeCAD's own handler, so a real
+backtrace can be captured at the actual fault site. Getting there took
+several dead ends worth recording so they aren't re-discovered: gdb can't
+load a shebang script via `--args` (must launch the interpreter and let
+`follow-exec-mode same` follow the re-exec); `thread apply all bt full` on
+every thread hung the whole CI run indefinitely (`bt full`'s deep
+pointer-chasing through corrupted memory, or simply a great many threads,
+made it pathologically slow — dropped to `bt full` on just the
+gdb-auto-selected faulting thread); gdb's default per-signal disposition
+stops on signals besides SIGSEGV too, so `handle all nostop noprint pass`
+/ `handle SIGSEGV stop print nopass` was needed to stop only for the real
+fault, not some benign signal FreeCAD/Python's runtime uses internally.
+
+The real backtrace (`gh run 29943979760`, Linux x86_64, `dev-weekly` slot):
+
+```
+It stopped with signal SIGSEGV, Segmentation fault.
+#0  0x0000000000000000 in ?? ()
+No symbol table info available.
+#1  0x00007fffef165ea2 in XML_ParseBuffer ()
+      from .../squashfs-root/usr/lib/libCoin.so.80
+#2  expat_parse (self=..., data="<?xml version='1.0' encoding='utf-8'?>\n<!--\n
+      FreeCAD Document, see https://www.freecad.org...\n-->\n<Document
+      SchemaVersion=\"4\" ProgramVersion=\"1.2R45099 (Git)\" ...", ...)
+      at .../Modules/_elementtree.c:3827
+#3  _elementtree_XMLParser__parse_whole (...) at .../_elementtree.c:4018
+    ... ordinary CPython eval-loop frames ...
+#10 task_step_impl (...) at .../Modules/_asynciomodule.c:2693
+    ... our own async job-dispatch machinery ...
+```
+
+**This is not heap corruption in FreeCAD/OCCT/our own code. It's an ELF
+symbol collision.** CPython's built-in `xml.etree.ElementTree` accelerator
+(`_elementtree.c`) calls `XML_ParseBuffer` expecting *its own* linked
+libexpat. `libCoin.so.80` (Coin3D, FreeCAD's scene-graph library) also
+exports a symbol named `XML_ParseBuffer` — its own bundled/statically
+-linked expat, built against a different internal struct layout. On Linux,
+the default ELF symbol resolution is a flat, global namespace: with lazy
+binding, whichever shared object providing a matching symbol name is
+resolved *first* wins for the rest of the process's life, regardless of
+which library a given caller was actually linked against. Once
+`libCoin.so.80` is loaded into the process (headless `FreeCADCmd` still
+loads it, apparently for unrelated reasons), any future call to
+`XML_ParseBuffer` — including Python's *own* `_elementtree` C accelerator's
+internal calls — can get bound to Coin's incompatible version instead of
+Python's real libexpat. The two `XML_Parser` struct layouts don't match, so
+Python hands Coin's expat pointers/data it never expects; frame #0 is a
+call through an all-zero function pointer, the direct result of dereferenc-
+ing a garbage vtable/function-table entry read from a misinterpreted
+struct.
+
+This also explains, independently and for free, why the crash is
+**Linux-only and never reproduced on macOS**: macOS's dynamic linker uses a
+two-level namespace by default, which resolves each symbol reference
+against the *specific* library it was linked against, not a flat global
+search — the exact class of collision this is simply cannot happen there.
+That's strong independent confirmation this is the real mechanism, not a
+coincidence.
+
+The XML content in frame #2's `data` argument
+(`<Document SchemaVersion="4" ...>`) is FreeCAD's own internal document
+serialization format — this is *general* document XML (de)serialization,
+not something CAM-specific. `create_tool` is very likely just the first
+operation in the test suite's execution order that happens to trigger a
+Python-level `xml.etree.ElementTree` parse of document content (plausibly
+via the `ToolBit` Asset/ABC rewrite noted above) while `libCoin.so` is
+already resident — any other operation hitting the same combination
+(Python XML parsing + Coin already loaded) should crash identically.
+
+**Likely upstream, not ours.** This is a FreeCAD/Coin3D AppImage packaging
+characteristic (a global-visibility symbol collision), not a bug in
+`cam_tools.py` or this project's own code. Worth a FreeCAD upstream bug
+report once confirmed via the bisection below.
+
+**A real, testable workaround exists, not yet implemented:** ELF lazy
+binding resolves (and caches) a symbol on *first use*. Forcing Python's own
+`xml.etree.ElementTree` to parse something trivial very early in
+`headless_server.py`'s startup — before anything that would load
+`libCoin.so` — should bind `XML_ParseBuffer` to Python's own correct
+libexpat for the rest of the process's lifetime, before Coin's colliding
+symbol is even in the picture. Untested; flagged as the concrete next step
+rather than implemented speculatively.
+
+**Bisection (in progress, tooling built, not yet run to a conclusion):**
+`.github/workflows/bisect-cam-crash.yml` (`workflow_dispatch`, takes a
+`tag` input) downloads one FreeCAD weekly AppImage and runs just the CAM
+tool-creation tests against it. 16 weekly tags exist between
+`weekly-2026.04.01` (known good) and `weekly-2026.07.15` (known broken):
+`04.08, 04.15, 04.22, 04.29, 05.06, 05.13, 05.20, 05.27, 06.03, 06.10,
+06.17, 06.20, 06.24, 07.01, 07.08, 07.09`. Binary search needs ~4 dispatches.
+Two independent things could have changed and are both worth checking once
+a build is found: whether `libCoin.so.80` newly exports `XML_ParseBuffer`
+(`nm -D` / `objdump -T` on the extracted `.so`, cheap, no live crash-test
+needed) versus whether FreeCAD's own code newly started calling
+`xml.etree.ElementTree` on document content in that window (check FreeCAD's
+own git log for the relevant files/dates) — these have different upstream
+owners and different fixes.
+
 ## Large Document Handling
 
 ### Issue: list_objects Crashes on Large DXF Imports
