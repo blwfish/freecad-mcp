@@ -68,10 +68,12 @@ pre-existing/tolerated bug: CI was green against the (then-)pinned
 `create_tool()` now builds `parameters["Diameter"] = f"{diameter} mm"`
 etc. — plain scalars, matching `update_tool()`'s existing (correct) form.
 
-#### Second, deeper crash on Linux (both archs) — OPEN, CI is currently red
+#### Second, deeper crash on Linux (both archs) — FIXED 2026-07-22 (our side; upstream defect remains)
 
-**Status**: OPEN (2026-07-20) — **`dev-weekly` CI slot fails because of this**,
-not just an environment anomaly. Needs a fresh investigation.
+**Status**: FIXED in our own code 2026-07-22, verified against the real
+broken build. See the dated updates below for the full investigation;
+skip to "2026-07-22 update #4" for the resolution if you just need the
+fix.
 
 The parameter-format fix above is real and necessary but **not sufficient**.
 The *same* `create_tool()` call — with the fix applied — still crashes the
@@ -342,6 +344,53 @@ files) should prevent `libCoin.so` from ever loading in headless MCP
 usage, eliminating this crash for our own users regardless of whether or
 when upstream fixes Coin's symbol visibility.** Not yet implemented —
 flagged as the concrete next step.
+
+#### 2026-07-22 update #4 — fixed and verified against the real broken build
+
+`primitives.py` and `partdesign_ops.py` imported `FreeCADGui` unconditionally
+but never referenced it anywhere in either file — dead imports, deleted
+outright. `document_ops.py` and `view_ops.py` use it for real GUI-only
+operations (Selection, undo/redo, workbench activation, view control) —
+every call site in both files was already wrapped in `try/except`, so
+guarded to `FreeCADGui = None` in headless mode, those now raise a caught
+`AttributeError` instead of segfaulting the whole process. Not a polished
+error message, but safe, and these were never meaningful operations
+headless anyway.
+
+First verification run against `weekly-2026.07.15` still failed —
+`cam_operations`'s `create_job()` turned out to have the *same* bug via a
+different route: `from Path.Main.Gui.Job import ViewProvider`, wrapped
+only in `try/except ImportError`, which guards against import *failure*,
+not the Coin3D load that happens as a side effect of the import
+*succeeding*. Fixed by checking `FreeCAD.GuiUp` before attempting the
+import at all, same pattern.
+
+A second verification run then showed `test_job_status` still failing —
+but with the `FREECAD_MCP_TEST_GDB_TRAP` debugging aid (added earlier in
+this investigation) still enabled on the main CI slot, and zero
+`GDB-STOPPED`/`SIGSEGV` output anywhere in the log despite a real
+connection failure. Root cause of *that*: `tests/integration/conftest.py`'s
+`_stop_headless()` teardown only waits 5 seconds before SIGKILLing the
+spawned process — not long enough for gdb's `bt full` to finish on a slow
+crash, so our own teardown was killing gdb mid-backtrace and discarding
+the very diagnostic we needed. Removed `FREECAD_MCP_TEST_GDB_TRAP` from
+the routine `dev-weekly` CI slot (still available for focused
+investigation by re-adding the env var; needs a longer teardown budget
+before it's safe to leave on by default).
+
+With gdb-trap removed, the **full integration suite passes cleanly against
+`weekly-2026.07.15`: 157 passed, 1 skipped, 0 failed, 0 errors** (previously
+100% broken on this test file). `test_job_status`'s earlier failure was an
+artifact of our own gdb instrumentation, not a real remaining crash — both
+fixes above were necessary and sufficient.
+
+**This is a mitigation for our own headless usage, not a fix for the
+underlying defect.** `libCoin.so.80` exporting `XML_ParseBuffer` with
+global visibility is still a real bug in how Coin3D is built/bundled,
+independent of us — anyone else who imports `FreeCADGui` (for any reason,
+even headlessly) and then does any Python-level XML parsing is still
+exposed. Upstream report still worth filing (draft prepared separately,
+not yet submitted).
 
 ## Large Document Handling
 
