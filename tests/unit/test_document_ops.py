@@ -454,8 +454,15 @@ class TestDeleteObject:
 
 class TestUndoRedo:
     def test_undo(self, doc_handler, mock_doc):
-        fcgui = sys.modules["FreeCADGui"]
-        fcgui.runCommand = MagicMock()
+        # document_ops.FreeCADGui is only bound by the real import when
+        # FreeCAD.GuiUp is true (see the module's guarded import -- an
+        # unconditional import loaded Coin3D regardless of GuiUp and could
+        # SIGSEGV on later FreeCAD weekly builds, KNOWN_ISSUES.md "CAM Tool
+        # Creation"). Patch the module attribute directly so this test
+        # exercises the "GUI is available" path without depending on
+        # sys.modules["FreeCADGui"] already being what the guard picked.
+        import handlers.document_ops as document_ops
+        fcgui = document_ops.FreeCADGui = MagicMock()
         result = doc_handler.undo({})
         assert "Undo" in result
         fcgui.runCommand.assert_called_with("Std_Undo")
@@ -466,8 +473,8 @@ class TestUndoRedo:
         assert "No active document" in result
 
     def test_redo(self, doc_handler, mock_doc):
-        fcgui = sys.modules["FreeCADGui"]
-        fcgui.runCommand = MagicMock()
+        import handlers.document_ops as document_ops
+        fcgui = document_ops.FreeCADGui = MagicMock()
         result = doc_handler.redo({})
         assert "Redo" in result
         fcgui.runCommand.assert_called_with("Std_Redo")
@@ -484,14 +491,14 @@ class TestUndoRedo:
 
 class TestWorkbenchAndCommand:
     def test_activate_workbench(self, doc_handler):
-        fcgui = sys.modules["FreeCADGui"]
-        fcgui.activateWorkbench = MagicMock()
+        import handlers.document_ops as document_ops
+        document_ops.FreeCADGui = MagicMock()
         result = doc_handler.activate_workbench({"workbench_name": "PartWorkbench"})
         assert "PartWorkbench" in result
 
     def test_run_command(self, doc_handler):
-        fcgui = sys.modules["FreeCADGui"]
-        fcgui.runCommand = MagicMock()
+        import handlers.document_ops as document_ops
+        document_ops.FreeCADGui = MagicMock()
         result = doc_handler.run_command({"command": "Std_ViewFitAll"})
         assert "Std_ViewFitAll" in result
 
