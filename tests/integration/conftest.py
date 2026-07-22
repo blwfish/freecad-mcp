@@ -223,7 +223,18 @@ def _stop_headless(proc: subprocess.Popen, sock_path: str):
     """Gracefully stop a headless FreeCAD instance."""
     try:
         proc.terminate()
-        proc.wait(timeout=5)
+        # This fixture is session-scoped -- this wait runs once per CI job,
+        # not once per test -- and wait() returns the instant the process
+        # actually exits, not after the full timeout. On a healthy process
+        # SIGTERM is near-instant regardless of this ceiling; the ceiling
+        # only matters when FREECAD_MCP_TEST_GDB_TRAP is active and gdb is
+        # still mid-"bt full" (KNOWN_ISSUES.md's CAM SIGSEGV investigation
+        # hit exactly this: a 5s ceiling killed gdb before it could print
+        # anything, discarding the diagnostic). Set above gdb's own
+        # `timeout -s KILL 90` backstop so we never truncate a real
+        # backtrace; proc.kill() below is still the final backstop for a
+        # genuine hang.
+        proc.wait(timeout=95)
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait(timeout=2)

@@ -111,10 +111,18 @@ jobs:
           fi
           exit $exit_code
         timeout-minutes: 5
-        # FREECAD_MCP_TEST_GDB_TRAP=1 (used during the CAM SIGSEGV
-        # investigation, KNOWN_ISSUES.md) is deliberately NOT set here.
-        # _stop_headless()'s 5s SIGTERM grace period kills gdb before a
-        # slow "bt full" can finish (observed: zero GDB-STOPPED output
-        # despite a real crash) -- it needs a longer teardown budget
-        # before being safe to leave on by default. Re-add only for
-        # focused investigation of a specific failure, not routine CI.
+        env:
+          # Standing insurance for any future native crash, not just the
+          # CAM SIGSEGV this was built for (KNOWN_ISSUES.md): FreeCAD
+          # catches its own SIGSEGV and exits cleanly, so no core file is
+          # ever produced for `gdb --core` to inspect post-mortem.
+          # Running the spawned instance under gdb from launch intercepts
+          # the fault before FreeCAD's own handler does, producing a real
+          # backtrace in its captured stdout/stderr on any connection
+          # failure (test_e2e_workflows.py's _socket_call). Previously
+          # removed because tests/integration/conftest.py's
+          # _stop_headless() had only a 5s SIGTERM grace period -- too
+          # short for a slow "bt full", so teardown was silently killing
+          # gdb mid-backtrace. That's now 95s (safely above gdb's own
+          # `timeout -s KILL 90` backstop), so this is safe to leave on.
+          FREECAD_MCP_TEST_GDB_TRAP: "1"
