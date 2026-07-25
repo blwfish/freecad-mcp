@@ -82,6 +82,25 @@ class TestApiSurfaceDrift:
             "against a known-good FreeCAD build and commit the result."
         )
 
+    def test_scope_is_not_trivially_empty(self):
+        """full-review 2026-07-24 finding #11/#H15: nothing previously
+        asserted that scan_type_properties() against the real handlers
+        directory returns anything at all. If HANDLERS_DIR ever silently
+        resolves to a missing/renamed/empty directory, scope becomes {} and
+        every other assertion in this class passes vacuously -- this is the
+        backstop for the entire suite's ability to catch that, not a drift
+        finding itself. The exact count isn't pinned (that would make this
+        test itself brittle against legitimate handler growth/shrinkage) --
+        only that scanning the real, current handler tree finds a
+        realistic amount of Type::String surface."""
+        scope = scan_type_properties()
+        assert len(scope) > 10, (
+            f"scan_type_properties() against the real handlers directory found only "
+            f"{len(scope)} Type::String identifiers -- expected dozens. This usually "
+            f"means HANDLERS_DIR resolved wrong (see _api_surface_scan.py), silently "
+            f"disabling every other test in this file."
+        )
+
     def test_snapshot_covers_current_scope(self, surface_diff):
         """Every Type::String (and property on it) current handler code
         actually uses must already be represented in the golden snapshot --

@@ -1,12 +1,26 @@
 {
   "App::DocumentObjectGroup": {},
   "App::FeaturePython": {
-    "Angle": "__MISSING__",
-    "Distance": "__MISSING__",
-    "Distance2": "__MISSING__"
+    "Angle": "App::PropertyAngle",
+    "AngleMax": "App::PropertyAngle",
+    "AngleMin": "App::PropertyAngle",
+    "Distance": "App::PropertyLength",
+    "Distance2": "App::PropertyLength",
+    "EnableAngleMax": "App::PropertyBool",
+    "EnableAngleMin": "App::PropertyBool",
+    "EnableLengthMax": "App::PropertyBool",
+    "EnableLengthMin": "App::PropertyBool",
+    "Label": "App::PropertyString",
+    "LengthMax": "App::PropertyLength",
+    "LengthMin": "App::PropertyLength"
   },
   "App::Link": {
-    "LinkedObject": "App::PropertyXLink"
+    "LinkedObject": "App::PropertyXLink",
+    "Placement": "App::PropertyPlacement"
+  },
+  "Assembly::AssemblyLink": {
+    "LinkedObject": "App::PropertyXLink",
+    "Placement": "App::PropertyPlacement"
   },
   "Assembly::AssemblyObject": {
     "Type": "App::PropertyString"
@@ -18,6 +32,7 @@
     "Height": "App::PropertyLength",
     "Label": "App::PropertyString",
     "Length": "App::PropertyLength",
+    "Placement": "App::PropertyPlacement",
     "Width": "App::PropertyLength"
   },
   "Part::Chamfer": {
@@ -27,6 +42,7 @@
   "Part::Cone": {
     "Height": "App::PropertyLength",
     "Label": "App::PropertyString",
+    "Placement": "App::PropertyPlacement",
     "Radius1": "App::PropertyLength",
     "Radius2": "App::PropertyLength"
   },
@@ -38,6 +54,7 @@
   "Part::Cylinder": {
     "Height": "App::PropertyLength",
     "Label": "App::PropertyString",
+    "Placement": "App::PropertyPlacement",
     "Radius": "App::PropertyLength"
   },
   "Part::Extrusion": {
@@ -48,7 +65,11 @@
   },
   "Part::Feature": {
     "Label": "App::PropertyString",
+    "Placement": "App::PropertyPlacement",
     "Shape": "Part::PropertyPartShape"
+  },
+  "Part::FeaturePython": {
+    "Placement": "App::PropertyPlacement"
   },
   "Part::Fillet": {
     "Base": "App::PropertyLink",
@@ -58,7 +79,11 @@
     "Base": "App::PropertyLink",
     "Tool": "App::PropertyLink"
   },
-  "Part::LocalCoordinateSystem": {},
+  "Part::LocalCoordinateSystem": {
+    "AttachmentOffset": "App::PropertyPlacement",
+    "AttachmentSupport": "App::PropertyLinkSubList",
+    "MapMode": "App::PropertyEnumeration"
+  },
   "Part::Loft": {
     "Ruled": "App::PropertyBool",
     "Sections": "App::PropertyLinkList",
@@ -85,6 +110,7 @@
   },
   "Part::Sphere": {
     "Label": "App::PropertyString",
+    "Placement": "App::PropertyPlacement",
     "Radius": "App::PropertyLength"
   },
   "Part::Sweep": {
@@ -99,6 +125,7 @@
   },
   "Part::Torus": {
     "Label": "App::PropertyString",
+    "Placement": "App::PropertyPlacement",
     "Radius1": "App::PropertyLength",
     "Radius2": "App::PropertyLength"
   },
@@ -179,5 +206,18 @@
   "Sketcher::SketchObject": {
     "Placement": "App::PropertyPlacement"
   },
-  "Spreadsheet::Sheet": {}
+  "Spreadsheet::Sheet": {},
+  "__meta__": {
+    "freecad_version": [
+      "26",
+      "3",
+      "0",
+      "47780 +9 (Git)",
+      "Unknown",
+      "2026/07/22 10:27:21",
+      "blw-fixes-v7",
+      "e66fa73e6fe62a60f7bdbe495d42eb906da2493c"
+    ],
+    "generated_at": "2026-07-25T06:33:18.219637+00:00"
+  }
 }
