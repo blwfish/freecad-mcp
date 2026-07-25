@@ -190,6 +190,103 @@ class TestCreateTool(unittest.TestCase):
 
         assert_error_contains(self, result, "path.tool", "freecad 1.2")
 
+    def test_missing_tool_type_rejected(self):
+        """finding #26: tool_type used to silently default to 'endmill'
+        when omitted, indistinguishable from an explicit choice."""
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+        mock_Path_Tool_Bit.ToolBit = MagicMock()
+
+        result = self.handler.create_tool({'name': 'T', 'diameter': 6.0})
+
+        assert_error_contains(self, result, "tool_type", "required")
+
+    def test_empty_string_tool_type_rejected(self):
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+        mock_Path_Tool_Bit.ToolBit = MagicMock()
+
+        result = self.handler.create_tool({'name': 'T', 'tool_type': '', 'diameter': 6.0})
+
+        assert_error_contains(self, result, "tool_type", "required")
+
+    def test_shape_specific_params_passed_through(self):
+        """finding #04: create_tool previously had no caller-facing path for
+        7 shape-critical dimensions that get_tool reads back -- Length,
+        TipAngle, CuttingEdgeAngle, FlatRadius, CornerRadius, NeckDiameter,
+        NeckLength. Most non-endmill shapes are only distinguishable from a
+        generic endmill/ballend by one or more of these."""
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+        tool_bit = MagicMock()
+        tool_bit.attach_to_doc = MagicMock(return_value=make_tool_bit_obj("Chf", "chamfer"))
+        mock_Path_Tool_Bit.ToolBit = MagicMock()
+        mock_Path_Tool_Bit.ToolBit.from_dict = MagicMock(return_value=tool_bit)
+
+        self.handler.create_tool({
+            'name': 'Chf', 'tool_type': 'chamfer', 'diameter': 10.0,
+            'length': 40.0, 'tip_angle': 90.0, 'cutting_edge_angle': 45.0,
+            'flat_radius': 1.5, 'corner_radius': 0.5,
+            'neck_diameter': 4.0, 'neck_length': 12.0,
+        })
+
+        params = mock_Path_Tool_Bit.ToolBit.from_dict.call_args.args[0]['parameter']
+        self.assertEqual(params['Length'], '40.0 mm')
+        self.assertEqual(params['TipAngle'], '90.0 deg')
+        self.assertEqual(params['CuttingEdgeAngle'], '45.0 deg')
+        self.assertEqual(params['FlatRadius'], '1.5 mm')
+        self.assertEqual(params['CornerRadius'], '0.5 mm')
+        self.assertEqual(params['NeckDiameter'], '4.0 mm')
+        self.assertEqual(params['NeckLength'], '12.0 mm')
+
+    def test_shape_params_omitted_when_not_provided(self):
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+        tool_bit = MagicMock()
+        tool_bit.attach_to_doc = MagicMock(return_value=make_tool_bit_obj("E", "endmill"))
+        mock_Path_Tool_Bit.ToolBit = MagicMock()
+        mock_Path_Tool_Bit.ToolBit.from_dict = MagicMock(return_value=tool_bit)
+
+        self.handler.create_tool({'name': 'E', 'tool_type': 'endmill', 'diameter': 6.0})
+
+        params = mock_Path_Tool_Bit.ToolBit.from_dict.call_args.args[0]['parameter']
+        for prop in ('Length', 'TipAngle', 'CuttingEdgeAngle', 'FlatRadius',
+                     'CornerRadius', 'NeckDiameter', 'NeckLength'):
+            self.assertNotIn(prop, params)
+
+    def test_dropped_parameter_surfaced_as_warning(self):
+        """finding #27: ToolBit.from_dict()'s return was only falsy-checked
+        -- no validation that a requested parameter actually landed rather
+        than being silently dropped/defaulted by from_dict internally."""
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+        tool_obj = make_tool_bit_obj("E", "endmill")
+        del tool_obj.NeckDiameter  # simulate: this shape doesn't support it
+        tool_bit = MagicMock()
+        tool_bit.attach_to_doc = MagicMock(return_value=tool_obj)
+        mock_Path_Tool_Bit.ToolBit = MagicMock()
+        mock_Path_Tool_Bit.ToolBit.from_dict = MagicMock(return_value=tool_bit)
+
+        result = self.handler.create_tool({
+            'name': 'E', 'tool_type': 'endmill', 'diameter': 6.0, 'neck_diameter': 3.0,
+        })
+
+        assert_success_contains(self, result, "WARNING", "NeckDiameter")
+
+    def test_no_warning_when_all_parameters_land(self):
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+        tool_bit = MagicMock()
+        tool_bit.attach_to_doc = MagicMock(return_value=make_tool_bit_obj("E", "endmill"))
+        mock_Path_Tool_Bit.ToolBit = MagicMock()
+        mock_Path_Tool_Bit.ToolBit.from_dict = MagicMock(return_value=tool_bit)
+
+        result = self.handler.create_tool({
+            'name': 'E', 'tool_type': 'endmill', 'diameter': 6.0,
+        })
+
+        self.assertNotIn("WARNING", result)
+
 
 # ---------------------------------------------------------------------------
 # cam_tools: list_tools
