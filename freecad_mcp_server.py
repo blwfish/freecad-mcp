@@ -1356,7 +1356,7 @@ async def main():
                 ),
                 types.Tool(
                     name="assembly_operations",
-                    description="Assembly workbench: create an Assembly::AssemblyObject container, create Local Coordinate System mating references, add components as lightweight links (same- or cross-document), create joints (Fixed/Revolute/Cylindrical/Slider/Ball/Distance/Parallel/Perpendicular/Angle/RackPinion/Screw/Gears/Belt), ground parts, solve the assembly, and list components/joints.",
+                    description="Assembly workbench: create an Assembly::AssemblyObject container, create Local Coordinate System mating references, add components as lightweight links (same- or cross-document), create joints (Fixed/Revolute/Cylindrical/Slider/Ball/Distance/Parallel/Perpendicular/Angle/RackPinion/Screw/Gears/Belt), ground parts, solve the assembly, list components/joints, check part connectivity/grounding status, and set per-joint offset/detach/motion-limit properties.",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -1366,10 +1366,11 @@ async def main():
                                 "enum": [
                                     "create_assembly", "create_lcs", "add_component", "list_components",
                                     "create_joint", "ground_part", "solve", "list_joints",
+                                    "get_part_status", "set_joint_offset", "set_joint_limits",
                                 ]
                             },
                             "name": {"type": "string", "description": "Name for the created assembly, LCS, joint, or grounding joint"},
-                            "assembly_name": {"type": "string", "description": "Target assembly (add_component, list_components, create_joint, ground_part, solve, list_joints). Default: first Assembly::AssemblyObject in the active document"},
+                            "assembly_name": {"type": "string", "description": "Target assembly (add_component, list_components, create_joint, ground_part, solve, list_joints, get_part_status). Default: first Assembly::AssemblyObject in the active document"},
                             "container_name": {"type": "string", "description": "Object to nest a new LCS inside (create_lcs). Default: bare document object"},
                             "map_mode": {"type": "string", "description": "Attachment mode for create_lcs, e.g. 'FlatFace', 'ObjectXY'"},
                             "reference": {"type": "string", "description": "Face or edge reference for create_lcs attachment, e.g. 'Face1'"},
@@ -1377,11 +1378,11 @@ async def main():
                             "offset_x": {"type": "number", "description": "X offset from attached position (mm)", "default": 0},
                             "offset_y": {"type": "number", "description": "Y offset from attached position (mm)", "default": 0},
                             "offset_z": {"type": "number", "description": "Z offset / normal direction (mm)", "default": 0},
-                            "object_name": {"type": "string", "description": "Object to link into the assembly (add_component) or ground (ground_part)"},
+                            "object_name": {"type": "string", "description": "Object to link into the assembly (add_component), ground (ground_part), or check (get_part_status)"},
                             "source_doc": {"type": "string", "description": "Another already-open document to pull object_name from (add_component). Must already be open, AND both it and the active document must already be saved to disk (FreeCAD's cross-document links require a file path on both ends) — FreeCAD does not auto-reopen documents."},
-                            "x": {"type": "number", "description": "Initial X placement offset (mm, add_component)", "default": 0},
-                            "y": {"type": "number", "description": "Initial Y placement offset (mm, add_component)", "default": 0},
-                            "z": {"type": "number", "description": "Initial Z placement offset (mm, add_component)", "default": 0},
+                            "x": {"type": "number", "description": "X placement offset in mm (add_component: initial placement; set_joint_offset: connector offset)", "default": 0},
+                            "y": {"type": "number", "description": "Y placement offset in mm (add_component: initial placement; set_joint_offset: connector offset)", "default": 0},
+                            "z": {"type": "number", "description": "Z placement offset in mm (add_component: initial placement; set_joint_offset: connector offset)", "default": 0},
                             "joint_type": {
                                 "type": "string",
                                 "description": "Joint type (create_joint)",
@@ -1400,6 +1401,13 @@ async def main():
                             "distance2": {"type": "number", "description": "Second radius, Gears/Belt joints only (create_joint)"},
                             "angle": {"type": "number", "description": "Angle value, Angle joint only (create_joint)"},
                             "enable_undo": {"type": "boolean", "description": "Save the pre-solve position for undoSolve() (solve)", "default": False},
+                            "joint_name": {"type": "string", "description": "Joint to modify (set_joint_offset, set_joint_limits)"},
+                            "connector": {"type": "integer", "description": "Which joint connector to offset, 1 or 2 (set_joint_offset)", "enum": [1, 2], "default": 1},
+                            "detach": {"type": "boolean", "description": "Freeze the connector's placement so it stops auto-recomputing from the reference, enabling manual offset positioning (set_joint_offset). Omit to leave unchanged."},
+                            "length_min": {"type": "number", "description": "Minimum length limit in mm, Cylindrical/Slider joints (set_joint_limits). Setting this also enables it."},
+                            "length_max": {"type": "number", "description": "Maximum length limit in mm, Cylindrical/Slider joints (set_joint_limits). Setting this also enables it."},
+                            "angle_min": {"type": "number", "description": "Minimum angle limit in degrees, Revolute/Cylindrical joints (set_joint_limits). Setting this also enables it."},
+                            "angle_max": {"type": "number", "description": "Maximum angle limit in degrees, Revolute/Cylindrical joints (set_joint_limits). Setting this also enables it."},
                         },
                         "required": ["operation"]
                     },

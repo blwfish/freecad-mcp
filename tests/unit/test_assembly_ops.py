@@ -967,5 +967,288 @@ class TestDescribeReference(unittest.TestCase):
         self.assertIsInstance(result, str)
 
 
+# ---------------------------------------------------------------------------
+# get_part_status
+# ---------------------------------------------------------------------------
+
+class TestGetPartStatus(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(AssemblyOpsHandler)
+
+    def test_missing_object_name(self):
+        result = self.handler.get_part_status({})
+        assert_error_contains(self, result, "object_name")
+
+    def test_no_active_document(self):
+        mock_FreeCAD.ActiveDocument = None
+        result = self.handler.get_part_status({"object_name": "Box"})
+        assert_error_contains(self, result, "No active document")
+
+    def test_object_not_found(self):
+        assembly = make_assembly("Asm")
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.get_part_status({"object_name": "Ghost"})
+        assert_error_contains(self, result, "not found", "Ghost")
+
+    def test_no_assembly_found(self):
+        box = make_box_object("Box")
+        doc = make_mock_doc([box])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.get_part_status({"object_name": "Box"})
+        assert_error_contains(self, result, "No Assembly::AssemblyObject found")
+
+    def test_reports_grounded_and_connected(self):
+        box = make_box_object("Box")
+        assembly = make_assembly("Asm")
+        assembly.isPartGrounded = MagicMock(return_value=True)
+        assembly.isPartConnected = MagicMock(return_value=True)
+        doc = make_mock_doc([box, assembly])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.get_part_status({"object_name": "Box"})
+
+        assert_success_contains(self, result, "grounded=True", "connected_to_ground=True")
+        assembly.isPartGrounded.assert_called_once_with(box)
+        assembly.isPartConnected.assert_called_once_with(box)
+
+    def test_reports_neither_grounded_nor_connected(self):
+        box = make_box_object("Box")
+        assembly = make_assembly("Asm")
+        assembly.isPartGrounded = MagicMock(return_value=False)
+        assembly.isPartConnected = MagicMock(return_value=False)
+        doc = make_mock_doc([box, assembly])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.get_part_status({"object_name": "Box"})
+
+        assert_success_contains(self, result, "grounded=False", "connected_to_ground=False")
+
+    def test_connected_without_being_grounded(self):
+        """A part jointed to a grounded part is connected but not itself
+        grounded -- the two flags are independent, not one implying the
+        other."""
+        box = make_box_object("Box")
+        assembly = make_assembly("Asm")
+        assembly.isPartGrounded = MagicMock(return_value=False)
+        assembly.isPartConnected = MagicMock(return_value=True)
+        doc = make_mock_doc([box, assembly])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.get_part_status({"object_name": "Box"})
+
+        assert_success_contains(self, result, "grounded=False", "connected_to_ground=True")
+
+
+# ---------------------------------------------------------------------------
+# _resolve_joint / set_joint_offset
+# ---------------------------------------------------------------------------
+
+def _make_joint_mock(name="TestJoint"):
+    """A mock that behaves like a real Joint FeaturePython object -- has
+    JointType (so _resolve_joint accepts it), Offset1/Offset2 as real
+    _Placement instances (via install_freecad_value_types, wired at
+    _freecad_mocks import time) so .Base.x/.y/.z are assertable."""
+    joint = MagicMock()
+    joint.Name = name
+    joint.JointType = "Fixed"
+    return joint
+
+
+class TestSetJointOffset(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(AssemblyOpsHandler)
+
+    def test_no_active_document(self):
+        mock_FreeCAD.ActiveDocument = None
+        result = self.handler.set_joint_offset({"joint_name": "J"})
+        assert_error_contains(self, result, "No active document")
+
+    def test_joint_not_found(self):
+        doc = make_mock_doc([])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.set_joint_offset({"joint_name": "Ghost"})
+        assert_error_contains(self, result, "not found", "Ghost")
+
+    def test_not_a_joint(self):
+        """A resolvable object with no JointType (e.g. a plain part) must be
+        rejected -- MagicMock auto-vivifies JointType truthy on access, so
+        the mock here explicitly deletes it to exercise the real branch."""
+        obj = MagicMock()
+        obj.Name = "NotAJoint"
+        del obj.JointType
+        doc = make_mock_doc([obj])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.set_joint_offset({"joint_name": "NotAJoint"})
+        assert_error_contains(self, result, "not a joint")
+
+    def test_invalid_connector(self):
+        joint = _make_joint_mock()
+        doc = make_mock_doc([joint])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.set_joint_offset({"joint_name": "TestJoint", "connector": 3})
+        assert_error_contains(self, result, "connector must be 1 or 2")
+
+    def test_sets_offset1_by_default(self):
+        joint = _make_joint_mock()
+        doc = make_mock_doc([joint])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.set_joint_offset({
+            "joint_name": "TestJoint", "x": 10, "y": 20, "z": 30,
+        })
+
+        assert_success_contains(self, result, "Offset1")
+        self.assertEqual(joint.Offset1.Base.x, 10)
+        self.assertEqual(joint.Offset1.Base.y, 20)
+        self.assertEqual(joint.Offset1.Base.z, 30)
+
+    def test_sets_offset2_when_connector_2(self):
+        joint = _make_joint_mock()
+        joint.Offset1 = "untouched_sentinel"
+        doc = make_mock_doc([joint])
+        mock_FreeCAD.ActiveDocument = doc
+
+        self.handler.set_joint_offset({
+            "joint_name": "TestJoint", "connector": 2, "x": 5, "y": 0, "z": 0,
+        })
+
+        self.assertEqual(joint.Offset2.Base.x, 5)
+        self.assertEqual(joint.Offset1, "untouched_sentinel")
+
+    def test_detach_true_sets_flag(self):
+        joint = _make_joint_mock()
+        doc = make_mock_doc([joint])
+        mock_FreeCAD.ActiveDocument = doc
+
+        self.handler.set_joint_offset({"joint_name": "TestJoint", "detach": True})
+
+        self.assertTrue(joint.Detach1)
+
+    def test_detach_false_sets_flag(self):
+        joint = _make_joint_mock()
+        doc = make_mock_doc([joint])
+        mock_FreeCAD.ActiveDocument = doc
+
+        self.handler.set_joint_offset({"joint_name": "TestJoint", "detach": False})
+
+        self.assertFalse(joint.Detach1)
+
+    def test_detach_omitted_leaves_it_untouched(self):
+        joint = _make_joint_mock()
+        joint.Detach1 = "untouched_sentinel"
+        doc = make_mock_doc([joint])
+        mock_FreeCAD.ActiveDocument = doc
+
+        self.handler.set_joint_offset({"joint_name": "TestJoint", "x": 1})
+
+        self.assertEqual(joint.Detach1, "untouched_sentinel")
+
+
+# ---------------------------------------------------------------------------
+# set_joint_limits
+# ---------------------------------------------------------------------------
+
+class TestSetJointLimits(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(AssemblyOpsHandler)
+
+    def test_no_active_document(self):
+        mock_FreeCAD.ActiveDocument = None
+        result = self.handler.set_joint_limits({"joint_name": "J"})
+        assert_error_contains(self, result, "No active document")
+
+    def test_joint_not_found(self):
+        doc = make_mock_doc([])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.set_joint_limits({"joint_name": "Ghost"})
+        assert_error_contains(self, result, "not found", "Ghost")
+
+    def test_not_a_joint(self):
+        obj = MagicMock()
+        obj.Name = "NotAJoint"
+        del obj.JointType
+        doc = make_mock_doc([obj])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.set_joint_limits({"joint_name": "NotAJoint"})
+        assert_error_contains(self, result, "not a joint")
+
+    def test_no_limits_provided(self):
+        joint = _make_joint_mock()
+        doc = make_mock_doc([joint])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.set_joint_limits({"joint_name": "TestJoint"})
+        assert_error_contains(self, result, "No limits provided")
+
+    def test_length_min_sets_value_and_enables(self):
+        joint = _make_joint_mock()
+        doc = make_mock_doc([joint])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.set_joint_limits({"joint_name": "TestJoint", "length_min": 5})
+
+        assert_success_contains(self, result, "LengthMin=5")
+        self.assertEqual(joint.LengthMin, 5)
+        self.assertTrue(joint.EnableLengthMin)
+
+    def test_length_max_sets_value_and_enables(self):
+        joint = _make_joint_mock()
+        doc = make_mock_doc([joint])
+        mock_FreeCAD.ActiveDocument = doc
+
+        self.handler.set_joint_limits({"joint_name": "TestJoint", "length_max": 50})
+
+        self.assertEqual(joint.LengthMax, 50)
+        self.assertTrue(joint.EnableLengthMax)
+
+    def test_angle_min_sets_value_and_enables(self):
+        joint = _make_joint_mock()
+        doc = make_mock_doc([joint])
+        mock_FreeCAD.ActiveDocument = doc
+
+        self.handler.set_joint_limits({"joint_name": "TestJoint", "angle_min": -45})
+
+        self.assertEqual(joint.AngleMin, -45)
+        self.assertTrue(joint.EnableAngleMin)
+
+    def test_angle_max_sets_value_and_enables(self):
+        joint = _make_joint_mock()
+        doc = make_mock_doc([joint])
+        mock_FreeCAD.ActiveDocument = doc
+
+        self.handler.set_joint_limits({"joint_name": "TestJoint", "angle_max": 90})
+
+        self.assertEqual(joint.AngleMax, 90)
+        self.assertTrue(joint.EnableAngleMax)
+
+    def test_multiple_limits_at_once(self):
+        joint = _make_joint_mock()
+        doc = make_mock_doc([joint])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.set_joint_limits({
+            "joint_name": "TestJoint", "length_min": 1, "angle_max": 90,
+        })
+
+        assert_success_contains(self, result, "LengthMin=1", "AngleMax=90")
+        self.assertEqual(joint.LengthMin, 1)
+        self.assertEqual(joint.AngleMax, 90)
+
+    def test_omitted_limit_not_touched(self):
+        joint = _make_joint_mock()
+        joint.LengthMax = "untouched_sentinel"
+        joint.EnableLengthMax = "untouched_flag_sentinel"
+        doc = make_mock_doc([joint])
+        mock_FreeCAD.ActiveDocument = doc
+
+        self.handler.set_joint_limits({"joint_name": "TestJoint", "length_min": 5})
+
+        self.assertEqual(joint.LengthMax, "untouched_sentinel")
+        self.assertEqual(joint.EnableLengthMax, "untouched_flag_sentinel")
+
+
 if __name__ == "__main__":
     unittest.main()

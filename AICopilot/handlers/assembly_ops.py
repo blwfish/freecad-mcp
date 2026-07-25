@@ -2,6 +2,8 @@
 #
 # Phase 1: container + reference-geometry + component-linking primitives.
 # Phase 2: joints, grounding, and solving.
+# Phase 3: diagnostics (isPartConnected/isPartGrounded) and per-joint
+# offset/detach + motion-limit controls.
 #
 # Every operation here is confirmed headless-safe (no Gui:: / ViewObject
 # dependency in the underlying FreeCAD API) and requires no GUI click-selection.
@@ -46,6 +48,7 @@ class AssemblyOpsHandler(BaseHandler):
     _ALLOWED_OPERATIONS = frozenset({
         "create_assembly", "create_lcs", "add_component", "list_components",
         "create_joint", "ground_part", "solve", "list_joints",
+        "get_part_status", "set_joint_offset", "set_joint_limits",
     })
 
     def create_assembly(self, args: Dict[str, Any]) -> str:
@@ -456,6 +459,11 @@ class AssemblyOpsHandler(BaseHandler):
         object) but redundant; not guarded against here since FreeCAD's own
         GUI doesn't prevent it either.
 
+        Works on any object regardless of whether it's an assembly
+        component, but get_part_status's isPartGrounded check will only
+        recognize the grounding if object_name was previously added via
+        add_component -- see get_part_status's docstring.
+
         Args:
             object_name: Name (or Label) of the object to ground
             assembly_name: Target assembly (default: first Assembly::AssemblyObject
@@ -594,3 +602,176 @@ class AssemblyOpsHandler(BaseHandler):
             return f"{obj.Name}.{elem}" if elem else obj.Name
         except Exception:
             return str(ref)
+
+    def get_part_status(self, args: Dict[str, Any]) -> str:
+        """Report whether a part is grounded and/or connected to ground through joints.
+
+        "Grounded" (isPartGrounded) means the part has its own GroundedJoint.
+        "Connected" (isPartConnected) means the part is reachable to *some*
+        grounded part through the joint graph -- a part can be connected
+        without being grounded itself (e.g. jointed to a grounded part), or
+        grounded without any other joints at all.
+
+        IMPORTANT, confirmed live 2026-07-24: both flags only recognize
+        objects that are actual components of the assembly -- added via
+        add_component (or created directly inside it, e.g.
+        assembly.newObject(...)). A bare document-root object that a joint
+        or ground_part merely *references* is accepted without error by
+        both of those operations, but get_part_status will silently report
+        grounded=False / connected_to_ground=False for it regardless of the
+        real Placement/GroundedJoint state -- the same "silent reasonable
+        behavior on ambiguous input" shape as the invalid-element bug this
+        project's rules flag. Always add_component an object before
+        grounding/jointing it if you plan to query its status afterward.
+
+        Args:
+            object_name: Name (or Label) of the part to check
+            assembly_name: Assembly to check within (default: first
+                Assembly::AssemblyObject in the active document)
+        """
+        try:
+            object_name = args.get('object_name', '')
+            assembly_name = args.get('assembly_name', '')
+
+            if not object_name:
+                return "object_name parameter required"
+
+            doc = self.get_document()
+            if not doc:
+                return "No active document"
+
+            obj = self.get_object(object_name, doc)
+            if not obj:
+                return f"Object not found: {object_name}"
+
+            assembly, err = self._resolve_assembly(assembly_name, doc)
+            if err:
+                return err
+
+            grounded = bool(assembly.isPartGrounded(obj))
+            connected = bool(assembly.isPartConnected(obj))
+
+            return (f"{object_name}: grounded={grounded}, connected_to_ground={connected}")
+
+        except Exception as e:
+            return f"Error getting part status: {e}"
+
+    def _resolve_joint(self, joint_name: str, doc):
+        """Resolve a joint by name and confirm it's a real Joint (has JointType,
+        not a GroundedJoint or something else).
+
+        Returns (joint, error_string). error_string is None on success.
+        """
+        if not joint_name:
+            return None, "joint_name parameter required"
+        joint = self.get_object(joint_name, doc)
+        if not joint:
+            return None, f"Joint not found: {joint_name}"
+        if not hasattr(joint, 'JointType'):
+            return None, f"'{joint_name}' is not a joint (no JointType property)"
+        return joint, None
+
+    def set_joint_offset(self, args: Dict[str, Any]) -> str:
+        """Set a joint connector's attachment offset (Offset1 or Offset2).
+
+        Args:
+            joint_name: Name of the joint to modify
+            connector: Which connector to offset, 1 or 2 (default 1)
+            x, y, z: Offset position in mm (default 0,0,0)
+            detach: If True, sets Detach1/Detach2 so Placement1/2 stops
+                auto-recomputing from the reference and can be positioned
+                manually via this offset. If False, re-enables auto-recompute.
+                Omit to leave Detach unchanged.
+        """
+        try:
+            joint_name = args.get('joint_name', '')
+            connector = args.get('connector', 1)
+            if connector not in (1, 2):
+                return f"connector must be 1 or 2, got {connector!r}"
+            x = args.get('x', 0)
+            y = args.get('y', 0)
+            z = args.get('z', 0)
+            detach = args.get('detach', None)
+
+            doc = self.get_document()
+            if not doc:
+                return "No active document"
+
+            joint, err = self._resolve_joint(joint_name, doc)
+            if err:
+                return err
+
+            offset_attr = f"Offset{connector}"
+            detach_attr = f"Detach{connector}"
+
+            setattr(joint, offset_attr, FreeCAD.Placement(
+                FreeCAD.Vector(x, y, z), FreeCAD.Rotation(0, 0, 0, 1)
+            ))
+
+            if detach is not None:
+                setattr(joint, detach_attr, bool(detach))
+
+            self.recompute(doc)
+
+            return (f"Set {joint_name}.{offset_attr} = ({x},{y},{z})"
+                    + (f", {detach_attr}={bool(detach)}" if detach is not None else ""))
+
+        except Exception as e:
+            return f"Error setting joint offset: {e}"
+
+    def set_joint_limits(self, args: Dict[str, Any]) -> str:
+        """Set a joint's motion limits (length and/or angle, min and/or max).
+
+        Setting a limit value also enables it (EnableLengthMin/Max,
+        EnableAngleMin/Max) -- FreeCAD gates whether a limit is active on
+        these separate bool flags, so a value with the flag left off would
+        silently do nothing. Only the limits actually provided are touched;
+        omitted ones are left as-is.
+
+        Args:
+            joint_name: Name of the joint to modify
+            length_min, length_max: Length limits in mm (Cylindrical/Slider)
+            angle_min, angle_max: Angle limits in degrees (Revolute/Cylindrical)
+        """
+        try:
+            joint_name = args.get('joint_name', '')
+            length_min = args.get('length_min', None)
+            length_max = args.get('length_max', None)
+            angle_min = args.get('angle_min', None)
+            angle_max = args.get('angle_max', None)
+
+            doc = self.get_document()
+            if not doc:
+                return "No active document"
+
+            joint, err = self._resolve_joint(joint_name, doc)
+            if err:
+                return err
+
+            applied = []
+            if length_min is not None:
+                joint.LengthMin = length_min
+                joint.EnableLengthMin = True
+                applied.append(f"LengthMin={length_min}")
+            if length_max is not None:
+                joint.LengthMax = length_max
+                joint.EnableLengthMax = True
+                applied.append(f"LengthMax={length_max}")
+            if angle_min is not None:
+                joint.AngleMin = angle_min
+                joint.EnableAngleMin = True
+                applied.append(f"AngleMin={angle_min}")
+            if angle_max is not None:
+                joint.AngleMax = angle_max
+                joint.EnableAngleMax = True
+                applied.append(f"AngleMax={angle_max}")
+
+            if not applied:
+                return "No limits provided (length_min/length_max/angle_min/angle_max)"
+
+            self.recompute(doc)
+
+            return f"Set {joint_name}: {', '.join(applied)}"
+
+        except Exception as e:
+            return f"Error setting joint limits: {e}"
