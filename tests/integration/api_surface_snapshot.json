@@ -1,7 +1,15 @@
 {
   "App::DocumentObjectGroup": {},
+  "App::FeaturePython": {
+    "Angle": "__MISSING__",
+    "Distance": "__MISSING__",
+    "Distance2": "__MISSING__"
+  },
   "App::Link": {
     "LinkedObject": "App::PropertyXLink"
+  },
+  "Assembly::AssemblyObject": {
+    "Type": "App::PropertyString"
   },
   "Mesh::Feature": {
     "Mesh": "Mesh::PropertyMeshKernel"
@@ -50,6 +58,7 @@
     "Base": "App::PropertyLink",
     "Tool": "App::PropertyLink"
   },
+  "Part::LocalCoordinateSystem": {},
   "Part::Loft": {
     "Ruled": "App::PropertyBool",
     "Sections": "App::PropertyLinkList",
