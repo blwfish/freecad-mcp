@@ -1356,7 +1356,7 @@ async def main():
                 ),
                 types.Tool(
                     name="assembly_operations",
-                    description="Assembly workbench: create an Assembly::AssemblyObject container, create Local Coordinate System mating references, add components as lightweight links (same- or cross-document), list an assembly's components. No joints yet — see joint-related tools for a future phase.",
+                    description="Assembly workbench: create an Assembly::AssemblyObject container, create Local Coordinate System mating references, add components as lightweight links (same- or cross-document), create joints (Fixed/Revolute/Cylindrical/Slider/Ball/Distance/Parallel/Perpendicular/Angle/RackPinion/Screw/Gears/Belt), ground parts, solve the assembly, and list components/joints.",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -1364,11 +1364,12 @@ async def main():
                                 "type": "string",
                                 "description": "Assembly operation to perform",
                                 "enum": [
-                                    "create_assembly", "create_lcs", "add_component", "list_components"
+                                    "create_assembly", "create_lcs", "add_component", "list_components",
+                                    "create_joint", "ground_part", "solve", "list_joints",
                                 ]
                             },
-                            "name": {"type": "string", "description": "Name for the created assembly or LCS"},
-                            "assembly_name": {"type": "string", "description": "Target assembly (add_component, list_components). Default: first Assembly::AssemblyObject in the active document"},
+                            "name": {"type": "string", "description": "Name for the created assembly, LCS, joint, or grounding joint"},
+                            "assembly_name": {"type": "string", "description": "Target assembly (add_component, list_components, create_joint, ground_part, solve, list_joints). Default: first Assembly::AssemblyObject in the active document"},
                             "container_name": {"type": "string", "description": "Object to nest a new LCS inside (create_lcs). Default: bare document object"},
                             "map_mode": {"type": "string", "description": "Attachment mode for create_lcs, e.g. 'FlatFace', 'ObjectXY'"},
                             "reference": {"type": "string", "description": "Face or edge reference for create_lcs attachment, e.g. 'Face1'"},
@@ -1376,11 +1377,29 @@ async def main():
                             "offset_x": {"type": "number", "description": "X offset from attached position (mm)", "default": 0},
                             "offset_y": {"type": "number", "description": "Y offset from attached position (mm)", "default": 0},
                             "offset_z": {"type": "number", "description": "Z offset / normal direction (mm)", "default": 0},
-                            "object_name": {"type": "string", "description": "Object to link into the assembly (add_component)"},
+                            "object_name": {"type": "string", "description": "Object to link into the assembly (add_component) or ground (ground_part)"},
                             "source_doc": {"type": "string", "description": "Another already-open document to pull object_name from (add_component). Must already be open, AND both it and the active document must already be saved to disk (FreeCAD's cross-document links require a file path on both ends) — FreeCAD does not auto-reopen documents."},
                             "x": {"type": "number", "description": "Initial X placement offset (mm, add_component)", "default": 0},
                             "y": {"type": "number", "description": "Initial Y placement offset (mm, add_component)", "default": 0},
                             "z": {"type": "number", "description": "Initial Z placement offset (mm, add_component)", "default": 0},
+                            "joint_type": {
+                                "type": "string",
+                                "description": "Joint type (create_joint)",
+                                "enum": [
+                                    "Fixed", "Revolute", "Cylindrical", "Slider", "Ball", "Distance",
+                                    "Parallel", "Perpendicular", "Angle", "RackPinion", "Screw", "Gears", "Belt",
+                                ],
+                            },
+                            "ref1_object": {"type": "string", "description": "First object to joint (create_joint)"},
+                            "ref1_element": {"type": "string", "description": "Sub-element on ref1_object, e.g. 'Face3', 'Edge8' (create_joint). Default: whole object"},
+                            "ref1_vertex": {"type": "string", "description": "Vertex disambiguating ref1_element's placement (create_joint). Default: same as ref1_element, which FreeCAD interprets as 'use this element's own center'"},
+                            "ref2_object": {"type": "string", "description": "Second object to joint (create_joint)"},
+                            "ref2_element": {"type": "string", "description": "Sub-element on ref2_object (create_joint). Default: whole object"},
+                            "ref2_vertex": {"type": "string", "description": "Vertex disambiguating ref2_element's placement (create_joint). Default: same as ref2_element"},
+                            "distance": {"type": "number", "description": "Distance value (create_joint: Distance joint's offset, or RackPinion/Screw pitch, or Gears/Belt first radius)"},
+                            "distance2": {"type": "number", "description": "Second radius, Gears/Belt joints only (create_joint)"},
+                            "angle": {"type": "number", "description": "Angle value, Angle joint only (create_joint)"},
+                            "enable_undo": {"type": "boolean", "description": "Save the pre-solve position for undoSolve() (solve)", "default": False},
                         },
                         "required": ["operation"]
                     },

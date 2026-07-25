@@ -1,22 +1,51 @@
 # Assembly workbench operation handlers for FreeCAD MCP
 #
 # Phase 1: container + reference-geometry + component-linking primitives.
-# No joints yet (Phase 2) — this only gets parts into an Assembly::AssemblyObject
-# with Local Coordinate Systems available as mating references.
+# Phase 2: joints, grounding, and solving.
 #
 # Every operation here is confirmed headless-safe (no Gui:: / ViewObject
 # dependency in the underlying FreeCAD API) and requires no GUI click-selection.
+# Joint reference tuples are addressed programmatically (e.g. "Face3" from
+# measurement_operations.list_faces) — no GUI click-selection needed for
+# joints either, unlike fillet/chamfer.
 
 import FreeCAD
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from .base import BaseHandler
+
+# Mirrors JointObject.JointTypes exactly (JointObject.py) -- index order is
+# load-bearing, since Joint(joint, type_index) takes a positional index, not
+# a name. Keep in sync if FreeCAD adds joint types.
+_JOINT_TYPES = [
+    "Fixed", "Revolute", "Cylindrical", "Slider", "Ball", "Distance",
+    "Parallel", "Perpendicular", "Angle", "RackPinion", "Screw", "Gears",
+    "Belt",
+]
+
+# assembly.solve()'s return code, per AssemblyObject.pyi's documented
+# contract. Confirmed by source reading (2026-07-24) that only 0/-1/-6 are
+# actually reachable in the current FreeCAD tree -- -2/-3/-4/-5 are declared
+# in the docstring but the C++ implementation never returns them today. Kept
+# here in full for forward-compatibility and because the docstring is the
+# closed vocabulary FreeCAD itself commits to, not because all branches are
+# currently live.
+_SOLVE_STATUS = {
+    0: "success",
+    -1: "solver_error",
+    -2: "redundant_constraints",
+    -3: "conflicting_constraints",
+    -4: "over_constrained",
+    -5: "malformed_constraints",
+    -6: "no_grounded_parts",
+}
 
 
 class AssemblyOpsHandler(BaseHandler):
-    """Handler for Assembly workbench operations (container, LCS, linking)."""
+    """Handler for Assembly workbench operations (container, LCS, linking, joints)."""
 
     _ALLOWED_OPERATIONS = frozenset({
         "create_assembly", "create_lcs", "add_component", "list_components",
+        "create_joint", "ground_part", "solve", "list_joints",
     })
 
     def create_assembly(self, args: Dict[str, Any]) -> str:
@@ -187,15 +216,9 @@ class AssemblyOpsHandler(BaseHandler):
                     return f"Object not found in '{source_doc}': {object_name}"
                 return f"Object not found: {object_name}"
 
-            if assembly_name:
-                assembly = self.get_object(assembly_name, doc)
-                if not assembly:
-                    return f"Assembly not found: {assembly_name}"
-            else:
-                assembly = self.find_assembly(doc)
-                if not assembly:
-                    return ("No Assembly::AssemblyObject found in the active document. "
-                            "Create one first with create_assembly.")
+            assembly, err = self._resolve_assembly(assembly_name, doc)
+            if err:
+                return err
 
             is_sub_assembly = False
             try:
@@ -234,14 +257,9 @@ class AssemblyOpsHandler(BaseHandler):
             if not doc:
                 return "No active document"
 
-            if assembly_name:
-                assembly = self.get_object(assembly_name, doc)
-                if not assembly:
-                    return f"Assembly not found: {assembly_name}"
-            else:
-                assembly = self.find_assembly(doc)
-                if not assembly:
-                    return "No Assembly::AssemblyObject found in the active document."
+            assembly, err = self._resolve_assembly(assembly_name, doc)
+            if err:
+                return err
 
             group = getattr(assembly, 'Group', []) or []
             if not group:
@@ -256,3 +274,323 @@ class AssemblyOpsHandler(BaseHandler):
 
         except Exception as e:
             return f"Error listing components: {e}"
+
+    def _resolve_assembly(self, assembly_name: str, doc):
+        """Shared assembly-resolution: explicit name, or first in document.
+
+        Returns (assembly, error_string). error_string is None on success.
+        """
+        if assembly_name:
+            assembly = self.get_object(assembly_name, doc)
+            if not assembly:
+                return None, f"Assembly not found: {assembly_name}"
+            return assembly, None
+        assembly = self.find_assembly(doc)
+        if not assembly:
+            return None, ("No Assembly::AssemblyObject found in the active document. "
+                           "Create one first with create_assembly.")
+        return assembly, None
+
+    # element name prefix -> Shape collection attribute. Single source of
+    # truth for Face/Edge/Vertex dispatch (Syntactic-Semantic Seam Rule) --
+    # both the "which collection to bound-check" and "is this a recognized
+    # element type at all" questions read from this one dict.
+    _ELEMENT_COLLECTIONS = {"Face": "Faces", "Edge": "Edges", "Vertex": "Vertexes"}
+
+    def _validate_element(self, obj, element_name: str) -> "Optional[str]":
+        """Return an error string if element_name doesn't exist on obj.Shape.
+
+        FreeCAD's own joint machinery does NOT validate this: a nonexistent
+        face like "Face99" on a 6-face box is silently accepted --
+        UtilsAssembly.findPlacement's get_element() returns None for a
+        missing element and the caller just falls back to an identity
+        Placement. Confirmed live 2026-07-24: create_joint against a real
+        headless FreeCAD instance returned "Created ... joint" with no
+        error for a garbage face index. Exactly the "silent reasonable
+        behavior on ambiguous input" failure mode -- catch it before
+        creating anything, rather than let a broken joint report success.
+        """
+        if not element_name:
+            return None
+        for prefix, collection_attr in self._ELEMENT_COLLECTIONS.items():
+            if not element_name.startswith(prefix):
+                continue
+            try:
+                index = int(element_name[len(prefix):])
+            except ValueError:
+                # Not a recognized "PrefixN" pattern (e.g. an LCS sub-element
+                # name) -- not this helper's job to judge, let FreeCAD handle it.
+                return None
+            if not hasattr(obj, 'Shape'):
+                return None
+            collection = getattr(obj.Shape, collection_attr, [])
+            if index < 1 or index > len(collection):
+                return (f"{element_name} does not exist on {obj.Name} "
+                        f"({len(collection)} {collection_attr.lower()}, "
+                        f"valid range 1-{len(collection)})")
+            return None
+        return None
+
+    def create_joint(self, args: Dict[str, Any]) -> str:
+        """Create a joint between two objects' geometry.
+
+        Reference tuples are addressed programmatically -- e.g. "Face3" from
+        measurement_operations.list_faces -- no GUI click-selection needed,
+        unlike partdesign fillet/chamfer. Mirrors FreeCAD's own
+        setJointConnectors() call, which also auto-solves the assembly once
+        both references are set (if the SolveInJointCreation preference is
+        on, which is the default).
+
+        Args:
+            joint_type: One of Fixed, Revolute, Cylindrical, Slider, Ball,
+                Distance, Parallel, Perpendicular, Angle, RackPinion, Screw,
+                Gears, Belt.
+            ref1_object, ref2_object: Names (or Labels) of the two objects to joint.
+            ref1_element, ref2_element: Sub-element on each object, e.g. "Face3",
+                "Edge8" (default: whole object).
+            ref1_vertex, ref2_vertex: Vertex used to disambiguate placement on
+                that element (default: same as the element itself, which FreeCAD
+                interprets as "use this element's own center" -- a face
+                centroid, an edge midpoint/circle-center, etc).
+            name: Name for the joint (default: "<joint_type>Joint")
+            assembly_name: Target assembly (default: first Assembly::AssemblyObject
+                in the active document)
+            distance: Value for Distance-using joints (Distance, RackPinion,
+                Screw's pitch, Gears/Belt's first radius)
+            distance2: Second radius, Gears/Belt only
+            angle: Value for the Angle joint
+        """
+        try:
+            joint_type = args.get('joint_type', '')
+            if joint_type not in _JOINT_TYPES:
+                return (f"Unknown joint_type: {joint_type!r}. Must be one of: "
+                        f"{', '.join(_JOINT_TYPES)}")
+
+            ref1_object = args.get('ref1_object', '')
+            ref2_object = args.get('ref2_object', '')
+            if not ref1_object or not ref2_object:
+                return "ref1_object and ref2_object are required"
+
+            ref1_element = args.get('ref1_element', '')
+            ref1_vertex = args.get('ref1_vertex', '') or ref1_element
+            ref2_element = args.get('ref2_element', '')
+            ref2_vertex = args.get('ref2_vertex', '') or ref2_element
+
+            name = args.get('name', '') or f"{joint_type}Joint"
+            assembly_name = args.get('assembly_name', '')
+            distance = args.get('distance', None)
+            distance2 = args.get('distance2', None)
+            angle = args.get('angle', None)
+
+            doc = self.get_document()
+            if not doc:
+                return "No active document"
+
+            assembly, err = self._resolve_assembly(assembly_name, doc)
+            if err:
+                return err
+
+            ref1_obj = self.get_object(ref1_object, doc)
+            if not ref1_obj:
+                return f"Object not found: {ref1_object}"
+            ref2_obj = self.get_object(ref2_object, doc)
+            if not ref2_obj:
+                return f"Object not found: {ref2_object}"
+
+            elem_err = (self._validate_element(ref1_obj, ref1_element)
+                        or self._validate_element(ref2_obj, ref2_element))
+            if elem_err:
+                return elem_err
+
+            import UtilsAssembly
+            import JointObject
+
+            joint_group = UtilsAssembly.getJointGroup(assembly)
+
+            joint = None
+            try:
+                joint = joint_group.newObject("App::FeaturePython", name)
+                JointObject.Joint(joint, _JOINT_TYPES.index(joint_type))
+
+                if distance is not None:
+                    joint.Distance = distance
+                if distance2 is not None:
+                    joint.Distance2 = distance2
+                if angle is not None:
+                    joint.Angle = angle
+
+                refs = [
+                    [ref1_obj, [ref1_element, ref1_vertex]],
+                    [ref2_obj, [ref2_element, ref2_vertex]],
+                ]
+                joint.Proxy.setJointConnectors(joint, refs)
+            except Exception:
+                # setJointConnectors (or an earlier step) can throw after the
+                # joint object already exists in the document -- same
+                # orphan-object shape as Phase 1's add_component bug. Clean
+                # up rather than leave a half-built joint behind.
+                if joint is not None:
+                    try:
+                        doc.removeObject(joint.Name)
+                    except Exception:
+                        pass
+                raise
+
+            self.recompute(doc)
+
+            return (f"Created {joint_type} joint: {joint.Name} "
+                    f"({ref1_object}.{ref1_element or '(whole)'} <-> "
+                    f"{ref2_object}.{ref2_element or '(whole)'})")
+
+        except Exception as e:
+            return f"Error creating joint: {e}"
+
+    def ground_part(self, args: Dict[str, Any]) -> str:
+        """Fix a part in place ("ground" it) -- every assembly needs at least
+        one grounded part before solve() can succeed (code -6 otherwise).
+
+        Grounding is not a boolean flag in FreeCAD -- it's a dedicated
+        GroundedJoint object in the JointGroup that makes the target's
+        Placement property read-only. Grounding an already-grounded part is
+        harmless (creates a second GroundedJoint pointing at the same
+        object) but redundant; not guarded against here since FreeCAD's own
+        GUI doesn't prevent it either.
+
+        Args:
+            object_name: Name (or Label) of the object to ground
+            assembly_name: Target assembly (default: first Assembly::AssemblyObject
+                in the active document)
+            name: Name for the grounding joint (default: "<object_name>_Ground")
+        """
+        try:
+            object_name = args.get('object_name', '')
+            assembly_name = args.get('assembly_name', '')
+            name = args.get('name', '')
+
+            if not object_name:
+                return "object_name parameter required"
+
+            doc = self.get_document()
+            if not doc:
+                return "No active document"
+
+            obj = self.get_object(object_name, doc)
+            if not obj:
+                return f"Object not found: {object_name}"
+
+            assembly, err = self._resolve_assembly(assembly_name, doc)
+            if err:
+                return err
+
+            import UtilsAssembly
+            import JointObject
+
+            joint_group = UtilsAssembly.getJointGroup(assembly)
+            ground_name = name or f"{object_name}_Ground"
+
+            ground = None
+            try:
+                ground = joint_group.newObject("App::FeaturePython", ground_name)
+                JointObject.GroundedJoint(ground, obj)
+            except Exception:
+                if ground is not None:
+                    try:
+                        doc.removeObject(ground.Name)
+                    except Exception:
+                        pass
+                raise
+
+            self.recompute(doc)
+
+            return f"Grounded {object_name} via {ground.Name}"
+
+        except Exception as e:
+            return f"Error grounding part: {e}"
+
+    def solve(self, args: Dict[str, Any]) -> str:
+        """Solve the assembly, updating part placements from its joints.
+
+        The return code is mapped to a named status rather than left as a
+        bare int -- 0=success, -1=solver_error, -6=no_grounded_parts are the
+        codes actually reachable in the current FreeCAD tree; -2/-3/-4/-5
+        (redundant/conflicting/over_constrained/malformed) are declared in
+        FreeCAD's own contract but not currently produced by the solver.
+
+        Args:
+            assembly_name: Assembly to solve (default: first
+                Assembly::AssemblyObject in the active document)
+            enable_undo: Whether to save the pre-solve position for undoSolve()
+                (default False)
+        """
+        try:
+            assembly_name = args.get('assembly_name', '')
+            enable_undo = bool(args.get('enable_undo', False))
+
+            doc = self.get_document()
+            if not doc:
+                return "No active document"
+
+            assembly, err = self._resolve_assembly(assembly_name, doc)
+            if err:
+                return err
+
+            code = assembly.solve(enable_undo)
+            status = _SOLVE_STATUS.get(code, f"unknown_code_{code}")
+
+            return f"Solve result for {assembly.Name}: {status} (code={code})"
+
+        except Exception as e:
+            return f"Error solving assembly: {e}"
+
+    def list_joints(self, args: Dict[str, Any]) -> str:
+        """List the joints (and grounded parts) inside an assembly.
+
+        Args:
+            assembly_name: Assembly to inspect (default: first
+                Assembly::AssemblyObject in the active document)
+        """
+        try:
+            assembly_name = args.get('assembly_name', '')
+
+            doc = self.get_document()
+            if not doc:
+                return "No active document"
+
+            assembly, err = self._resolve_assembly(assembly_name, doc)
+            if err:
+                return err
+
+            joints = list(getattr(assembly, 'Joints', []) or [])
+            if not joints:
+                return f"Assembly '{assembly.Name}' has no joints."
+
+            lines = [f"Joints of {assembly.Name} ({len(joints)} total):"]
+            for j in joints:
+                # GroundedJoint objects have no JointType -- describe them
+                # distinctly rather than let getattr('JointType', '?') print
+                # a misleading '?' for what's actually a grounding, not a
+                # regular joint.
+                if hasattr(j, 'ObjectToGround'):
+                    target = getattr(j.ObjectToGround, 'Name', '?')
+                    lines.append(f"  {j.Name} (Grounded): {target}")
+                    continue
+                jtype = getattr(j, 'JointType', '?')
+                r1 = self._describe_reference(getattr(j, 'Reference1', None))
+                r2 = self._describe_reference(getattr(j, 'Reference2', None))
+                lines.append(f"  {j.Name} ({jtype}): {r1} <-> {r2}")
+            return "\n".join(lines)
+
+        except Exception as e:
+            return f"Error listing joints: {e}"
+
+    @staticmethod
+    def _describe_reference(ref) -> str:
+        """Render a Reference1/Reference2 value ([obj, [elem, vtx]]) as text."""
+        if not ref:
+            return "(unset)"
+        try:
+            obj, sub = ref[0], ref[1]
+            elem = sub[0] if sub else ''
+            return f"{obj.Name}.{elem}" if elem else obj.Name
+        except Exception:
+            return str(ref)

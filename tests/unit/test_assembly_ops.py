@@ -1,12 +1,24 @@
-"""Unit tests for AssemblyOpsHandler (Assembly workbench, Phase 1).
+"""Unit tests for AssemblyOpsHandler (Assembly workbench).
 
-Phase 1 covers container + reference-geometry + component-linking only —
-no joints yet. Coverage focus: create_assembly (and the Type="Assembly"
-side effect that Phase 2's joint/grounding code will silently depend on),
-create_lcs (Part::LocalCoordinateSystem attach mechanics, mirroring
-create_datum_plane but without forcing a PartDesign Body), add_component
-(App::Link vs Assembly::AssemblyLink branch, same- and cross-document
-linking, label resolution), and list_components.
+Phase 1 covers container + reference-geometry + component-linking.
+Coverage focus: create_assembly (and the Type="Assembly" side effect that
+Phase 2's joint/grounding code depends on), create_lcs (Part::
+LocalCoordinateSystem attach mechanics, mirroring create_datum_plane but
+without forcing a PartDesign Body), add_component (App::Link vs
+Assembly::AssemblyLink branch, same- and cross-document linking, label
+resolution), and list_components.
+
+Phase 2 covers joints, grounding, and solve. Coverage focus: create_joint
+(joint_type closed-vocabulary rejection, default vertex == element,
+orphan-object cleanup on setJointConnectors failure -- same shape as
+Phase 1's add_component bug), ground_part (orphan cleanup on
+GroundedJoint failure), solve (int-code -> named-status mapping,
+including an unrecognized code), and list_joints (GroundedJoint vs
+regular-Joint disambiguation -- MagicMock auto-vivifies any attribute
+access truthy, so `hasattr(mock, 'ObjectToGround')` is always True unless
+explicitly deleted; tests below do that explicitly for "regular joint"
+cases, mirroring the same footgun already handled for isDerivedFrom in
+the Phase 1 add_component tests).
 """
 
 import unittest
@@ -14,6 +26,8 @@ from unittest.mock import MagicMock
 
 from tests.unit._freecad_mocks import (
     mock_FreeCAD,
+    mock_UtilsAssembly,
+    mock_JointObject,
     reset_mocks,
     make_handler,
     make_mock_doc,
@@ -25,7 +39,25 @@ from tests.unit._freecad_mocks import (
     assert_success_contains,
 )
 
-from handlers.assembly_ops import AssemblyOpsHandler
+from handlers.assembly_ops import AssemblyOpsHandler, _JOINT_TYPES
+
+
+def _make_joint_group(name="Joints"):
+    """Mock Assembly::JointGroup. newObject appends fresh joint mocks to .Group,
+    mirroring make_assembly's newObject side effect."""
+    jg = MagicMock()
+    jg.Name = name
+    jg.Group = []
+
+    def _new_object(type_id, obj_name=None):
+        obj = MagicMock()
+        obj.Name = obj_name or f"{type_id}_auto"
+        obj.TypeId = type_id
+        jg.Group.append(obj)
+        return obj
+
+    jg.newObject = MagicMock(side_effect=_new_object)
+    return jg
 
 
 # ---------------------------------------------------------------------------
@@ -410,6 +442,529 @@ class TestListComponents(unittest.TestCase):
 
         assert_success_contains(self, result, "Loose")
         self.assertNotIn("->", result.split("Loose")[1].split("\n")[0])
+
+
+# ---------------------------------------------------------------------------
+# create_joint
+# ---------------------------------------------------------------------------
+
+class TestCreateJoint(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(AssemblyOpsHandler)
+
+    def _setup(self, doc_objects=None):
+        assembly = make_assembly("Asm")
+        doc = make_mock_doc([assembly] + (doc_objects or []))
+        mock_FreeCAD.ActiveDocument = doc
+        joint_group = _make_joint_group()
+        mock_UtilsAssembly.getJointGroup = MagicMock(return_value=joint_group)
+        mock_JointObject.Joint = MagicMock()
+        return doc, assembly, joint_group
+
+    def test_unknown_joint_type(self):
+        self._setup()
+        result = self.handler.create_joint({
+            "joint_type": "Bogus", "ref1_object": "A", "ref2_object": "B",
+        })
+        assert_error_contains(self, result, "Unknown joint_type")
+
+    def test_missing_ref_objects(self):
+        self._setup()
+        result = self.handler.create_joint({"joint_type": "Fixed"})
+        assert_error_contains(self, result, "ref1_object", "ref2_object")
+
+    def test_no_active_document(self):
+        mock_FreeCAD.ActiveDocument = None
+        result = self.handler.create_joint({
+            "joint_type": "Fixed", "ref1_object": "A", "ref2_object": "B",
+        })
+        assert_error_contains(self, result, "No active document")
+
+    def test_no_assembly_found(self):
+        doc = make_mock_doc([])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.create_joint({
+            "joint_type": "Fixed", "ref1_object": "A", "ref2_object": "B",
+        })
+        assert_error_contains(self, result, "No Assembly::AssemblyObject found")
+
+    def test_ref1_object_not_found(self):
+        self._setup()
+        result = self.handler.create_joint({
+            "joint_type": "Fixed", "ref1_object": "Ghost", "ref2_object": "B",
+        })
+        assert_error_contains(self, result, "not found", "Ghost")
+
+    def test_ref2_object_not_found(self):
+        box = make_box_object("A")
+        self._setup(doc_objects=[box])
+        result = self.handler.create_joint({
+            "joint_type": "Fixed", "ref1_object": "A", "ref2_object": "Ghost",
+        })
+        assert_error_contains(self, result, "not found", "Ghost")
+
+    def test_invalid_ref1_element_rejected_before_creating_anything(self):
+        """FreeCAD's own joint machinery does NOT validate element names --
+        confirmed live 2026-07-24 that a nonexistent 'Face99' on a 6-face
+        box is silently accepted and reports 'Created ... joint' with no
+        error. _validate_element catches this before anything gets built."""
+        box_a = make_box_object("A")  # default: 6 faces
+        box_b = make_box_object("B")
+        doc, assembly, joint_group = self._setup(doc_objects=[box_a, box_b])
+
+        result = self.handler.create_joint({
+            "joint_type": "Fixed", "ref1_object": "A", "ref2_object": "B",
+            "ref1_element": "Face99",
+        })
+
+        assert_error_contains(self, result, "Face99", "does not exist", "A")
+        joint_group.newObject.assert_not_called()
+
+    def test_invalid_ref2_element_rejected(self):
+        box_a = make_box_object("A")
+        box_b = make_box_object("B")
+        doc, assembly, joint_group = self._setup(doc_objects=[box_a, box_b])
+
+        result = self.handler.create_joint({
+            "joint_type": "Fixed", "ref1_object": "A", "ref2_object": "B",
+            "ref2_element": "Edge99",
+        })
+
+        assert_error_contains(self, result, "Edge99", "does not exist", "B")
+        joint_group.newObject.assert_not_called()
+
+    def test_creates_joint_with_correct_type_index(self):
+        box_a = make_box_object("A")
+        box_b = make_box_object("B")
+        doc, assembly, joint_group = self._setup(doc_objects=[box_a, box_b])
+
+        result = self.handler.create_joint({
+            "joint_type": "Revolute", "ref1_object": "A", "ref2_object": "B",
+            "ref1_element": "Face1", "ref2_element": "Face2",
+        })
+
+        assert_success_contains(self, result, "Revolute", "A.Face1", "B.Face2")
+        joint_group.newObject.assert_called_once_with("App::FeaturePython", "RevoluteJoint")
+        joint = joint_group.Group[-1]
+        mock_JointObject.Joint.assert_called_once_with(joint, _JOINT_TYPES.index("Revolute"))
+
+    def test_default_vertex_equals_element(self):
+        """Passing the same string for element and vertex is FreeCAD's own
+        convention for 'use this element's own center' (confirmed against
+        UtilsAssembly.findPlacement) -- the natural default when the caller
+        doesn't care about a specific disambiguating vertex."""
+        box_a = make_box_object("A")
+        box_b = make_box_object("B")
+        doc, assembly, joint_group = self._setup(doc_objects=[box_a, box_b])
+
+        self.handler.create_joint({
+            "joint_type": "Fixed", "ref1_object": "A", "ref2_object": "B",
+            "ref1_element": "Face1", "ref2_element": "Face2",
+        })
+
+        joint = joint_group.Group[-1]
+        joint.Proxy.setJointConnectors.assert_called_once_with(
+            joint, [[box_a, ["Face1", "Face1"]], [box_b, ["Face2", "Face2"]]]
+        )
+
+    def test_explicit_vertex_overrides_default(self):
+        box_a = make_box_object("A")
+        box_b = make_box_object("B")
+        doc, assembly, joint_group = self._setup(doc_objects=[box_a, box_b])
+
+        self.handler.create_joint({
+            "joint_type": "Fixed", "ref1_object": "A", "ref2_object": "B",
+            "ref1_element": "Face1", "ref1_vertex": "Vertex3",
+            "ref2_element": "Face2", "ref2_vertex": "Vertex4",
+        })
+
+        joint = joint_group.Group[-1]
+        joint.Proxy.setJointConnectors.assert_called_once_with(
+            joint, [[box_a, ["Face1", "Vertex3"]], [box_b, ["Face2", "Vertex4"]]]
+        )
+
+    def test_distance_set_when_provided(self):
+        box_a = make_box_object("A")
+        box_b = make_box_object("B")
+        doc, assembly, joint_group = self._setup(doc_objects=[box_a, box_b])
+
+        self.handler.create_joint({
+            "joint_type": "Distance", "ref1_object": "A", "ref2_object": "B",
+            "distance": 25,
+        })
+
+        joint = joint_group.Group[-1]
+        self.assertEqual(joint.Distance, 25)
+
+    def test_distance_not_touched_when_omitted(self):
+        """Pinning behavior: omitting distance must not set it to a default
+        like 0 -- the property is simply left alone (whatever Joint's own
+        constructor initialized it to)."""
+        box_a = make_box_object("A")
+        box_b = make_box_object("B")
+        doc, assembly, joint_group = self._setup(doc_objects=[box_a, box_b])
+        # Sentinel: if the handler wrote to .Distance, this would be replaced.
+        sentinel = object()
+
+        def _joint_ctor(joint, idx):
+            joint.Distance = sentinel
+
+        mock_JointObject.Joint = MagicMock(side_effect=_joint_ctor)
+
+        self.handler.create_joint({
+            "joint_type": "Fixed", "ref1_object": "A", "ref2_object": "B",
+        })
+
+        joint = joint_group.Group[-1]
+        self.assertIs(joint.Distance, sentinel)
+
+    def test_cleanup_on_setjointconnectors_failure(self):
+        """setJointConnectors can throw after the joint object already
+        exists in the document -- same orphan-object shape as Phase 1's
+        add_component bug. The joint must be removed, not left behind."""
+        box_a = make_box_object("A")
+        box_b = make_box_object("B")
+        doc, assembly, joint_group = self._setup(doc_objects=[box_a, box_b])
+
+        def _joint_ctor(joint, idx):
+            joint.Proxy.setJointConnectors = MagicMock(
+                side_effect=RuntimeError("bad reference")
+            )
+
+        mock_JointObject.Joint = MagicMock(side_effect=_joint_ctor)
+
+        result = self.handler.create_joint({
+            "joint_type": "Fixed", "ref1_object": "A", "ref2_object": "B",
+        })
+
+        assert_error_contains(self, result, "Error creating joint", "bad reference")
+        joint = joint_group.Group[-1]
+        doc.removeObject.assert_called_once_with(joint.Name)
+
+
+# ---------------------------------------------------------------------------
+# ground_part
+# ---------------------------------------------------------------------------
+
+class TestGroundPart(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(AssemblyOpsHandler)
+
+    def _setup(self, doc_objects=None):
+        assembly = make_assembly("Asm")
+        doc = make_mock_doc([assembly] + (doc_objects or []))
+        mock_FreeCAD.ActiveDocument = doc
+        joint_group = _make_joint_group()
+        mock_UtilsAssembly.getJointGroup = MagicMock(return_value=joint_group)
+        mock_JointObject.GroundedJoint = MagicMock()
+        return doc, assembly, joint_group
+
+    def test_missing_object_name(self):
+        self._setup()
+        result = self.handler.ground_part({})
+        assert_error_contains(self, result, "object_name")
+
+    def test_no_active_document(self):
+        mock_FreeCAD.ActiveDocument = None
+        result = self.handler.ground_part({"object_name": "Box"})
+        assert_error_contains(self, result, "No active document")
+
+    def test_object_not_found(self):
+        self._setup()
+        result = self.handler.ground_part({"object_name": "Ghost"})
+        assert_error_contains(self, result, "not found", "Ghost")
+
+    def test_no_assembly_found(self):
+        box = make_box_object("Box")
+        doc = make_mock_doc([box])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.ground_part({"object_name": "Box"})
+        assert_error_contains(self, result, "No Assembly::AssemblyObject found")
+
+    def test_grounds_successfully_with_default_name(self):
+        box = make_box_object("Box")
+        doc, assembly, joint_group = self._setup(doc_objects=[box])
+
+        result = self.handler.ground_part({"object_name": "Box"})
+
+        assert_success_contains(self, result, "Grounded", "Box")
+        joint_group.newObject.assert_called_once_with("App::FeaturePython", "Box_Ground")
+        ground = joint_group.Group[-1]
+        mock_JointObject.GroundedJoint.assert_called_once_with(ground, box)
+
+    def test_custom_name(self):
+        box = make_box_object("Box")
+        doc, assembly, joint_group = self._setup(doc_objects=[box])
+
+        self.handler.ground_part({"object_name": "Box", "name": "MyGround"})
+
+        joint_group.newObject.assert_called_once_with("App::FeaturePython", "MyGround")
+
+    def test_cleanup_on_groundedjoint_failure(self):
+        box = make_box_object("Box")
+        doc, assembly, joint_group = self._setup(doc_objects=[box])
+        mock_JointObject.GroundedJoint = MagicMock(side_effect=RuntimeError("boom"))
+
+        result = self.handler.ground_part({"object_name": "Box"})
+
+        assert_error_contains(self, result, "Error grounding part", "boom")
+        ground = joint_group.Group[-1]
+        doc.removeObject.assert_called_once_with(ground.Name)
+
+
+# ---------------------------------------------------------------------------
+# solve
+# ---------------------------------------------------------------------------
+
+class TestSolve(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(AssemblyOpsHandler)
+
+    def test_no_active_document(self):
+        mock_FreeCAD.ActiveDocument = None
+        result = self.handler.solve({})
+        assert_error_contains(self, result, "No active document")
+
+    def test_no_assembly_found(self):
+        doc = make_mock_doc([])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.solve({})
+        assert_error_contains(self, result, "No Assembly::AssemblyObject found")
+
+    def test_success_code(self):
+        assembly = make_assembly("Asm")
+        assembly.solve = MagicMock(return_value=0)
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.solve({})
+        assert_success_contains(self, result, "success", "code=0")
+
+    def test_no_grounded_parts_code(self):
+        assembly = make_assembly("Asm")
+        assembly.solve = MagicMock(return_value=-6)
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.solve({})
+        assert_success_contains(self, result, "no_grounded_parts", "code=-6")
+
+    def test_solver_error_code(self):
+        assembly = make_assembly("Asm")
+        assembly.solve = MagicMock(return_value=-1)
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.solve({})
+        assert_success_contains(self, result, "solver_error", "code=-1")
+
+    def test_unrecognized_code_does_not_crash(self):
+        """Ambiguous input: a code outside the documented -6..0 range (e.g.
+        from a future FreeCAD version) must not KeyError -- it should be
+        reported explicitly as unknown, not silently mapped to something
+        misleading."""
+        assembly = make_assembly("Asm")
+        assembly.solve = MagicMock(return_value=-99)
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.solve({})
+        assert_success_contains(self, result, "unknown_code_-99")
+
+    def test_enable_undo_defaults_false(self):
+        assembly = make_assembly("Asm")
+        assembly.solve = MagicMock(return_value=0)
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+        self.handler.solve({})
+        assembly.solve.assert_called_once_with(False)
+
+    def test_enable_undo_passed_through(self):
+        assembly = make_assembly("Asm")
+        assembly.solve = MagicMock(return_value=0)
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+        self.handler.solve({"enable_undo": True})
+        assembly.solve.assert_called_once_with(True)
+
+
+# ---------------------------------------------------------------------------
+# list_joints
+# ---------------------------------------------------------------------------
+
+class TestListJoints(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(AssemblyOpsHandler)
+
+    def test_no_active_document(self):
+        mock_FreeCAD.ActiveDocument = None
+        result = self.handler.list_joints({})
+        assert_error_contains(self, result, "No active document")
+
+    def test_no_assembly_found(self):
+        doc = make_mock_doc([])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.list_joints({})
+        assert_error_contains(self, result, "No Assembly::AssemblyObject found")
+
+    def test_empty_joints(self):
+        assembly = make_assembly("Asm")
+        assembly.Joints = []
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.list_joints({})
+        assert_success_contains(self, result, "no joints")
+
+    def test_lists_regular_joint(self):
+        box_a = make_box_object("A")
+        box_b = make_box_object("B")
+        joint = MagicMock()
+        joint.Name = "FixedJoint"
+        joint.JointType = "Fixed"
+        joint.Reference1 = [box_a, ["Face1", "Face1"]]
+        joint.Reference2 = [box_b, ["Face2", "Face2"]]
+        # MagicMock auto-vivifies ANY attribute access truthy -- without
+        # this, `hasattr(joint, 'ObjectToGround')` in list_joints would be
+        # True and misclassify a regular joint as a grounding.
+        del joint.ObjectToGround
+
+        assembly = make_assembly("Asm")
+        assembly.Joints = [joint]
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.list_joints({})
+
+        assert_success_contains(self, result, "FixedJoint", "Fixed", "A.Face1", "B.Face2")
+        self.assertNotIn("Grounded", result)
+
+    def test_lists_grounded_joint_distinctly(self):
+        box = make_box_object("Box")
+        ground = MagicMock()
+        ground.Name = "Box_Ground"
+        ground.ObjectToGround = box
+
+        assembly = make_assembly("Asm")
+        assembly.Joints = [ground]
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.list_joints({})
+
+        assert_success_contains(self, result, "Box_Ground", "Grounded", "Box")
+
+    def test_unset_reference_shown_as_unset(self):
+        joint = MagicMock()
+        joint.Name = "PartialJoint"
+        joint.JointType = "Fixed"
+        joint.Reference1 = None
+        joint.Reference2 = None
+        del joint.ObjectToGround
+
+        assembly = make_assembly("Asm")
+        assembly.Joints = [joint]
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.list_joints({})
+
+        assert_success_contains(self, result, "(unset)")
+
+
+# ---------------------------------------------------------------------------
+# _validate_element -- threshold coverage (at/below/above the boundary),
+# per this repo's Threshold-Boundary Testing Rule.
+# ---------------------------------------------------------------------------
+
+class TestValidateElement(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(AssemblyOpsHandler)
+
+    def _box(self):
+        # make_box_object defaults: 6 faces, 12 edges, 8 vertices.
+        return make_box_object("Box")
+
+    def test_valid_face_mid_range(self):
+        self.assertIsNone(self.handler._validate_element(self._box(), "Face3"))
+
+    def test_face_at_upper_boundary_valid(self):
+        """Face6 on a 6-face box is the last valid index -- not rejected."""
+        self.assertIsNone(self.handler._validate_element(self._box(), "Face6"))
+
+    def test_face_one_over_upper_boundary_rejected(self):
+        result = self.handler._validate_element(self._box(), "Face7")
+        assert_error_contains(self, result, "Face7", "does not exist")
+
+    def test_face_at_lower_boundary_valid(self):
+        """Face1 is the first valid (1-indexed) face."""
+        self.assertIsNone(self.handler._validate_element(self._box(), "Face1"))
+
+    def test_face_zero_rejected(self):
+        """FreeCAD element names are 1-indexed -- Face0 doesn't exist."""
+        result = self.handler._validate_element(self._box(), "Face0")
+        assert_error_contains(self, result, "Face0", "does not exist")
+
+    def test_face_far_over_rejected(self):
+        result = self.handler._validate_element(self._box(), "Face99")
+        assert_error_contains(self, result, "Face99", "does not exist")
+
+    def test_edge_within_range_valid(self):
+        self.assertIsNone(self.handler._validate_element(self._box(), "Edge12"))
+
+    def test_edge_over_range_rejected(self):
+        result = self.handler._validate_element(self._box(), "Edge13")
+        assert_error_contains(self, result, "Edge13", "does not exist")
+
+    def test_vertex_within_range_valid(self):
+        self.assertIsNone(self.handler._validate_element(self._box(), "Vertex8"))
+
+    def test_vertex_over_range_rejected(self):
+        result = self.handler._validate_element(self._box(), "Vertex9")
+        assert_error_contains(self, result, "Vertex9", "does not exist")
+
+    def test_empty_element_not_validated(self):
+        """Empty string means 'whole object' -- not a validation failure."""
+        self.assertIsNone(self.handler._validate_element(self._box(), ""))
+
+    def test_unrecognized_prefix_not_validated(self):
+        """Not this helper's job to judge non-Face/Edge/Vertex names (e.g.
+        an LCS sub-element) -- let FreeCAD's own machinery handle those."""
+        self.assertIsNone(self.handler._validate_element(self._box(), "SomeOtherRef"))
+
+    def test_non_numeric_suffix_not_validated(self):
+        """'FaceX' isn't a recognized PrefixN pattern -- skip, don't crash
+        trying to int() it."""
+        self.assertIsNone(self.handler._validate_element(self._box(), "FaceX"))
+
+    def test_object_without_shape_not_validated(self):
+        obj = MagicMock(spec=["Name"])  # no Shape attribute
+        self.assertIsNone(self.handler._validate_element(obj, "Face1"))
+
+
+class TestDescribeReference(unittest.TestCase):
+    """Direct coverage of the static helper's edge cases."""
+
+    def test_none_ref(self):
+        self.assertEqual(AssemblyOpsHandler._describe_reference(None), "(unset)")
+
+    def test_whole_object_ref_no_trailing_dot(self):
+        obj = MagicMock()
+        obj.Name = "Box"
+        result = AssemblyOpsHandler._describe_reference([obj, ["", ""]])
+        self.assertEqual(result, "Box")
+
+    def test_element_ref(self):
+        obj = MagicMock()
+        obj.Name = "Box"
+        result = AssemblyOpsHandler._describe_reference([obj, ["Face3", "Face3"]])
+        self.assertEqual(result, "Box.Face3")
+
+    def test_malformed_ref_falls_back_to_str(self):
+        """Defensive branch -- shouldn't happen with real FreeCAD data, but
+        must not raise if it does."""
+        result = AssemblyOpsHandler._describe_reference("not-a-list")
+        self.assertIsInstance(result, str)
 
 
 if __name__ == "__main__":

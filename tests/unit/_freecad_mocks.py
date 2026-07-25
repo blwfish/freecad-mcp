@@ -67,6 +67,13 @@ mock_PartDesign = _adopt_or_create('PartDesign')
 mock_Mesh = _adopt_or_create('Mesh')
 mock_MeshPart = _adopt_or_create('MeshPart')
 
+# Assembly workbench — assembly_ops.py does `import UtilsAssembly` /
+# `import JointObject` inside method bodies (real FreeCAD modules, not
+# importable outside a running FreeCAD). Tests configure Joint/GroundedJoint/
+# getJointGroup as needed per-case.
+mock_UtilsAssembly = _adopt_or_create('UtilsAssembly')
+mock_JointObject = _adopt_or_create('JointObject')
+
 # CAM workbench imports — handlers do `from Path.Tool.Bit import ToolBit`,
 # `from Path.Tool.Controller import Create`, `from Path.Post.Processor
 # import PostProcessorFactory` etc. inside method bodies. Pre-populate
@@ -180,7 +187,7 @@ def reset_mocks():
     """
     for m in (mock_FreeCAD, mock_FreeCADGui, mock_Part, mock_Sketcher,
               mock_Draft, mock_Spreadsheet, mock_PartDesign,
-              mock_Mesh, mock_MeshPart):
+              mock_Mesh, mock_MeshPart, mock_UtilsAssembly, mock_JointObject):
         m.reset_mock(return_value=True, side_effect=True)
 
     sys.modules['FreeCAD'] = mock_FreeCAD
@@ -192,6 +199,8 @@ def reset_mocks():
     sys.modules['PartDesign'] = mock_PartDesign
     sys.modules['Mesh'] = mock_Mesh
     sys.modules['MeshPart'] = mock_MeshPart
+    sys.modules['UtilsAssembly'] = mock_UtilsAssembly
+    sys.modules['JointObject'] = mock_JointObject
     sys.modules['Path'] = mock_Path
     sys.modules['Path.Main'] = mock_Path_Main
     sys.modules['Path.Main.Job'] = mock_Path_Main_Job
