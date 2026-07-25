@@ -37,6 +37,8 @@ from tests.unit._freecad_mocks import (
     make_assembly,
     assert_error_contains,
     assert_success_contains,
+    _Placement,
+    _Vec,
 )
 
 from handlers.assembly_ops import AssemblyOpsHandler, _JOINT_TYPES
@@ -156,16 +158,33 @@ class TestCreateLCS(unittest.TestCase):
         self.assertEqual(lcs.MapMode, "FlatFace")
         self.assertEqual(lcs.AttachmentSupport, [(box, "Face3")])
 
-    def test_reference_without_resolvable_object_does_not_crash(self):
-        """reference given but reference_object doesn't resolve to anything
-        (e.g. empty string, or a typo) — pins the current silent-skip
-        behavior: AttachmentSupport is left unset, no error raised."""
+    def test_reference_without_reference_object_is_rejected(self):
+        """reference given but reference_object omitted entirely -- full-
+        review 2026-07-24 finding #05: this used to silently apply MapMode
+        with AttachmentSupport left unset and report success. Now an
+        explicit, distinct error, and no LCS object is created at all."""
         doc = make_mock_doc([])
         mock_FreeCAD.ActiveDocument = doc
         result = self.handler.create_lcs({
             "name": "LCS1", "map_mode": "FlatFace", "reference": "Face3",
         })
-        assert_success_contains(self, result, "LCS1")
+        assert_error_contains(self, result, "reference_object", "required")
+        doc.addObject.assert_not_called()
+
+    def test_reference_with_unresolvable_reference_object_is_rejected(self):
+        """reference_object given but doesn't resolve to a real object --
+        a distinct code path from the omitted case above (finding #17: the
+        two used to be conflated, with only the omitted-case pinned by a
+        test). Also rejected before anything is created, with an error
+        naming the unresolved object."""
+        doc = make_mock_doc([])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.create_lcs({
+            "name": "LCS1", "map_mode": "FlatFace",
+            "reference": "Face3", "reference_object": "GhostObject",
+        })
+        assert_error_contains(self, result, "GhostObject")
+        doc.addObject.assert_not_called()
 
     def test_offset_applied(self):
         doc = make_mock_doc([])
@@ -177,6 +196,33 @@ class TestCreateLCS(unittest.TestCase):
         self.assertEqual(lcs.AttachmentOffset.Base.x, 10)
         self.assertEqual(lcs.AttachmentOffset.Base.y, 5)
         self.assertEqual(lcs.AttachmentOffset.Base.z, 2)
+
+    def test_property_assignment_failure_cleans_up_orphan(self):
+        """finding #18: create_lcs previously had no exception cleanup
+        around MapMode/AttachmentSupport/AttachmentOffset assignment, unlike
+        create_joint/ground_part in the same file -- an exception there used
+        to leave a half-configured LCS object in the document."""
+        doc = make_mock_doc([])
+        mock_FreeCAD.ActiveDocument = doc
+
+        def _raise_on_map_mode_set(value):
+            raise ValueError("bad enum value")
+
+        created = {}
+
+        def _add_object(type_id, name):
+            obj = MagicMock()
+            obj.Name = name
+            type(obj).MapMode = property(lambda self: None, lambda self, v: _raise_on_map_mode_set(v))
+            created['obj'] = obj
+            return obj
+
+        doc.addObject = MagicMock(side_effect=_add_object)
+
+        result = self.handler.create_lcs({"name": "LCS1", "map_mode": "FlatFace"})
+
+        assert_error_contains(self, result, "bad enum value")
+        doc.removeObject.assert_called_once_with("LCS1")
 
     def test_no_offset_no_crash(self):
         doc = make_mock_doc([])
@@ -378,6 +424,39 @@ class TestAddComponent(unittest.TestCase):
         link = assembly.Group[-1]
         self.assertIs(link.LinkedObject, box)
 
+    def test_link_assignment_failure_cleans_up_orphan(self):
+        """finding #06: add_component had no exception cleanup around
+        `link.LinkedObject = src_obj` for any cause OTHER than the specific
+        doc-not-saved precondition already checked earlier -- any other
+        failure used to leave an orphan, unlinked App::Link/
+        Assembly::AssemblyLink sitting in the assembly's Group."""
+        box = make_box_object("Box")
+        box.isDerivedFrom = MagicMock(return_value=False)
+        assembly = make_assembly("Asm")
+        doc = make_mock_doc([box, assembly])
+        mock_FreeCAD.ActiveDocument = doc
+
+        created_link = {}
+
+        def _new_object(type_id, link_name=None):
+            link = MagicMock()
+            link.Name = link_name or f"{type_id}_auto"
+
+            def _raise(self, v):
+                raise RuntimeError("assignment failed")
+
+            type(link).LinkedObject = property(lambda self: None, _raise)
+            assembly.Group.append(link)
+            created_link['link'] = link
+            return link
+
+        assembly.newObject = MagicMock(side_effect=_new_object)
+
+        result = self.handler.add_component({"object_name": "Box"})
+
+        assert_error_contains(self, result, "assignment failed")
+        doc.removeObject.assert_called_once_with(created_link['link'].Name)
+
 
 # ---------------------------------------------------------------------------
 # list_components
@@ -442,6 +521,80 @@ class TestListComponents(unittest.TestCase):
 
         assert_success_contains(self, result, "Loose")
         self.assertNotIn("->", result.split("Loose")[1].split("\n")[0])
+
+    def test_pagination_limits_returned_components(self):
+        """finding #08: list_components had no pagination at all, unlike
+        document_ops.list_objects -- this repo already crashed once
+        (SIGPIPE/exit 141) on an unbounded object listing over the bridge's
+        50 KiB message cap."""
+        links = []
+        for i in range(5):
+            link = MagicMock()
+            link.Name = f"Link{i}"
+            link.TypeId = "App::Link"
+            link.LinkedObject = None
+            links.append(link)
+        assembly = make_assembly("Asm", group=links)
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.list_components({"limit": 2})
+
+        assert_success_contains(self, result, "5 total", "Link0", "Link1")
+        self.assertNotIn("Link2", result)
+        assert_success_contains(self, result, "3 more")
+
+    def test_pagination_offset_skips_components(self):
+        links = []
+        for i in range(3):
+            link = MagicMock()
+            link.Name = f"Link{i}"
+            link.TypeId = "App::Link"
+            link.LinkedObject = None
+            links.append(link)
+        assembly = make_assembly("Asm", group=links)
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.list_components({"offset": 2})
+
+        self.assertNotIn("Link0", result)
+        self.assertNotIn("Link1", result)
+        assert_success_contains(self, result, "Link2")
+
+    def test_negative_limit_and_offset_clamp_to_zero(self):
+        link = MagicMock()
+        link.Name = "Link0"
+        link.TypeId = "App::Link"
+        link.LinkedObject = None
+        assembly = make_assembly("Asm", group=[link])
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.list_components({"limit": -5, "offset": -5})
+
+        assert_success_contains(self, result, "1 total")
+        self.assertNotIn("Link0", result)
+
+    def test_one_malformed_component_does_not_drop_the_rest(self):
+        """finding #22: a single outer except around the whole loop used to
+        make one bad component drop the entire list."""
+        good = MagicMock()
+        good.Name = "Good"
+        good.TypeId = "App::Link"
+        good.LinkedObject = None
+
+        bad = MagicMock()
+        type(bad).Name = property(lambda self: (_ for _ in ()).throw(RuntimeError("broken")))
+        bad.TypeId = "App::Link"
+
+        assembly = make_assembly("Asm", group=[bad, good])
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.list_components({})
+
+        assert_success_contains(self, result, "Good", "failed to introspect")
 
 
 # ---------------------------------------------------------------------------
@@ -517,6 +670,13 @@ class TestCreateJoint(unittest.TestCase):
         assembly.Group (i.e. never add_component'd)."""
         box_a = make_box_object("A")
         box_b = make_box_object("B")
+        # _require_component now takes an exempt_types param (LCS refs bypass
+        # the check) and checks it via isDerivedFrom -- a bare MagicMock's
+        # isDerivedFrom auto-vivifies truthy for ANY argument, so a plain
+        # box must explicitly say it's not an LCS, same convention already
+        # used elsewhere in this file for the Assembly::AssemblyLink branch.
+        box_a.isDerivedFrom = MagicMock(return_value=False)
+        box_b.isDerivedFrom = MagicMock(return_value=False)
         doc = make_mock_doc([box_a, box_b])
         assembly = make_assembly("Asm")
         # Only box_b is a component -- box_a is a bare document object.
@@ -533,6 +693,33 @@ class TestCreateJoint(unittest.TestCase):
 
         assert_error_contains(self, result, "A", "not a component", "add_component")
         joint_group.newObject.assert_not_called()
+
+    def test_ref_is_lcs_bypasses_component_check(self):
+        """finding #09: create_lcs's own docstring documents an LCS as a
+        valid bare-document joint mating reference that never needs
+        add_component -- create_joint's _require_component must exempt it,
+        not reject it uniformly with plain parts."""
+        lcs = MagicMock()
+        lcs.Name = "LCS1"
+        lcs.isDerivedFrom = MagicMock(
+            side_effect=lambda t: t == "App::LocalCoordinateSystem")
+        box_b = make_box_object("B")
+        box_b.isDerivedFrom = MagicMock(return_value=False)
+        doc = make_mock_doc([lcs, box_b])
+        assembly = make_assembly("Asm")
+        assembly.Group.append(box_b)  # LCS1 deliberately NOT added as a component
+        doc.Objects.append(assembly)
+        mock_FreeCAD.ActiveDocument = doc
+        joint_group = _make_joint_group()
+        mock_UtilsAssembly.getJointGroup = MagicMock(return_value=joint_group)
+        mock_JointObject.Joint = MagicMock()
+
+        result = self.handler.create_joint({
+            "joint_type": "Fixed", "ref1_object": "LCS1", "ref2_object": "B",
+        })
+
+        assert_success_contains(self, result, "Fixed")
+        self.assertNotIn("not a component", result.lower())
 
     def test_invalid_ref1_element_rejected_before_creating_anything(self):
         """FreeCAD's own joint machinery does NOT validate element names --
@@ -562,6 +749,36 @@ class TestCreateJoint(unittest.TestCase):
         })
 
         assert_error_contains(self, result, "Edge99", "does not exist", "B")
+        joint_group.newObject.assert_not_called()
+
+    def test_invalid_ref1_vertex_rejected(self):
+        """finding #07: _validate_element was applied to ref1_element/
+        ref2_element but never to ref1_vertex/ref2_vertex -- an explicit,
+        out-of-range vertex disambiguator used to pass through unvalidated
+        to setJointConnectors."""
+        box_a = make_box_object("A")  # default: 8 vertices
+        box_b = make_box_object("B")
+        doc, assembly, joint_group = self._setup(doc_objects=[box_a, box_b])
+
+        result = self.handler.create_joint({
+            "joint_type": "Fixed", "ref1_object": "A", "ref2_object": "B",
+            "ref1_element": "Face1", "ref1_vertex": "Vertex99",
+        })
+
+        assert_error_contains(self, result, "Vertex99", "does not exist", "A")
+        joint_group.newObject.assert_not_called()
+
+    def test_invalid_ref2_vertex_rejected(self):
+        box_a = make_box_object("A")
+        box_b = make_box_object("B")  # default: 8 vertices
+        doc, assembly, joint_group = self._setup(doc_objects=[box_a, box_b])
+
+        result = self.handler.create_joint({
+            "joint_type": "Fixed", "ref1_object": "A", "ref2_object": "B",
+            "ref2_element": "Face1", "ref2_vertex": "Vertex99",
+        })
+
+        assert_error_contains(self, result, "Vertex99", "does not exist", "B")
         joint_group.newObject.assert_not_called()
 
     def test_creates_joint_with_correct_type_index(self):
@@ -920,6 +1137,117 @@ class TestListJoints(unittest.TestCase):
 
         assert_success_contains(self, result, "(unset)")
 
+    def test_pagination_limits_returned_joints(self):
+        """finding #08: list_joints had no pagination, same class of gap
+        list_components had."""
+        joints = []
+        for i in range(4):
+            j = MagicMock()
+            j.Name = f"Joint{i}"
+            j.JointType = "Fixed"
+            j.Reference1 = None
+            j.Reference2 = None
+            del j.ObjectToGround
+            joints.append(j)
+        assembly = make_assembly("Asm")
+        assembly.Joints = joints
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.list_joints({"limit": 2})
+
+        assert_success_contains(self, result, "4 total", "Joint0", "Joint1", "2 more")
+        self.assertNotIn("Joint2", result)
+
+    def test_one_malformed_joint_does_not_drop_the_rest(self):
+        """finding #22: list_joints wrapped its whole per-joint loop in one
+        outer except -- one bad joint used to drop every other joint too.
+        FreeCAD's own joint machinery is documented elsewhere in this file
+        (_validate_element) to silently accept dangling references, so a
+        joint that fails to introspect is a real, not hypothetical, case."""
+        good = MagicMock()
+        good.Name = "GoodJoint"
+        good.JointType = "Fixed"
+        good.Reference1 = None
+        good.Reference2 = None
+        del good.ObjectToGround
+
+        bad = MagicMock()
+        del bad.ObjectToGround
+        type(bad).JointType = property(lambda self: (_ for _ in ()).throw(RuntimeError("dangling reference")))
+        bad.Name = "BadJoint"
+
+        assembly = make_assembly("Asm")
+        assembly.Joints = [bad, good]
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.list_joints({})
+
+        assert_success_contains(self, result, "GoodJoint", "failed to introspect")
+
+    def test_distance_joint_shows_distance(self):
+        joint = MagicMock()
+        joint.Name = "DistJoint"
+        joint.JointType = "Distance"
+        joint.Distance = 15.5
+        joint.Reference1 = None
+        joint.Reference2 = None
+        del joint.ObjectToGround
+
+        assembly = make_assembly("Asm")
+        assembly.Joints = [joint]
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.list_joints({})
+
+        assert_success_contains(self, result, "Distance=15.5")
+
+    def test_fixed_joint_does_not_show_distance(self):
+        """finding #23, precision check: Distance/Distance2/Angle are gated
+        on joint type (per create_joint's own docstring) -- a Fixed joint
+        must not show a meaningless default Distance value."""
+        joint = MagicMock()
+        joint.Name = "FixedJoint"
+        joint.JointType = "Fixed"
+        joint.Reference1 = None
+        joint.Reference2 = None
+        del joint.ObjectToGround
+
+        assembly = make_assembly("Asm")
+        assembly.Joints = [joint]
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.list_joints({})
+
+        self.assertNotIn("Distance", result)
+
+    def test_shows_offset_detach_and_limits(self):
+        joint = MagicMock()
+        joint.Name = "SliderJoint"
+        joint.JointType = "Slider"
+        joint.Reference1 = None
+        joint.Reference2 = None
+        del joint.ObjectToGround
+        joint.Detach1 = True
+        joint.Detach2 = False
+        joint.EnableLengthMin = True
+        joint.LengthMin = 5.0
+        joint.EnableLengthMax = False
+
+        assembly = make_assembly("Asm")
+        assembly.Joints = [joint]
+        doc = make_mock_doc([assembly])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.list_joints({})
+
+        assert_success_contains(self, result, "Detach1=True", "LengthMin=5.0")
+        self.assertNotIn("Detach2", result)
+        self.assertNotIn("LengthMax", result)
+
 
 # ---------------------------------------------------------------------------
 # _validate_element -- threshold coverage (at/below/above the boundary),
@@ -1141,6 +1469,34 @@ class TestGetPartStatus(unittest.TestCase):
 
         assert_success_contains(self, result, "grounded=False", "connected_to_ground=True")
 
+    def test_reports_placement_and_related_joints(self):
+        """finding #24: get_part_status used to report only the two
+        booleans, with no way to see where the part ended up or which
+        joints/grounding reference it."""
+        box = make_box_object("Box", placement=_Placement(base=_Vec(3, 4, 5)))
+        assembly = make_assembly("Asm", group=[box])
+        assembly.isPartGrounded = MagicMock(return_value=True)
+        assembly.isPartConnected = MagicMock(return_value=True)
+
+        ground = MagicMock()
+        ground.Name = "Box_Ground"
+        ground.ObjectToGround = box
+
+        joint = MagicMock()
+        joint.Name = "SomeJoint"
+        joint.Reference1 = [box, ["Face1", "Face1"]]
+        joint.Reference2 = None
+        del joint.ObjectToGround
+
+        assembly.Joints = [ground, joint]
+        doc = make_mock_doc([box, assembly])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.get_part_status({"object_name": "Box"})
+
+        assert_success_contains(self, result, "placement=(3.00,4.00,5.00)",
+                                 "Box_Ground (grounding)", "SomeJoint")
+
 
 # ---------------------------------------------------------------------------
 # _resolve_joint / set_joint_offset
@@ -1349,6 +1705,71 @@ class TestSetJointLimits(unittest.TestCase):
 
         self.assertEqual(joint.LengthMax, "untouched_sentinel")
         self.assertEqual(joint.EnableLengthMax, "untouched_flag_sentinel")
+
+    def test_inverted_length_range_rejected(self):
+        """finding #19: an inverted range (min > max) used to be accepted
+        silently and reported as success."""
+        joint = _make_joint_mock()
+        doc = make_mock_doc([joint])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.set_joint_limits({
+            "joint_name": "TestJoint", "length_min": 50, "length_max": 10,
+        })
+
+        assert_error_contains(self, result, "length_min", "length_max")
+        # Nothing applied -- validated before any assignment.
+        self.assertNotEqual(joint.LengthMin, 50)
+
+    def test_inverted_angle_range_rejected(self):
+        joint = _make_joint_mock()
+        doc = make_mock_doc([joint])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.set_joint_limits({
+            "joint_name": "TestJoint", "angle_min": 90, "angle_max": -90,
+        })
+
+        assert_error_contains(self, result, "angle_min", "angle_max")
+
+    def test_equal_min_max_accepted(self):
+        """min == max is a valid (if degenerate) fixed limit, not inverted."""
+        joint = _make_joint_mock()
+        doc = make_mock_doc([joint])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.set_joint_limits({
+            "joint_name": "TestJoint", "length_min": 10, "length_max": 10,
+        })
+
+        assert_success_contains(self, result, "LengthMin=10", "LengthMax=10")
+
+    def test_new_min_checked_against_existing_enabled_max(self):
+        """A call that only supplies length_min must still be checked
+        against an already-enabled length_max from a prior call, not just
+        against itself."""
+        joint = _make_joint_mock()
+        joint.EnableLengthMax = True
+        joint.LengthMax = 10
+        doc = make_mock_doc([joint])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.set_joint_limits({"joint_name": "TestJoint", "length_min": 50})
+
+        assert_error_contains(self, result, "length_min", "length_max")
+
+    def test_new_min_not_checked_against_disabled_existing_max(self):
+        """An existing LengthMax value that was never enabled (EnableLengthMax
+        False) must not be treated as an active constraint."""
+        joint = _make_joint_mock()
+        joint.EnableLengthMax = False
+        joint.LengthMax = 10  # stale/unused value, flag says it's not active
+        doc = make_mock_doc([joint])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.set_joint_limits({"joint_name": "TestJoint", "length_min": 50})
+
+        assert_success_contains(self, result, "LengthMin=50")
 
 
 if __name__ == "__main__":

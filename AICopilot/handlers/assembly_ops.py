@@ -18,11 +18,30 @@ from .base import BaseHandler
 # Mirrors JointObject.JointTypes exactly (JointObject.py) -- index order is
 # load-bearing, since Joint(joint, type_index) takes a positional index, not
 # a name. Keep in sync if FreeCAD adds joint types.
+#
+# This list is hand-duplicated in freecad_mcp_server.py's assembly_operations
+# tool schema (the bridge process can't import this module -- it has no
+# FreeCAD available and this file `import FreeCAD`s at module scope). A
+# reorder here silently changes which joint type create_joint actually
+# creates for a given name, with no runtime error. Nothing at import time
+# can catch that across the process boundary, so
+# tests/unit/test_assembly_schema_parity.py statically asserts the two
+# copies stay identical (full-review 2026-07-24 finding #01, mutation-
+# confirmed: swapping two entries here left the pre-existing test suite
+# 119/119 green).
 _JOINT_TYPES = [
     "Fixed", "Revolute", "Cylindrical", "Slider", "Ball", "Distance",
     "Parallel", "Perpendicular", "Angle", "RackPinion", "Screw", "Gears",
     "Belt",
 ]
+
+# Joint types that actually use Distance / Distance2 / Angle, per
+# create_joint's own docstring -- used by list_joints to decide which of
+# these to display, rather than showing all three (with a meaningless
+# default) for every joint regardless of type.
+_DISTANCE_JOINT_TYPES = frozenset({"Distance", "RackPinion", "Screw", "Gears", "Belt"})
+_DISTANCE2_JOINT_TYPES = frozenset({"Gears", "Belt"})
+_ANGLE_JOINT_TYPES = frozenset({"Angle"})
 
 # assembly.solve()'s return code, per AssemblyObject.pyi's documented
 # contract. Confirmed by source reading (2026-07-24) that only 0/-1/-6 are
@@ -99,8 +118,14 @@ class AssemblyOpsHandler(BaseHandler):
                 Must support newObject() — a Body, App::Part, or Assembly.
             map_mode: Attachment mode, e.g. "FlatFace", "ObjectXY" (default: none —
                 LCS stays at the origin unless offset_x/y/z is given)
-            reference: Face or edge reference, e.g. "Face1", "Edge3"
-            reference_object: Object name containing the reference
+            reference: Face or edge reference, e.g. "Face1", "Edge3". Requires
+                reference_object to also be given, or this returns an error --
+                a reference with no object to resolve it against used to be
+                silently dropped (LCS created with no attachment, reporting
+                success) rather than rejected.
+            reference_object: Object name containing the reference. Required
+                if reference is given; an unresolvable name is an error, not
+                a silent no-op.
             offset_x: Offset in X from attached position (mm)
             offset_y: Offset in Y from attached position (mm)
             offset_z: Offset in Z / normal direction (mm)
@@ -125,31 +150,51 @@ class AssemblyOpsHandler(BaseHandler):
                 if not container:
                     return f"Container not found: {container_name}"
 
+            ref_obj = None
+            if reference:
+                # Validated before creating anything -- reference given with
+                # no resolvable reference_object used to silently leave
+                # AttachmentSupport unset while still applying MapMode and
+                # reporting success, for an LCS that isn't attached where
+                # requested (full-review 2026-07-24 finding #05).
+                if not reference_object:
+                    return "reference_object is required when reference is given"
+                ref_obj = self.get_object(reference_object, doc)
+                if not ref_obj:
+                    return f"Object not found: {reference_object}"
+
             if container is doc:
                 lcs = doc.addObject("Part::LocalCoordinateSystem", name)
             else:
                 lcs = container.newObject("Part::LocalCoordinateSystem", name)
 
-            if map_mode:
-                lcs.MapMode = map_mode
-                if reference:
-                    ref_obj = None
-                    if reference_object:
-                        ref_obj = self.get_object(reference_object, doc)
+            try:
+                if map_mode:
+                    lcs.MapMode = map_mode
                     if ref_obj:
                         lcs.AttachmentSupport = [(ref_obj, reference)]
 
-            if offset_x or offset_y or offset_z:
-                lcs.AttachmentOffset = FreeCAD.Placement(
-                    FreeCAD.Vector(offset_x, offset_y, offset_z),
-                    FreeCAD.Rotation(0, 0, 0, 1)
-                )
+                if offset_x or offset_y or offset_z:
+                    lcs.AttachmentOffset = FreeCAD.Placement(
+                        FreeCAD.Vector(offset_x, offset_y, offset_z),
+                        FreeCAD.Rotation(0, 0, 0, 1)
+                    )
+            except Exception:
+                # Same orphan-object shape as add_component/create_joint --
+                # clean up rather than leave a half-configured LCS behind
+                # (finding #18).
+                try:
+                    doc.removeObject(lcs.Name)
+                except Exception:
+                    pass
+                raise
 
             self.recompute(doc)
 
             return (f"Created LCS: {lcs.Name}"
                     + (f", container={container_name}" if container_name else "")
-                    + (f", map_mode={map_mode}" if map_mode else ""))
+                    + (f", map_mode={map_mode}" if map_mode else "")
+                    + (f", reference={reference_object}.{reference}" if ref_obj else ""))
 
         except Exception as e:
             return f"Error creating LCS: {e}"
@@ -231,11 +276,25 @@ class AssemblyOpsHandler(BaseHandler):
             link_type = "Assembly::AssemblyLink" if is_sub_assembly else "App::Link"
 
             link_name = getattr(src_obj, 'Label', None) or object_name
-            link = assembly.newObject(link_type, link_name)
-            link.LinkedObject = src_obj
+            link = None
+            try:
+                link = assembly.newObject(link_type, link_name)
+                link.LinkedObject = src_obj
 
-            if x != 0 or y != 0 or z != 0:
-                link.Placement.Base = FreeCAD.Vector(x, y, z)
+                if x != 0 or y != 0 or z != 0:
+                    link.Placement.Base = FreeCAD.Vector(x, y, z)
+            except Exception:
+                # Same orphan-object shape the doc-not-saved precheck above
+                # exists for, but for any OTHER cause of failure here --
+                # clean up rather than leave an unlinked App::Link /
+                # Assembly::AssemblyLink sitting in the assembly's Group
+                # (full-review 2026-07-24 finding #06).
+                if link is not None:
+                    try:
+                        doc.removeObject(link.Name)
+                    except Exception:
+                        pass
+                raise
 
             self.recompute(doc)
 
@@ -252,9 +311,21 @@ class AssemblyOpsHandler(BaseHandler):
         Args:
             assembly_name: Assembly to inspect (default: first
                 Assembly::AssemblyObject in the active document)
+            limit: Maximum number of components to return (default 100, max 500)
+            offset: Number of components to skip (for pagination)
         """
         try:
             assembly_name = args.get('assembly_name', '')
+            # Same clamping shape as document_ops.list_objects -- limit=0
+            # legitimately means "count only", negative collapses to 0 but
+            # never becomes a negative slice bound; offset can't go negative
+            # either (full-review 2026-07-24 finding #08 -- this repo already
+            # crashed once, exit 141/SIGPIPE, on an unbounded object listing
+            # over the bridge's 50 KiB message cap).
+            raw_limit = args.get('limit', 100)
+            limit = max(0, min(int(100 if raw_limit is None else raw_limit), 500))
+            raw_offset = args.get('offset', 0)
+            offset = max(0, int(0 if raw_offset is None else raw_offset))
 
             doc = self.get_document()
             if not doc:
@@ -265,14 +336,51 @@ class AssemblyOpsHandler(BaseHandler):
                 return err
 
             group = getattr(assembly, 'Group', []) or []
+            total = len(group)
             if not group:
                 return f"Assembly '{assembly.Name}' has no components."
 
-            lines = [f"Components of {assembly.Name} ({len(group)} total):"]
-            for obj in group:
-                linked = getattr(obj, 'LinkedObject', None)
-                linked_str = f" -> {linked.Name}" if linked else ""
-                lines.append(f"  {obj.Name} ({obj.TypeId}){linked_str}")
+            page = group[offset:offset + limit]
+
+            header = f"Components of {assembly.Name} ({total} total"
+            if page and (offset or total > len(page)):
+                header += f", showing {offset + 1}-{offset + len(page)}"
+            header += "):"
+            lines = [header]
+
+            # Per-component, not one outer except for the whole loop -- a
+            # single malformed component used to drop the entire list
+            # (finding #22).
+            skipped_errors = 0
+            for obj in page:
+                try:
+                    linked = getattr(obj, 'LinkedObject', None)
+                    linked_str = f" -> {linked.Name}" if linked else ""
+                    label = getattr(obj, 'Label', None)
+                    label_str = f" [{label}]" if label and label != obj.Name else ""
+                    pos_str = ""
+                    try:
+                        base = obj.Placement.Base
+                        pos_str = f" @ ({base.x:.2f},{base.y:.2f},{base.z:.2f})"
+                    except Exception:
+                        pass
+                    hidden_str = ""
+                    try:
+                        if obj.ViewObject is not None and not bool(obj.ViewObject.Visibility):
+                            hidden_str = " (hidden)"
+                    except Exception:
+                        pass
+                    lines.append(f"  {obj.Name} ({obj.TypeId}){label_str}{linked_str}{pos_str}{hidden_str}")
+                except Exception as e:
+                    skipped_errors += 1
+                    lines.append(f"  <error introspecting component: {e}>")
+
+            if limit > 0 and offset + len(page) < total:
+                lines.append(f"  ... {total - offset - len(page)} more "
+                              f"(offset={offset + limit} to continue)")
+            if skipped_errors:
+                lines.append(f"  ({skipped_errors} component(s) failed to introspect)")
+
             return "\n".join(lines)
 
         except Exception as e:
@@ -294,7 +402,7 @@ class AssemblyOpsHandler(BaseHandler):
                            "Create one first with create_assembly.")
         return assembly, None
 
-    def _require_component(self, obj, assembly) -> "Optional[str]":
+    def _require_component(self, obj, assembly, exempt_types=()) -> "Optional[str]":
         """Return an error string if obj is not a direct component of
         assembly (i.e. not in assembly.Group), else None.
 
@@ -308,7 +416,23 @@ class AssemblyOpsHandler(BaseHandler):
         non-components up front, before anything gets created, converts
         that silent trap into an immediate, actionable error instead of a
         misleading query result discovered later.
+
+        exempt_types: TypeIds (checked via isDerivedFrom) that bypass this
+        check entirely. Used by create_joint for
+        "App::LocalCoordinateSystem" -- create_lcs's own docstring documents
+        an LCS as a valid bare-document joint mating reference that never
+        needs add_component, but this check was applied uniformly to both
+        of create_joint's references when it shipped, silently contradicting
+        that (full-review 2026-07-24 finding #09). ground_part/
+        get_part_status don't pass this -- grounding or querying connectivity
+        on an LCS isn't meaningful, so they keep the strict, unexempted check.
         """
+        for type_id in exempt_types:
+            try:
+                if obj.isDerivedFrom(type_id):
+                    return None
+            except Exception:
+                pass
         group = getattr(assembly, 'Group', []) or []
         if obj in group:
             return None
@@ -372,12 +496,18 @@ class AssemblyOpsHandler(BaseHandler):
                 Distance, Parallel, Perpendicular, Angle, RackPinion, Screw,
                 Gears, Belt.
             ref1_object, ref2_object: Names (or Labels) of the two objects to joint.
+                Must already be assembly components (added via add_component),
+                UNLESS the object is a Local Coordinate System (create_lcs) used
+                purely as a mating reference -- create_lcs's own docs say an LCS
+                never needs to be added as a component, so this check exempts it.
             ref1_element, ref2_element: Sub-element on each object, e.g. "Face3",
                 "Edge8" (default: whole object).
             ref1_vertex, ref2_vertex: Vertex used to disambiguate placement on
                 that element (default: same as the element itself, which FreeCAD
                 interprets as "use this element's own center" -- a face
-                centroid, an edge midpoint/circle-center, etc).
+                centroid, an edge midpoint/circle-center, etc). Validated the
+                same way as ref1_element/ref2_element -- an out-of-range
+                vertex is rejected, not silently accepted.
             name: Name for the joint (default: "<joint_type>Joint")
             assembly_name: Target assembly (default: first Assembly::AssemblyObject
                 in the active document)
@@ -423,13 +553,24 @@ class AssemblyOpsHandler(BaseHandler):
             if not ref2_obj:
                 return f"Object not found: {ref2_object}"
 
-            comp_err = (self._require_component(ref1_obj, assembly)
-                        or self._require_component(ref2_obj, assembly))
+            comp_err = (self._require_component(ref1_obj, assembly,
+                                                 exempt_types=("App::LocalCoordinateSystem",))
+                        or self._require_component(ref2_obj, assembly,
+                                                    exempt_types=("App::LocalCoordinateSystem",)))
             if comp_err:
                 return comp_err
 
+            # ref{1,2}_vertex validated too, not just ref{1,2}_element --
+            # an explicit out-of-range vertex disambiguator used to pass
+            # through unvalidated to setJointConnectors, reintroducing for
+            # vertices the exact bug _validate_element exists to prevent
+            # for elements (finding #07). When ref{1,2}_vertex defaults to
+            # ref{1,2}_element (the common case), this re-checks the same
+            # value -- harmless.
             elem_err = (self._validate_element(ref1_obj, ref1_element)
-                        or self._validate_element(ref2_obj, ref2_element))
+                        or self._validate_element(ref2_obj, ref2_element)
+                        or self._validate_element(ref1_obj, ref1_vertex)
+                        or self._validate_element(ref2_obj, ref2_vertex))
             if elem_err:
                 return elem_err
 
@@ -590,9 +731,15 @@ class AssemblyOpsHandler(BaseHandler):
         Args:
             assembly_name: Assembly to inspect (default: first
                 Assembly::AssemblyObject in the active document)
+            limit: Maximum number of joints to return (default 100, max 500)
+            offset: Number of joints to skip (for pagination)
         """
         try:
             assembly_name = args.get('assembly_name', '')
+            raw_limit = args.get('limit', 100)
+            limit = max(0, min(int(100 if raw_limit is None else raw_limit), 500))
+            raw_offset = args.get('offset', 0)
+            offset = max(0, int(0 if raw_offset is None else raw_offset))
 
             doc = self.get_document()
             if not doc:
@@ -603,23 +750,84 @@ class AssemblyOpsHandler(BaseHandler):
                 return err
 
             joints = list(getattr(assembly, 'Joints', []) or [])
+            total = len(joints)
             if not joints:
                 return f"Assembly '{assembly.Name}' has no joints."
 
-            lines = [f"Joints of {assembly.Name} ({len(joints)} total):"]
-            for j in joints:
-                # GroundedJoint objects have no JointType -- describe them
-                # distinctly rather than let getattr('JointType', '?') print
-                # a misleading '?' for what's actually a grounding, not a
-                # regular joint.
-                if hasattr(j, 'ObjectToGround'):
-                    target = getattr(j.ObjectToGround, 'Name', '?')
-                    lines.append(f"  {j.Name} (Grounded): {target}")
-                    continue
-                jtype = getattr(j, 'JointType', '?')
-                r1 = self._describe_reference(getattr(j, 'Reference1', None))
-                r2 = self._describe_reference(getattr(j, 'Reference2', None))
-                lines.append(f"  {j.Name} ({jtype}): {r1} <-> {r2}")
+            page = joints[offset:offset + limit]
+
+            header = f"Joints of {assembly.Name} ({total} total"
+            if page and (offset or total > len(page)):
+                header += f", showing {offset + 1}-{offset + len(page)}"
+            header += "):"
+            lines = [header]
+
+            # Per-joint, not one outer except for the whole loop -- a
+            # single malformed/dangling joint used to drop the entire list
+            # (finding #22). FreeCAD's own joint machinery is documented
+            # elsewhere in this file (_validate_element) to silently accept
+            # dangling references, so a joint that fails to introspect here
+            # is a real, not hypothetical, case.
+            skipped_errors = 0
+            for j in page:
+                try:
+                    # GroundedJoint objects have no JointType -- describe them
+                    # distinctly rather than let getattr('JointType', '?') print
+                    # a misleading '?' for what's actually a grounding, not a
+                    # regular joint.
+                    if hasattr(j, 'ObjectToGround'):
+                        target = getattr(j.ObjectToGround, 'Name', '?')
+                        lines.append(f"  {j.Name} (Grounded): {target}")
+                        continue
+                    jtype = getattr(j, 'JointType', '?')
+                    r1 = self._describe_reference(getattr(j, 'Reference1', None))
+                    r2 = self._describe_reference(getattr(j, 'Reference2', None))
+
+                    # Extra state sibling operations (create_joint,
+                    # set_joint_offset, set_joint_limits) set but this
+                    # listing never used to surface (finding #23). Gated on
+                    # jtype for Distance/Distance2/Angle per create_joint's
+                    # own documented semantics, not shown unconditionally --
+                    # these are real numeric properties on every joint type,
+                    # so an unconditional display would show a meaningless
+                    # default for joint types that don't use them.
+                    extras = []
+                    if jtype in _DISTANCE_JOINT_TYPES:
+                        extras.append(f"Distance={getattr(j, 'Distance', '?')}")
+                    if jtype in _DISTANCE2_JOINT_TYPES:
+                        extras.append(f"Distance2={getattr(j, 'Distance2', '?')}")
+                    if jtype in _ANGLE_JOINT_TYPES:
+                        extras.append(f"Angle={getattr(j, 'Angle', '?')}")
+                    # `is True`, not truthy -- these are real FreeCAD bool
+                    # properties defaulting to False; only report them when
+                    # actually set.
+                    for connector in (1, 2):
+                        if getattr(j, f'Detach{connector}', False) is True:
+                            extras.append(f"Detach{connector}=True")
+                    limit_parts = []
+                    for enable_attr, value_attr, label in (
+                        ('EnableLengthMin', 'LengthMin', 'LengthMin'),
+                        ('EnableLengthMax', 'LengthMax', 'LengthMax'),
+                        ('EnableAngleMin', 'AngleMin', 'AngleMin'),
+                        ('EnableAngleMax', 'AngleMax', 'AngleMax'),
+                    ):
+                        if getattr(j, enable_attr, False) is True:
+                            limit_parts.append(f"{label}={getattr(j, value_attr, '?')}")
+                    if limit_parts:
+                        extras.append("limits[" + ", ".join(limit_parts) + "]")
+                    extras_str = f" {{{', '.join(extras)}}}" if extras else ""
+
+                    lines.append(f"  {j.Name} ({jtype}): {r1} <-> {r2}{extras_str}")
+                except Exception as e:
+                    skipped_errors += 1
+                    lines.append(f"  <error introspecting joint: {e}>")
+
+            if limit > 0 and offset + len(page) < total:
+                lines.append(f"  ... {total - offset - len(page)} more "
+                              f"(offset={offset + limit} to continue)")
+            if skipped_errors:
+                lines.append(f"  ({skipped_errors} joint(s) failed to introspect)")
+
             return "\n".join(lines)
 
         except Exception as e:
@@ -686,7 +894,35 @@ class AssemblyOpsHandler(BaseHandler):
             grounded = bool(assembly.isPartGrounded(obj))
             connected = bool(assembly.isPartConnected(obj))
 
-            return (f"{object_name}: grounded={grounded}, connected_to_ground={connected}")
+            # Placement and related joints -- get_part_status used to report
+            # only the two booleans, with no way to see where the part
+            # actually ended up or which joints/grounding reference it
+            # (finding #24).
+            placement_str = ""
+            try:
+                base = obj.Placement.Base
+                placement_str = f", placement=({base.x:.2f},{base.y:.2f},{base.z:.2f})"
+            except Exception:
+                pass
+
+            related = []
+            for j in (getattr(assembly, 'Joints', []) or []):
+                try:
+                    if hasattr(j, 'ObjectToGround'):
+                        if getattr(j.ObjectToGround, 'Name', None) == obj.Name:
+                            related.append(f"{j.Name} (grounding)")
+                        continue
+                    for ref_attr in ('Reference1', 'Reference2'):
+                        ref = getattr(j, ref_attr, None)
+                        if ref and getattr(ref[0], 'Name', None) == obj.Name:
+                            related.append(j.Name)
+                            break
+                except Exception:
+                    continue
+            joints_str = f", joints=[{', '.join(related)}]" if related else ""
+
+            return (f"{object_name}: grounded={grounded}, connected_to_ground={connected}"
+                    f"{placement_str}{joints_str}")
 
         except Exception as e:
             return f"Error getting part status: {e}"
@@ -765,8 +1001,12 @@ class AssemblyOpsHandler(BaseHandler):
 
         Args:
             joint_name: Name of the joint to modify
-            length_min, length_max: Length limits in mm (Cylindrical/Slider)
-            angle_min, angle_max: Angle limits in degrees (Revolute/Cylindrical)
+            length_min, length_max: Length limits in mm (Cylindrical/Slider).
+                Rejected if the resulting min would exceed the resulting max
+                (checked against whichever of min/max isn't being changed
+                this call, if it's already enabled on the joint).
+            angle_min, angle_max: Angle limits in degrees (Revolute/Cylindrical).
+                Same min<=max validation as length.
         """
         try:
             joint_name = args.get('joint_name', '')
@@ -782,6 +1022,30 @@ class AssemblyOpsHandler(BaseHandler):
             joint, err = self._resolve_joint(joint_name, doc)
             if err:
                 return err
+
+            # Validate BEFORE applying anything -- an inverted range used to
+            # be accepted silently (finding #19). `new if new is not None
+            # else (existing if already enabled)` so a call that only
+            # supplies one side is checked against the other side's current
+            # value, not just against itself.
+            def _effective(new_value, enable_attr, value_attr):
+                if new_value is not None:
+                    return new_value
+                if getattr(joint, enable_attr, False) is True:
+                    return getattr(joint, value_attr, None)
+                return None
+
+            eff_length_min = _effective(length_min, 'EnableLengthMin', 'LengthMin')
+            eff_length_max = _effective(length_max, 'EnableLengthMax', 'LengthMax')
+            if eff_length_min is not None and eff_length_max is not None and eff_length_min > eff_length_max:
+                return (f"Invalid limits: length_min ({eff_length_min}) would exceed "
+                        f"length_max ({eff_length_max})")
+
+            eff_angle_min = _effective(angle_min, 'EnableAngleMin', 'AngleMin')
+            eff_angle_max = _effective(angle_max, 'EnableAngleMax', 'AngleMax')
+            if eff_angle_min is not None and eff_angle_max is not None and eff_angle_min > eff_angle_max:
+                return (f"Invalid limits: angle_min ({eff_angle_min}) would exceed "
+                        f"angle_max ({eff_angle_max})")
 
             applied = []
             if length_min is not None:
