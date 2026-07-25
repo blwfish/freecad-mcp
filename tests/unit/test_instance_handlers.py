@@ -364,6 +364,62 @@ class TestSpawnInstance:
         assert result["socket_path"] == "/tmp/my_custom.sock"
 
 
+class TestSpawnLaunchCmdConstruction:
+    """Regression test for the headless launch_cmd command line.
+
+    2026-07-24: production built launch_cmd as
+    ``[freecad_bin, headless_script, "--socket-path", sock_path]``. Some
+    FreeCADCmd builds (e.g. the local FC-clone release build, matching the
+    AppImage case tests/integration/conftest.py already worked around)
+    reject unrecognized CLI flags outright and exit 1 with their own
+    --help text before headless_server.py ever runs -- spawn_freecad_instance
+    was completely broken against those builds. The socket path must be
+    passed via the FREECAD_MCP_SOCKET env var only, which headless_server.py
+    already reads as a fallback when no --socket-path arg is present.
+
+    This is a static-analysis test (grep on source), following the same
+    pattern as test_dispatch_completeness.py, because the handler lives
+    inside a decorator-wrapped closure in main() and isn't independently
+    callable -- TestSpawnInstance above works around that by reimplementing
+    the poll-loop logic, which is exactly why it never exercised the real
+    launch_cmd construction and didn't catch this bug.
+    """
+
+    def _server_source(self):
+        with open(BRIDGE_PATH, "r", encoding="utf-8") as f:
+            return f.read()
+
+    def test_headless_launch_cmd_does_not_pass_socket_path_flag(self):
+        src = self._server_source()
+        assert '"--socket-path"' not in src, (
+            "launch_cmd must not pass --socket-path on argv -- some "
+            "FreeCADCmd builds reject unrecognized CLI flags before "
+            "headless_server.py can parse them; use the FREECAD_MCP_SOCKET "
+            "env var instead (see tests/integration/conftest.py)"
+        )
+
+    def test_headless_launch_cmd_is_binary_and_script_only(self):
+        src = self._server_source()
+        import re
+        m = re.search(r'launch_cmd = \[freecad_bin, headless_script\]', src)
+        assert m, "expected launch_cmd = [freecad_bin, headless_script] with no extra argv"
+
+    def test_env_sets_freecad_mcp_socket_unconditionally(self):
+        src = self._server_source()
+        assert 'env["FREECAD_MCP_SOCKET"] = sock_path' in src
+
+    def test_headless_server_reads_env_var_as_fallback(self):
+        """Companion check on the consumer side: headless_server.py must
+        still read FREECAD_MCP_SOCKET when no --socket-path arg is given,
+        since that's now the only way the socket path is communicated."""
+        headless_path = os.path.join(
+            os.path.dirname(BRIDGE_PATH), "AICopilot", "headless_server.py"
+        )
+        with open(headless_path, "r", encoding="utf-8") as f:
+            headless_src = f.read()
+        assert 'os.environ.get("FREECAD_MCP_SOCKET")' in headless_src
+
+
 # ---------------------------------------------------------------------------
 # stop_freecad_instance
 # ---------------------------------------------------------------------------

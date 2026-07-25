@@ -2590,7 +2590,11 @@ async def main():
                             )
                         })
                     )]
-                launch_cmd = [freecad_bin, headless_script, "--socket-path", sock_path]
+                # Socket path is passed via FREECAD_MCP_SOCKET env var only (set
+                # below) -- some FreeCADCmd builds (e.g. AppImage, local release
+                # builds) reject unrecognized CLI flags outright before
+                # headless_server.py ever gets a chance to parse argv.
+                launch_cmd = [freecad_bin, headless_script]
 
             env = os.environ.copy()
             env["FREECAD_MCP_SOCKET"] = sock_path
