@@ -454,8 +454,12 @@ class TestCreateJoint(unittest.TestCase):
         self.handler = make_handler(AssemblyOpsHandler)
 
     def _setup(self, doc_objects=None):
+        """doc_objects are added to the document AND to assembly.Group --
+        i.e. they're already-added components (as if add_component had run),
+        which is what create_joint now requires of both ref objects."""
         assembly = make_assembly("Asm")
         doc = make_mock_doc([assembly] + (doc_objects or []))
+        assembly.Group.extend(doc_objects or [])
         mock_FreeCAD.ActiveDocument = doc
         joint_group = _make_joint_group()
         mock_UtilsAssembly.getJointGroup = MagicMock(return_value=joint_group)
@@ -503,6 +507,32 @@ class TestCreateJoint(unittest.TestCase):
             "joint_type": "Fixed", "ref1_object": "A", "ref2_object": "Ghost",
         })
         assert_error_contains(self, result, "not found", "Ghost")
+
+    def test_ref_not_a_component_rejected(self):
+        """FreeCAD's own solve-status checks and solver only recognize
+        actual assembly components -- confirmed live 2026-07-24 that
+        jointing a bare document-root object used to silently succeed while
+        producing a state get_part_status couldn't see. Reject it up front
+        instead: box_a exists in the document but was never added to
+        assembly.Group (i.e. never add_component'd)."""
+        box_a = make_box_object("A")
+        box_b = make_box_object("B")
+        doc = make_mock_doc([box_a, box_b])
+        assembly = make_assembly("Asm")
+        # Only box_b is a component -- box_a is a bare document object.
+        assembly.Group.append(box_b)
+        doc.Objects.append(assembly)
+        mock_FreeCAD.ActiveDocument = doc
+        joint_group = _make_joint_group()
+        mock_UtilsAssembly.getJointGroup = MagicMock(return_value=joint_group)
+        mock_JointObject.Joint = MagicMock()
+
+        result = self.handler.create_joint({
+            "joint_type": "Fixed", "ref1_object": "A", "ref2_object": "B",
+        })
+
+        assert_error_contains(self, result, "A", "not a component", "add_component")
+        joint_group.newObject.assert_not_called()
 
     def test_invalid_ref1_element_rejected_before_creating_anything(self):
         """FreeCAD's own joint machinery does NOT validate element names --
@@ -653,8 +683,12 @@ class TestGroundPart(unittest.TestCase):
         self.handler = make_handler(AssemblyOpsHandler)
 
     def _setup(self, doc_objects=None):
+        """doc_objects are added to the document AND to assembly.Group --
+        i.e. they're already-added components, which ground_part now
+        requires of its target."""
         assembly = make_assembly("Asm")
         doc = make_mock_doc([assembly] + (doc_objects or []))
+        assembly.Group.extend(doc_objects or [])
         mock_FreeCAD.ActiveDocument = doc
         joint_group = _make_joint_group()
         mock_UtilsAssembly.getJointGroup = MagicMock(return_value=joint_group)
@@ -682,6 +716,22 @@ class TestGroundPart(unittest.TestCase):
         mock_FreeCAD.ActiveDocument = doc
         result = self.handler.ground_part({"object_name": "Box"})
         assert_error_contains(self, result, "No Assembly::AssemblyObject found")
+
+    def test_object_not_a_component_rejected(self):
+        """Grounding a bare document-root object (never add_component'd)
+        used to silently succeed while producing a state get_part_status
+        couldn't see -- confirmed live 2026-07-24. Now rejected up front."""
+        box = make_box_object("Box")
+        assembly = make_assembly("Asm")  # empty Group -- box was never added
+        doc = make_mock_doc([box, assembly])
+        mock_FreeCAD.ActiveDocument = doc
+        joint_group = _make_joint_group()
+        mock_UtilsAssembly.getJointGroup = MagicMock(return_value=joint_group)
+
+        result = self.handler.ground_part({"object_name": "Box"})
+
+        assert_error_contains(self, result, "Box", "not a component", "add_component")
+        joint_group.newObject.assert_not_called()
 
     def test_grounds_successfully_with_default_name(self):
         box = make_box_object("Box")
@@ -942,6 +992,42 @@ class TestValidateElement(unittest.TestCase):
         self.assertIsNone(self.handler._validate_element(obj, "Face1"))
 
 
+class TestRequireComponent(unittest.TestCase):
+    """Direct coverage of the helper backing create_joint/ground_part/
+    get_part_status's 'must be an assembly component' rejection."""
+
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(AssemblyOpsHandler)
+
+    def test_object_in_group_accepted(self):
+        obj = make_box_object("Box")
+        assembly = make_assembly("Asm", group=[obj])
+        self.assertIsNone(self.handler._require_component(obj, assembly))
+
+    def test_object_not_in_group_rejected(self):
+        obj = make_box_object("Box")
+        assembly = make_assembly("Asm")  # empty Group
+        result = self.handler._require_component(obj, assembly)
+        assert_error_contains(self, result, "Box", "Asm", "not a component", "add_component")
+
+    def test_object_in_group_alongside_others_accepted(self):
+        obj = make_box_object("Box")
+        other = make_box_object("Other")
+        assembly = make_assembly("Asm", group=[other, obj])
+        self.assertIsNone(self.handler._require_component(obj, assembly))
+
+    def test_different_object_same_name_not_matched_by_identity(self):
+        """Membership is by object identity, not by Name string -- a
+        same-named but distinct object must not be mistaken for the real
+        component."""
+        obj = make_box_object("Box")
+        lookalike = make_box_object("Box")
+        assembly = make_assembly("Asm", group=[lookalike])
+        result = self.handler._require_component(obj, assembly)
+        assert_error_contains(self, result, "not a component")
+
+
 class TestDescribeReference(unittest.TestCase):
     """Direct coverage of the static helper's edge cases."""
 
@@ -999,9 +1085,24 @@ class TestGetPartStatus(unittest.TestCase):
         result = self.handler.get_part_status({"object_name": "Box"})
         assert_error_contains(self, result, "No Assembly::AssemblyObject found")
 
+    def test_object_not_a_component_rejected(self):
+        """Querying status on a bare document-root object (never
+        add_component'd) used to silently return a plausible-looking but
+        meaningless grounded=False/connected=False -- confirmed live
+        2026-07-24 that isPartGrounded returns False regardless of the
+        object's real state when it isn't a component. Now rejected."""
+        box = make_box_object("Box")
+        assembly = make_assembly("Asm")  # empty Group -- box never added
+        doc = make_mock_doc([box, assembly])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.get_part_status({"object_name": "Box"})
+
+        assert_error_contains(self, result, "Box", "not a component", "add_component")
+
     def test_reports_grounded_and_connected(self):
         box = make_box_object("Box")
-        assembly = make_assembly("Asm")
+        assembly = make_assembly("Asm", group=[box])
         assembly.isPartGrounded = MagicMock(return_value=True)
         assembly.isPartConnected = MagicMock(return_value=True)
         doc = make_mock_doc([box, assembly])
@@ -1015,7 +1116,7 @@ class TestGetPartStatus(unittest.TestCase):
 
     def test_reports_neither_grounded_nor_connected(self):
         box = make_box_object("Box")
-        assembly = make_assembly("Asm")
+        assembly = make_assembly("Asm", group=[box])
         assembly.isPartGrounded = MagicMock(return_value=False)
         assembly.isPartConnected = MagicMock(return_value=False)
         doc = make_mock_doc([box, assembly])
@@ -1030,7 +1131,7 @@ class TestGetPartStatus(unittest.TestCase):
         grounded -- the two flags are independent, not one implying the
         other."""
         box = make_box_object("Box")
-        assembly = make_assembly("Asm")
+        assembly = make_assembly("Asm", group=[box])
         assembly.isPartGrounded = MagicMock(return_value=False)
         assembly.isPartConnected = MagicMock(return_value=True)
         doc = make_mock_doc([box, assembly])

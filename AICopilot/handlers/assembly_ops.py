@@ -294,6 +294,29 @@ class AssemblyOpsHandler(BaseHandler):
                            "Create one first with create_assembly.")
         return assembly, None
 
+    def _require_component(self, obj, assembly) -> "Optional[str]":
+        """Return an error string if obj is not a direct component of
+        assembly (i.e. not in assembly.Group), else None.
+
+        FreeCAD's own solve-status queries (isPartGrounded, isPartConnected)
+        and the solver itself only recognize objects that are actual
+        assembly components. Confirmed live 2026-07-24: grounding or
+        jointing a bare document-root object previously succeeded with no
+        error, but silently produced a state get_part_status couldn't see
+        -- Placement genuinely read-only, a correctly-configured
+        GroundedJoint, yet isPartGrounded still reported False. Rejecting
+        non-components up front, before anything gets created, converts
+        that silent trap into an immediate, actionable error instead of a
+        misleading query result discovered later.
+        """
+        group = getattr(assembly, 'Group', []) or []
+        if obj in group:
+            return None
+        return (f"'{obj.Name}' is not a component of assembly '{assembly.Name}' "
+                f"(not in its Group). Add it first with add_component -- "
+                f"FreeCAD's own grounding/connectivity checks and solver "
+                f"only recognize actual assembly components.")
+
     # element name prefix -> Shape collection attribute. Single source of
     # truth for Face/Edge/Vertex dispatch (Syntactic-Semantic Seam Rule) --
     # both the "which collection to bound-check" and "is this a recognized
@@ -400,6 +423,11 @@ class AssemblyOpsHandler(BaseHandler):
             if not ref2_obj:
                 return f"Object not found: {ref2_object}"
 
+            comp_err = (self._require_component(ref1_obj, assembly)
+                        or self._require_component(ref2_obj, assembly))
+            if comp_err:
+                return comp_err
+
             elem_err = (self._validate_element(ref1_obj, ref1_element)
                         or self._validate_element(ref2_obj, ref2_element))
             if elem_err:
@@ -459,10 +487,12 @@ class AssemblyOpsHandler(BaseHandler):
         object) but redundant; not guarded against here since FreeCAD's own
         GUI doesn't prevent it either.
 
-        Works on any object regardless of whether it's an assembly
-        component, but get_part_status's isPartGrounded check will only
-        recognize the grounding if object_name was previously added via
-        add_component -- see get_part_status's docstring.
+        object_name must already be an assembly component (added via
+        add_component) -- FreeCAD's own isPartGrounded/isPartConnected and
+        the solver only recognize grounding on actual components. Grounding
+        a bare document-root object used to silently "succeed" while
+        producing a state those checks couldn't see; that's now rejected
+        up front instead.
 
         Args:
             object_name: Name (or Label) of the object to ground
@@ -489,6 +519,10 @@ class AssemblyOpsHandler(BaseHandler):
             assembly, err = self._resolve_assembly(assembly_name, doc)
             if err:
                 return err
+
+            comp_err = self._require_component(obj, assembly)
+            if comp_err:
+                return comp_err
 
             import UtilsAssembly
             import JointObject
@@ -612,17 +646,14 @@ class AssemblyOpsHandler(BaseHandler):
         without being grounded itself (e.g. jointed to a grounded part), or
         grounded without any other joints at all.
 
-        IMPORTANT, confirmed live 2026-07-24: both flags only recognize
-        objects that are actual components of the assembly -- added via
-        add_component (or created directly inside it, e.g.
-        assembly.newObject(...)). A bare document-root object that a joint
-        or ground_part merely *references* is accepted without error by
-        both of those operations, but get_part_status will silently report
-        grounded=False / connected_to_ground=False for it regardless of the
-        real Placement/GroundedJoint state -- the same "silent reasonable
-        behavior on ambiguous input" shape as the invalid-element bug this
-        project's rules flag. Always add_component an object before
-        grounding/jointing it if you plan to query its status afterward.
+        object_name must already be an assembly component (added via
+        add_component) -- FreeCAD's isPartGrounded/isPartConnected only
+        recognize actual components, so querying anything else is rejected
+        up front rather than returning a plausible-looking but meaningless
+        grounded=False/connected_to_ground=False. (ground_part and
+        create_joint enforce the same requirement on their own targets, so
+        this case should mainly come up when checking status on an object
+        that was never involved in the assembly at all.)
 
         Args:
             object_name: Name (or Label) of the part to check
@@ -647,6 +678,10 @@ class AssemblyOpsHandler(BaseHandler):
             assembly, err = self._resolve_assembly(assembly_name, doc)
             if err:
                 return err
+
+            comp_err = self._require_component(obj, assembly)
+            if comp_err:
+                return comp_err
 
             grounded = bool(assembly.isPartGrounded(obj))
             connected = bool(assembly.isPartConnected(obj))
