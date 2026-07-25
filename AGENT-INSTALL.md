@@ -60,8 +60,11 @@ The bridge depends on the `mcp` and `mcp-events` packages.
 
 ### Step 1: Clone the repo
 
+Install from `main` — it's the stable branch releases are cut from. `dev` is
+where active work happens and can be left inconsistent between commits.
+
 ```bash
-git clone https://github.com/blwfish/freecad-mcp.git
+git clone -b main https://github.com/blwfish/freecad-mcp.git
 ```
 
 Clone location: wherever repos live on this system. `~/freecad-mcp` is a safe default.
