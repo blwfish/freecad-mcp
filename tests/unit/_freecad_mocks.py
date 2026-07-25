@@ -653,6 +653,42 @@ def make_body(name="Body", tip=None, group=None):
     return obj
 
 
+def make_assembly(name="Assembly", group=None):
+    """Mock Assembly::AssemblyObject.
+
+    assembly.newObject(type_id, name) creates a fresh MagicMock link object
+    (Name/Label/TypeId/Placement/LinkedObject) and appends it to .Group, so
+    add_component tests can assert on both the return value and the group's
+    new contents. isDerivedFrom defaults to False (plain part) — tests
+    checking the Assembly::AssemblyLink branch must override it explicitly,
+    since a bare MagicMock().isDerivedFrom(...) is truthy by default and
+    would silently misclassify every linked object as a sub-assembly.
+    """
+    obj = MagicMock()
+    obj.Name = name
+    obj.Label = name
+    obj.TypeId = "Assembly::AssemblyObject"
+    obj.Type = "Assembly"
+    obj.Placement = _Placement()
+    obj.Group = list(group) if group else []
+    obj.isDerivedFrom = MagicMock(
+        side_effect=lambda t: t == "Assembly::AssemblyObject"
+    )
+
+    def _new_object(type_id, link_name=None):
+        link = MagicMock()
+        link.Name = link_name or f"{type_id}_auto"
+        link.Label = link.Name
+        link.TypeId = type_id
+        link.Placement = _Placement()
+        link.LinkedObject = None
+        obj.Group.append(link)
+        return link
+
+    obj.newObject = MagicMock(side_effect=_new_object)
+    return obj
+
+
 # ---------------------------------------------------------------------------
 # Handler factory
 # ---------------------------------------------------------------------------

@@ -1355,6 +1355,41 @@ async def main():
                     ),
                 ),
                 types.Tool(
+                    name="assembly_operations",
+                    description="Assembly workbench: create an Assembly::AssemblyObject container, create Local Coordinate System mating references, add components as lightweight links (same- or cross-document), list an assembly's components. No joints yet — see joint-related tools for a future phase.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "description": "Assembly operation to perform",
+                                "enum": [
+                                    "create_assembly", "create_lcs", "add_component", "list_components"
+                                ]
+                            },
+                            "name": {"type": "string", "description": "Name for the created assembly or LCS"},
+                            "assembly_name": {"type": "string", "description": "Target assembly (add_component, list_components). Default: first Assembly::AssemblyObject in the active document"},
+                            "container_name": {"type": "string", "description": "Object to nest a new LCS inside (create_lcs). Default: bare document object"},
+                            "map_mode": {"type": "string", "description": "Attachment mode for create_lcs, e.g. 'FlatFace', 'ObjectXY'"},
+                            "reference": {"type": "string", "description": "Face or edge reference for create_lcs attachment, e.g. 'Face1'"},
+                            "reference_object": {"type": "string", "description": "Object name containing the create_lcs reference"},
+                            "offset_x": {"type": "number", "description": "X offset from attached position (mm)", "default": 0},
+                            "offset_y": {"type": "number", "description": "Y offset from attached position (mm)", "default": 0},
+                            "offset_z": {"type": "number", "description": "Z offset / normal direction (mm)", "default": 0},
+                            "object_name": {"type": "string", "description": "Object to link into the assembly (add_component)"},
+                            "source_doc": {"type": "string", "description": "Another already-open document to pull object_name from (add_component). Must already be open, AND both it and the active document must already be saved to disk (FreeCAD's cross-document links require a file path on both ends) — FreeCAD does not auto-reopen documents."},
+                            "x": {"type": "number", "description": "Initial X placement offset (mm, add_component)", "default": 0},
+                            "y": {"type": "number", "description": "Initial Y placement offset (mm, add_component)", "default": 0},
+                            "z": {"type": "number", "description": "Initial Z placement offset (mm, add_component)", "default": 0},
+                        },
+                        "required": ["operation"]
+                    },
+                    annotations=types.ToolAnnotations(
+                        readOnlyHint=False,
+                        destructiveHint=True,
+                    ),
+                ),
+                types.Tool(
                     name="measurement_operations",
                     description="Inspect object geometry: face normals/centroids, bounding boxes, volume, surface area, center of mass, element counts",
                     inputSchema={
@@ -2271,6 +2306,7 @@ async def main():
         elif name in ["partdesign_operations", "sketch_operations", "part_operations",
                       "view_control", "cam_operations", "cam_tools", "cam_tool_controllers",
                       "cam_machines", "mesh_operations", "measurement_operations",
+                      "assembly_operations",
                       "spatial_query", "geometric_verification", "fixture_operations",
                       "run_inspector", "get_last_traceback",
                       "spreadsheet_operations", "draft_operations", "get_debug_logs",

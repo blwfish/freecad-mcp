@@ -446,6 +446,53 @@ class TestFindBody:
 
 
 # ---------------------------------------------------------------------------
+# find_assembly
+# ---------------------------------------------------------------------------
+
+class TestFindAssembly:
+    def _make_doc_with_objects(self, objects, mock_freecad):
+        doc = MagicMock()
+        doc.Objects = objects
+        mock_freecad.ActiveDocument = doc
+        return doc
+
+    def test_find_assembly(self, base_handler, mock_freecad):
+        assembly = MagicMock()
+        assembly.TypeId = "Assembly::AssemblyObject"
+        other = MagicMock()
+        other.TypeId = "Part::Box"
+        doc = self._make_doc_with_objects([other, assembly], mock_freecad)
+        assert base_handler.find_assembly(doc) is assembly
+
+    def test_find_assembly_none(self, base_handler, mock_freecad):
+        other = MagicMock()
+        other.TypeId = "Part::Box"
+        doc = self._make_doc_with_objects([other], mock_freecad)
+        assert base_handler.find_assembly(doc) is None
+
+    def test_find_assembly_uses_active_doc(self, base_handler, mock_freecad):
+        assembly = MagicMock()
+        assembly.TypeId = "Assembly::AssemblyObject"
+        self._make_doc_with_objects([assembly], mock_freecad)
+        assert base_handler.find_assembly() is assembly
+
+    def test_find_assembly_no_doc(self, base_handler, mock_freecad):
+        mock_freecad.ActiveDocument = None
+        assert base_handler.find_assembly() is None
+
+    def test_find_assembly_returns_first_when_multiple(self, base_handler, mock_freecad):
+        """Pinning behavior: with more than one assembly in the document,
+        the first one found wins (same 'grab first' convention as find_body —
+        no error, no disambiguation)."""
+        first = MagicMock()
+        first.TypeId = "Assembly::AssemblyObject"
+        second = MagicMock()
+        second.TypeId = "Assembly::AssemblyObject"
+        doc = self._make_doc_with_objects([first, second], mock_freecad)
+        assert base_handler.find_assembly(doc) is first
+
+
+# ---------------------------------------------------------------------------
 # create_body_if_needed
 # ---------------------------------------------------------------------------
 

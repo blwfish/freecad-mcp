@@ -26,6 +26,7 @@ from .verification_ops import VerificationOpsHandler
 from .fixture_ops import FixtureOpsHandler
 from .diagnostics_ops import DiagnosticsOpsHandler
 from .execute_python_ops import ExecutePythonOpsHandler
+from .assembly_ops import AssemblyOpsHandler
 
 __all__ = [
     'BaseHandler',
@@ -53,4 +54,5 @@ __all__ = [
     'FixtureOpsHandler',
     'DiagnosticsOpsHandler',
     'ExecutePythonOpsHandler',
+    'AssemblyOpsHandler',
 ]

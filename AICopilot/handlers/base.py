@@ -298,6 +298,24 @@ class BaseHandler:
                 return body
         return None
 
+    def find_assembly(self, doc: FreeCAD.Document = None):
+        """Find an Assembly::AssemblyObject in the document.
+
+        Args:
+            doc: Document to search (uses active document if not specified)
+
+        Returns:
+            First Assembly::AssemblyObject found, or None
+        """
+        if doc is None:
+            doc = FreeCAD.ActiveDocument
+        if doc is None:
+            return None
+        for obj in doc.Objects:
+            if obj.TypeId == "Assembly::AssemblyObject":
+                return obj
+        return None
+
     # -----------------------------------------------------------------
     # Sketch wire diagnosis helpers
     # -----------------------------------------------------------------

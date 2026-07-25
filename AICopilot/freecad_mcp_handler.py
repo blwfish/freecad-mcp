@@ -181,6 +181,7 @@ try:
         FixtureOpsHandler,
         DiagnosticsOpsHandler,
         ExecutePythonOpsHandler,
+        AssemblyOpsHandler,
     )
     FreeCAD.Console.PrintMessage("Modular handlers loaded successfully\n")
 except ImportError as e:
@@ -339,6 +340,7 @@ class FreeCADSocketServer:
             'fixture_ops': FixtureOpsHandler,
             'diagnostics_ops': DiagnosticsOpsHandler,
             'execute_python_ops': ExecutePythonOpsHandler,
+            'assembly_ops': AssemblyOpsHandler,
             # GUI-sensitive handlers get the task queues for thread safety
             'view_ops': ViewOpsHandler,
             'document_ops': DocumentOpsHandler,
@@ -1107,6 +1109,7 @@ class FreeCADSocketServer:
             "api_introspection": self.introspection_ops,
             "geometric_verification": self.verification_ops,
             "fixture_operations": self.fixture_ops,
+            "assembly_operations": self.assembly_ops,
         }
 
         # run_inspector is a direct-dispatch tool (no 'operation' sub-field)
@@ -1531,6 +1534,7 @@ class FreeCADSocketServer:
                 'handlers.fixture_ops',
                 'handlers.diagnostics_ops',
                 'handlers.execute_python_ops',
+                'handlers.assembly_ops',
             ]
             for mod_name in handler_modules:
                 mod = sys.modules.get(mod_name)
@@ -1568,6 +1572,7 @@ class FreeCADSocketServer:
                 FixtureOpsHandler,
                 DiagnosticsOpsHandler,
                 ExecutePythonOpsHandler,
+                AssemblyOpsHandler,
             )
 
             # _checkpoints (DocumentOpsHandler), _clip_planes (ViewOpsHandler),
@@ -1620,6 +1625,7 @@ class FreeCADSocketServer:
                 'fixture_ops': FixtureOpsHandler,
                 'diagnostics_ops': DiagnosticsOpsHandler,
                 'execute_python_ops': ExecutePythonOpsHandler,
+                'assembly_ops': AssemblyOpsHandler,
                 'view_ops': ViewOpsHandler,
                 'document_ops': DocumentOpsHandler,
             })
