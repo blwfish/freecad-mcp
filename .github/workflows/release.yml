@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write  # mcp-publisher's github-oidc login -- no stored secret needed
 
 jobs:
   release:
@@ -31,6 +32,25 @@ jobs:
         with:
           body_path: RELEASE_NOTES.md
           tag_name: ${{ github.ref_name }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Publish to MCP Registry
+        run: |
+          # Pinned (not @latest) so a breaking mcp-publisher release can't
+          # silently change CI behavior -- bump deliberately, matching
+          # whatever version is in local use (see project_registry_
+          # distribution.md memory / `mcp-publisher --version` locally).
+          # `go install`'s cmd/publisher package produces a binary named
+          # "publisher", not "mcp-publisher" -- full path, not relying on
+          # actions/setup-go's PATH export, to keep this self-contained.
+          go install github.com/modelcontextprotocol/registry/cmd/publisher@v1.7.9
+          PUBLISHER="$(go env GOPATH)/bin/publisher"
+          "$PUBLISHER" login github-oidc
+          "$PUBLISHER" publish
 
       - name: Notify on failure
         if: failure()
