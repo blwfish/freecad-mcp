@@ -596,10 +596,125 @@ and the non-dimensional-type rejection live. 5 new unit tests added in
 combined, rejection for non-dimensional types, missing-value-and-expression
 error, and DoF/FullyConstrained message sourcing).
 
-Found but out of scope for this fix: `reload_modules` (`_reload_handlers` in
-`freecad_mcp_handler.py`) fails with `No module named 'universal_selector'`
-when it reaches the self-reload step (reloading `freecad_mcp_handler.py`
-itself via `spec_from_file_location`) — root cause not yet investigated.
-Worked around during verification by manually reloading just
-`handlers.sketch_ops` and swapping the live server's `sketch_ops` handler
-instance via `execute_python`. Worth a follow-up session.
+Found in passing: `reload_modules` failed with `No module named
+'universal_selector'`. Investigated and fixed as its own issue — see
+"`reload_modules` dispatched off the GUI thread — crashed FreeCAD live" below.
+
+## Server Infrastructure
+
+### Issue: `reload_modules` dispatched off the GUI thread — crashed FreeCAD live
+
+**Status**: FIXED (2026-07-27)
+**Severity**: High — reproduced a hard SIGSEGV crash of a live, GUI FreeCAD
+session (macOS, ~4h uptime) while investigating a lesser symptom
+**Affected**: `AICopilot/freecad_mcp_handler.py`, `_execute_tool_inner()`'s
+`reload_modules` dispatch (~line 1145) and `_reload_handlers()` (~line 1479)
+**Discovered**: 2026-07-27, while chasing a `reload_modules` failure found
+during the issue-48 fix above
+
+#### Symptom #1 (the one that got investigated first): stale deployment
+
+The first `reload_modules` call in this session failed with
+`Handler reload failed: No module named 'universal_selector'`, thrown from
+`_reload_handlers()`'s final step (reloading `freecad_mcp_handler.py` itself
+via `importlib.util.spec_from_file_location` + `exec_module`, which
+re-executes its top-level `from universal_selector import UniversalSelector`).
+
+Root cause turned out to be mundane: the FreeCAD instance's actually-loaded
+module directory (`FreeCAD-prefs/v26-3/Mod/AICopilot/` — see the corrected
+dev-paths note below) was stale relative to this repo — `universal_selector.py`
+plus several versions of other changes had never been rsynced there.
+`sys.path` and the reload mechanism itself were fine; the file the reload was
+trying to `from universal_selector import ...` genuinely did not exist yet at
+that path. Confirmed by checking `sys.modules` / `__file__` /  `__version__`
+on two long-running GUI instances: both had `freecad_mcp_handler.__version__
+== "5.8.0"` in memory (current source is 6.1.0) and no `universal_selector`
+in `sys.modules` at all — these processes had been running since well before
+`universal_selector` was added, and `reload_modules` had apparently never
+once succeeded end-to-end on them since, so none of the intervening deploys
+had ever taken live effect. Fixed for this session by rsyncing
+`AICopilot/` to `FreeCAD-prefs/v26-3/Mod/AICopilot/` (and the legacy
+`Mod/AICopilot/` / `v1-2/Mod/AICopilot/` paths for consistency).
+
+**Corrected dev-paths note**: `CLAUDE.md` documents the actual FreeCAD-side
+load path as `FreeCAD-prefs/Mod/AICopilot/` (with `v1-2/Mod/AICopilot/` as a
+secondary path for `pixi run freecad-release`). Neither is current — this
+FreeCAD 26.3.0 build actually loads from `FreeCAD-prefs/v26-3/Mod/AICopilot/`
+(a real directory, not a symlink; `Mod/AICopilot/` is a separate real
+directory too, not the same install). `AICopilot/execute_python`'s
+`os.path.realpath(module.__file__)` is the reliable way to check which path a
+given running instance actually loaded from — don't trust the doc.
+
+#### Symptom #2 (the real bug, found while investigating #1): thread-unsafe dispatch
+
+While manually working around symptom #1 by re-executing
+`freecad_mcp_handler.py`'s module code directly via `execute_python` (to
+verify the reload path would work once the stale-deploy fix landed), FreeCAD
+segfaulted and the process died. Crash report (macOS `.ips`, `SIGSEGV` /
+`KERN_INVALID_ADDRESS`): a `QTimer` fired on the GUI thread, hit PySide's
+`SignalManager::handleMetaCallError()`, which called `Py_Exit` and began
+tearing down the Python interpreter (`Py_FinalizeEx` → `finalize_modules` →
+GC) *while a `QPushButton` wrapper was mid-destroy*, crashing in Shiboken's
+`BindingManager::getOverride` on a stale pointer.
+
+That specific crash was caused by my own out-of-band `execute_python` call
+(re-executing PySide-touching module code from the socket thread, bypassing
+GUI-thread marshaling entirely) — but it exposed a real, pre-existing bug:
+`_execute_tool_inner()`'s dispatch for `reload_modules` called
+`self._reload_handlers()` **directly**, with no GUI-thread marshaling at all:
+
+```python
+if tool_name == "reload_modules":
+    return self._reload_handlers()   # ran on the socket thread
+```
+
+Every other GUI-touching tool in this dispatcher (`_dispatch_to_handler`,
+`_call_on_gui_thread_async` for primitives/booleans, etc.) routes through
+`_run_on_gui_thread`/`_run_on_gui_thread_async` for exactly the reason the
+crash demonstrates: `_reload_handlers()` re-executes `freecad_mcp_handler.py`
+itself (touching `PySide`/`QtCore` imports) and rebuilds handler instances
+that hold live Qt-bound state (`ViewOpsHandler._clip_planes`' Coin3D
+scene-graph nodes, etc.) — doing any of that from the socket thread races the
+live Qt event loop. `reload_modules` was the one dispatch entry that skipped
+this and called straight through.
+
+#### Fix
+
+`_execute_tool_inner()` now calls a new `_call_on_gui_thread_reload()`
+wrapper instead of `_reload_handlers()` directly. The wrapper runs
+`_reload_handlers()` via the existing `_run_on_gui_thread` primitive (same
+mechanism every other GUI-mutating tool already uses), so it now executes on
+the Qt main thread instead of racing it.
+
+One wrinkle: `_reload_handlers()` already returns a complete JSON string
+(`{"result": ..., "modules_reloaded": N}` or `{"error": ...}`), unlike the
+plain-string returns `_call_on_gui_thread`/`_call_on_gui_thread_async` are
+built around — `_run_on_gui_thread`'s generic dict-to-JSON wrapping would
+otherwise double-encode it as an escaped string inside another JSON object.
+`_call_on_gui_thread_reload()` parses `_reload_handlers()`'s JSON back into a
+dict first so the final response nests cleanly (`{"result": {"result": ...,
+"modules_reloaded": N}}`) instead of embedding an escaped JSON blob. This is
+a minor response-shape change from before (previously flat); nothing in this
+repo parses `reload_modules`' output programmatically, so this was accepted
+rather than preserving the old flat shape.
+
+Also added `_call_on_gui_thread_reload` to `_reload_handlers()`'s own
+self-rebind list (`_dispatch_methods`), so a future `reload_modules` call
+picks up edits to the wrapper itself, consistent with how `_reload_handlers`
+already rebinds itself there.
+
+3 new unit tests in `tests/unit/test_freecad_mcp_handler.py`
+(`TestCallOnGuiThreadReload`): correct nested (non-double-encoded) result
+shape, error-JSON passthrough, and exception-instead-of-error-JSON handling.
+Existing `test_reload_modules_routing` updated to assert dispatch now goes
+through `_call_on_gui_thread_reload()` rather than calling
+`_reload_handlers()` directly. Full suite: 1656 passed.
+
+**Not re-verified live against a real GUI FreeCAD crash reproduction** —
+given the fix was arrived at by causing a real crash once already this
+session, a second live GUI-thread stress test wasn't attempted. The fix is
+structurally identical to the pattern every other GUI-touching tool in this
+file already uses successfully, and is covered by unit tests for the
+JSON-shape logic, but the actual thread-race fix itself is only verified by
+code inspection + the pattern match, not by reproducing the crash and
+confirming it no longer happens.

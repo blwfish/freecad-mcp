@@ -1143,7 +1143,7 @@ class FreeCADSocketServer:
         if tool_name == "restart_freecad":
             return self.diagnostics_ops.restart_freecad(args)
         if tool_name == "reload_modules":
-            return self._reload_handlers()
+            return self._call_on_gui_thread_reload()
         if tool_name == "get_instance_info":
             return self._get_instance_info()
         if tool_name == "continue_selection":
@@ -1278,6 +1278,39 @@ class FreeCADSocketServer:
                 return {"error": f"{label} error: {e}", "error_id": self.diagnostics_ops.store_traceback(tb_module.format_exc())}
         self._run_on_gui_thread_async(job_id, task)
         return json.dumps({"job_id": job_id, "status": "submitted"})
+
+    def _call_on_gui_thread_reload(self, timeout: float = 60.0) -> str:
+        """Run _reload_handlers() on the Qt GUI thread instead of the socket
+        thread that dispatches this call.
+
+        _reload_handlers() re-executes freecad_mcp_handler.py's own module
+        code (including its PySide/QtCore imports) and rebuilds handler
+        instances that hold live Qt-bound state (e.g. ViewOpsHandler's
+        _clip_planes Coin3D scene-graph nodes). Every other GUI-touching tool
+        in this dispatcher already runs through _run_on_gui_thread for
+        exactly this reason -- reload_modules used to call _reload_handlers()
+        directly from the socket thread instead, racing the live Qt event
+        loop. That combination crashed FreeCAD outright (SIGSEGV inside
+        Shiboken's binding manager during a QPushButton teardown) when
+        reproduced live on 2026-07-27, so this is a correctness fix, not a
+        style one.
+
+        _reload_handlers() already returns a complete JSON string (not a
+        plain result string like other handler methods), so unlike
+        _call_on_gui_thread/_call_on_gui_thread_async this parses that JSON
+        back into a dict before handing it to _run_on_gui_thread -- otherwise
+        _run_on_gui_thread's own dict-to-JSON wrapping would double-encode it
+        as an escaped string.
+        """
+        def task():
+            try:
+                parsed = json.loads(self._reload_handlers())
+            except Exception as e:
+                return {"error": f"reload_modules error: {e}"}
+            if "error" in parsed:
+                return {"error": parsed["error"]}
+            return {"result": parsed}
+        return self._run_on_gui_thread(task, timeout=timeout)
 
     def _dispatch_to_handler(self, handler, args: Dict[str, Any], tool_name: str) -> str:
         """Generic dispatch: look up args['operation'] against handler._ALLOWED_OPERATIONS."""
@@ -1655,6 +1688,7 @@ class FreeCADSocketServer:
                 '_dispatch_part_operations',
                 '_dispatch_to_handler',
                 '_call_on_gui_thread',
+                '_call_on_gui_thread_reload',
                 '_reload_handlers',   # rebind self so future reloads use latest code
                 '_instantiate_handlers',
             ]

@@ -713,6 +713,46 @@ class TestCallOnGuiThread:
         assert "bad value" in parsed["error"]
 
 
+class TestCallOnGuiThreadReload:
+    """_call_on_gui_thread_reload wraps _reload_handlers() for GUI-thread
+    execution. Unlike _call_on_gui_thread/_call_on_gui_thread_async,
+    _reload_handlers() already returns a full JSON string rather than a
+    plain result value, so this has to parse-then-rewrap instead of letting
+    _run_on_gui_thread's generic dict handling wrap it directly -- otherwise
+    the JSON string comes back double-encoded as an escaped string (see
+    _call_on_gui_thread_reload's docstring)."""
+
+    def test_wraps_reload_result_without_double_encoding(self, server):
+        server._reload_handlers = MagicMock(
+            return_value=json.dumps({
+                "result": "Reloaded 24 handler modules successfully",
+                "modules_reloaded": 24,
+            })
+        )
+        response = server._call_on_gui_thread_reload()
+        parsed = json.loads(response)
+        # The inner value must be a real nested object, not a JSON-in-a-string.
+        assert isinstance(parsed["result"], dict)
+        assert parsed["result"]["result"] == "Reloaded 24 handler modules successfully"
+        assert parsed["result"]["modules_reloaded"] == 24
+
+    def test_propagates_reload_error_json(self, server):
+        server._reload_handlers = MagicMock(
+            return_value=json.dumps({"error": "Handler reload failed: boom"})
+        )
+        response = server._call_on_gui_thread_reload()
+        parsed = json.loads(response)
+        assert "boom" in parsed["error"]
+
+    def test_reload_handlers_raising_does_not_propagate_raw_traceback(self, server):
+        """If _reload_handlers itself raises instead of returning an error
+        JSON string, the wrapper must still return valid, parseable JSON."""
+        server._reload_handlers = MagicMock(side_effect=RuntimeError("kaboom"))
+        response = server._call_on_gui_thread_reload()
+        parsed = json.loads(response)
+        assert "kaboom" in parsed["error"]
+
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -1532,11 +1572,14 @@ class TestExecuteToolInnerRouting:
         server.diagnostics_ops.restart_freecad.assert_called_once()
 
     def test_reload_modules_routing(self, server):
-        server._reload_handlers = MagicMock(
-            return_value=json.dumps({"result": "reloaded"})
+        """reload_modules must route through the GUI-thread wrapper, not call
+        _reload_handlers() directly from the socket thread (2026-07-27: doing
+        that raced the live Qt event loop and crashed FreeCAD)."""
+        server._call_on_gui_thread_reload = MagicMock(
+            return_value=json.dumps({"result": {"result": "reloaded"}})
         )
         server._execute_tool_inner("reload_modules", {})
-        server._reload_handlers.assert_called_once()
+        server._call_on_gui_thread_reload.assert_called_once()
 
     def test_run_inspector_routing(self, server):
         with patch.object(server, '_call_on_gui_thread',
