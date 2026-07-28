@@ -965,7 +965,8 @@ async def main():
                             "pos_id1": {"type": "integer", "description": "First point index (0=edge, 1=start, 2=end, 3=center)", "default": 0},
                             "geo_id2": {"type": "integer", "description": "Second geometry index"},
                             "pos_id2": {"type": "integer", "description": "Second point index", "default": 0},
-                            "value": {"type": "number", "description": "Constraint value (mm for distance, degrees for angle)"},
+                            "value": {"type": "number", "description": "Constraint value (mm for distance, degrees for angle). Ignored as the live value if expression is also given -- used only as the seed before the first recompute."},
+                            "expression": {"type": "string", "description": "Bind this dimensional constraint to a FreeCAD expression instead of a literal value, e.g. 'Dimensions.PanelLength / -2'. Dimensional constraint types only (Distance, DistanceX, DistanceY, Radius, Diameter, Angle). Exactly one of value/expression should be given for those types."},
                             "sym_geo": {"type": "integer", "description": "Symmetry axis geo_id (Symmetric constraint)", "default": -2},
                             "sym_pos": {"type": "integer", "description": "Symmetry axis point index", "default": 0},
                             # Delete constraint

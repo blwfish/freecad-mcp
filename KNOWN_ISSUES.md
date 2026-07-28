@@ -470,3 +470,136 @@ list_objects(type_filter="Part::Feature")
 # Get up to 500 objects
 list_objects(limit=500)
 ```
+
+## Sketch Operations
+
+### Issue: `sketch_operations(operation="add_constraint")` cannot bind a constraint to a spreadsheet expression
+
+**Status**: FIXED (2026-07-27), verified live against real FreeCAD 26.3.0.
+See "Resolution" at the end of this section.
+**Severity**: Medium — no crash, but it silently blocks the tool's most useful
+use case (spreadsheet-parametric sketches) and forces `execute_python()` as
+the only way to build them
+**Affected**: `AICopilot/handlers/sketch_ops.py`, `add_constraint()` (currently
+around line 550-685); the `value` field in the `sketch_operations` tool schema
+in `freecad_mcp_server.py` (around line 953)
+**Discovered**: 2026-07-27, building a spreadsheet-driven "master sketch" for
+an HO-scale coach side kit (window array + registration pins), where every
+constraint needed to track a `Dimensions` spreadsheet alias rather than a
+literal number
+
+#### Problem
+
+`add_constraint`'s `value` argument is typed as a plain number end to end —
+both in the JSON schema (`"value": {"type": "number", ...}`) and in the
+handler, which does `value = args.get('value', None)` and passes it straight
+into `Sketcher.Constraint(ct, ..., value)`. There is no way to pass an
+expression string (e.g. `"Dimensions.WindowWidthStd"` or
+`"Dimensions.PairCenter1 - Dimensions.PitchNarrow/2"`) instead of a bare
+number. Every dimensional constraint (`Distance`, `DistanceX`, `DistanceY`,
+`Radius`, `Diameter`, `Angle`) is affected identically.
+
+This isn't a FreeCAD limitation — `Sketcher::SketchObject.setExpression()`
+works exactly as documented once called directly:
+
+```python
+idx = sketch.addConstraint(Sketcher.Constraint('DistanceX', geo_id, 1, 0.0))
+sketch.setExpression(f'Constraints[{idx}]', 'Dimensions.PanelLength / -2')
+```
+
+That's a real, working pattern — I used it by hand via `execute_python()` for
+an entire sketch (dozens of constraints, all spreadsheet-bound, fully
+resolves `FullyConstrained=True`) because `sketch_operations` had no way to
+express it. `spreadsheet_operations`'s own handler
+(`AICopilot/handlers/spreadsheet_ops.py:329`) already calls `setExpression()`
+for cell-to-property bindings elsewhere in this same codebase, so the
+capability and the calling convention are already established here — sketch
+constraints just never picked it up.
+
+#### Root Cause
+
+Schema/implementation gap, not a FreeCAD API gap. `add_constraint` was built
+around literal dimensioning (matching the GUI's "type a number" default
+Ctrl workflow) and was never extended to accept an expression string, even
+though the underlying `Sketcher.Constraint` + `setExpression()` combination
+that would make it work is a two-line addition.
+
+#### Suggested Fix
+
+1. Add an `"expression"` string parameter to the `sketch_operations` schema
+   in `freecad_mcp_server.py` (sibling to `value`, both optional — exactly
+   one of the two should be provided for dimensional constraint types).
+2. In `add_constraint()` (`sketch_ops.py`), after `idx = sketch.addConstraint(c)`,
+   if `args.get('expression')` is set, call
+   `sketch.setExpression(f'Constraints[{idx}]', expression)` instead of (or
+   in addition to, for the initial literal seed value) using `value`.
+3. Recompute (`self.recompute(doc)`) after setting the expression — expressions
+   only evaluate on recompute, not immediately on `setExpression()`.
+4. Worth doing at the same time since it's the same code path: consider
+   exposing `sketch.FullyConstrained` / `sketch.DoF` / `sketch.ConflictingConstraints`
+   / `sketch.RedundantConstraints` in the return message instead of (or
+   alongside) the current `dof_msg` derived from `sketch.solve()`'s return
+   value. `solve()`'s return code is a solver-success code (0 = solved
+   without conflict), **not** a degrees-of-freedom count — a sketch can be
+   genuinely under-constrained (real leftover DOF) and still get `solve()==0`,
+   so the current `", DoF={dof}"` message is misleading. `sketch.DoF` and
+   `sketch.FullyConstrained` are the properties that actually answer "is this
+   sketch fully determined."
+
+#### Related, NOT a bug: `Symmetric` constraint type is already supported here
+
+While investigating this I confirmed `add_constraint(constraint_type="Symmetric",
+geo_id1=..., pos_id1=..., geo_id2=..., pos_id2=..., sym_geo=..., sym_pos=0)`
+already builds `Sketcher.Constraint('Symmetric', g1, p1, g2, p2, sym_geo, sym_pos)`
+correctly — including mirroring about a *line* (not just a point) via
+`sym_pos=0`, which FreeCAD's point-index convention (0=edge itself) maps onto
+correctly. I didn't realize this tool already covered that case and instead
+used FreeCAD's own `SketchObject.addSymmetric()` Python method directly via
+`execute_python()`, which turned out to have its own unrelated upstream gap
+(the Python binding never forwards the `addSymmetryConstraints` C++ parameter,
+so it silently never creates real constraints no matter how it's called —
+confirmed via `git blame`/`git log -S` against `FC-clone`, not something to
+fix in this repo). Noting it here only so a future session doesn't waste time
+suspecting `sketch_operations` itself of that problem too.
+
+#### Resolution (2026-07-27)
+
+Implemented the suggested fix essentially as written, plus item 4:
+
+1. Added an `"expression"` string param to the `sketch_operations` schema in
+   `freecad_mcp_server.py`, sibling to `value`.
+2. `add_constraint()` (`sketch_ops.py`) now accepts `expression` for the six
+   dimensional constraint types (`Distance`, `DistanceX`, `DistanceY`,
+   `Radius`, `Diameter`, `Angle`). Exactly one of `value`/`expression` is
+   required for those types; if both are given, `value` seeds the literal
+   `Sketcher.Constraint(...)` call and `expression` still overrides it via
+   `setExpression()` on the next recompute. Passing `expression` for a
+   non-dimensional type (e.g. `Horizontal`) is rejected explicitly rather
+   than silently ignored.
+3. After `sketch.addConstraint(c)`, calls
+   `sketch.setExpression(f'Constraints[{idx}]', expression)`, then
+   `self.recompute(doc)` — expressions only evaluate on recompute.
+4. `add_constraint`'s and `list_constraints`'s DoF reporting now reads
+   `sketch.DoF` / `sketch.FullyConstrained` directly instead of treating
+   `sketch.solve()`'s return value as a DoF count. `solve()` is still called
+   once as a forcing function before reading those properties, but its
+   return value is no longer part of the reported message.
+
+Verified live against real FreeCAD 26.3.0 (not just unit tests): created a
+spreadsheet with a `PanelLength` alias, bound a `DistanceX` constraint to
+`Dimensions.PanelLength / -2` with no literal `value`, confirmed the
+constraint resolved to the correct value and `sketch.ExpressionEngine` showed
+the binding, then changed the spreadsheet cell and confirmed the constraint
+value updated live on recompute. Also verified the value+expression seed path
+and the non-dimensional-type rejection live. 5 new unit tests added in
+`tests/unit/test_sketch_ops.py` (expression seeding, value+expression
+combined, rejection for non-dimensional types, missing-value-and-expression
+error, and DoF/FullyConstrained message sourcing).
+
+Found but out of scope for this fix: `reload_modules` (`_reload_handlers` in
+`freecad_mcp_handler.py`) fails with `No module named 'universal_selector'`
+when it reaches the self-reload step (reloading `freecad_mcp_handler.py`
+itself via `spec_from_file_location`) — root cause not yet investigated.
+Worked around during verification by manually reloading just
+`handlers.sketch_ops` and swapping the live server's `sketch_ops` handler
+instance via `execute_python`. Worth a follow-up session.

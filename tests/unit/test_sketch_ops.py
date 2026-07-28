@@ -473,6 +473,94 @@ class TestAddConstraint(unittest.TestCase):
         sc_call = mock_Sketcher.Constraint.call_args
         self.assertEqual(sc_call.args[0], 'Lock')
 
+    # -- expression binding (issue #48) --------------------------------
+
+    def test_distance_x_expression_seeds_zero_and_calls_set_expression(self):
+        """No literal value: constraint is seeded at 0.0, then bound via
+        setExpression -- the seed is a placeholder until recompute resolves
+        the expression, per FreeCAD's setExpression() semantics."""
+        s = _make_real_sketch_mock("S")
+        doc = make_mock_doc([s])
+        mock_FreeCAD.ActiveDocument = doc
+        s.setExpression = MagicMock()
+
+        result = self.handler.add_constraint({
+            'sketch_name': 'S', 'constraint_type': 'DistanceX',
+            'geo_id1': 0, 'pos_id1': 1,
+            'expression': 'Dimensions.PanelLength / -2',
+        })
+
+        sc_call = mock_Sketcher.Constraint.call_args
+        self.assertEqual(sc_call.args, ('DistanceX', 0, 1, 0.0))
+        s.setExpression.assert_called_once_with(
+            'Constraints[0]', 'Dimensions.PanelLength / -2')
+        assert_success_contains(self, result, "expression=")
+
+    def test_expression_with_value_uses_value_as_seed(self):
+        """value + expression both given: value seeds the literal Constraint
+        call, expression is still bound afterward (recompute overrides it)."""
+        s = _make_real_sketch_mock("S")
+        doc = make_mock_doc([s])
+        mock_FreeCAD.ActiveDocument = doc
+        s.setExpression = MagicMock()
+
+        self.handler.add_constraint({
+            'sketch_name': 'S', 'constraint_type': 'Radius',
+            'geo_id1': 2, 'value': 7.5, 'expression': 'Dimensions.HoleRadius',
+        })
+
+        sc_call = mock_Sketcher.Constraint.call_args
+        self.assertEqual(sc_call.args, ('Radius', 2, 7.5))
+        s.setExpression.assert_called_once_with(
+            'Constraints[0]', 'Dimensions.HoleRadius')
+
+    def test_expression_rejected_for_non_dimensional_type(self):
+        """Horizontal/Vertical/etc. have no Value -- an expression there is
+        a caller mistake, not something to silently ignore."""
+        s = _make_real_sketch_mock("S")
+        doc = make_mock_doc([s])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.add_constraint({
+            'sketch_name': 'S', 'constraint_type': 'Horizontal',
+            'geo_id1': 0, 'expression': 'Dimensions.Foo',
+        })
+
+        assert_error_contains(self, result, "expression is only supported for "
+                               "dimensional constraint types")
+
+    def test_dimensional_requires_value_or_expression(self):
+        s = _make_real_sketch_mock("S")
+        doc = make_mock_doc([s])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.add_constraint({
+            'sketch_name': 'S', 'constraint_type': 'DistanceX',
+            'geo_id1': 0, 'pos_id1': 1,
+        })
+
+        assert_error_contains(self, result, "distancex constraint requires "
+                               "a value or expression")
+
+    def test_dof_message_reads_sketch_properties_not_solve_return(self):
+        """solve()'s return code is a solver-success code, not a DoF count
+        (issue #48) -- the response must report sketch.DoF/FullyConstrained,
+        and must reflect them even when solve() itself returns something
+        else entirely (e.g. a non-zero/non-boolean value)."""
+        s = _make_real_sketch_mock("S")
+        doc = make_mock_doc([s])
+        mock_FreeCAD.ActiveDocument = doc
+        s.solve = MagicMock(return_value=1)  # solver status, not DoF
+        s.DoF = 3
+        s.FullyConstrained = False
+
+        result = self.handler.add_constraint({
+            'sketch_name': 'S', 'constraint_type': 'Radius',
+            'geo_id1': 0, 'value': 5,
+        })
+
+        assert_success_contains(self, result, "DoF=3", "FullyConstrained=False")
+
 
 # ---------------------------------------------------------------------------
 # delete_constraint
