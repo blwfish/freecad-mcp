@@ -1245,16 +1245,6 @@ class FreeCADSocketServer:
             }
         return self._run_on_gui_thread(task, timeout=2.0)
 
-    def _call_on_gui_thread(self, method, args: Dict[str, Any], label: str, timeout: float = 120.0) -> str:
-        """Wrap a handler method call for GUI-safe execution."""
-        def task():
-            try:
-                result = method(args)
-                return {"success": True, "result": result}
-            except Exception as e:
-                return {"error": f"{label} error: {e}", "error_id": self.diagnostics_ops.store_traceback(tb_module.format_exc())}
-        return self._run_on_gui_thread(task, timeout=timeout)
-
     def _call_on_gui_thread_async(self, method, args: Dict[str, Any], label: str) -> str:
         """Submit a handler method call for async GUI execution; returns job_id immediately.
 
@@ -1302,7 +1292,7 @@ class FreeCADSocketServer:
 
         _reload_handlers() already returns a complete JSON string (not a
         plain result string like other handler methods), so unlike
-        _call_on_gui_thread/_call_on_gui_thread_async this parses that JSON
+        _call_on_gui_thread_async this parses that JSON
         back into a dict before handing it to _run_on_gui_thread -- otherwise
         _run_on_gui_thread's own dict-to-JSON wrapping would double-encode it
         as an escaped string.
@@ -1447,7 +1437,7 @@ class FreeCADSocketServer:
         """Route view control operations (mixes view_ops and document_ops).
 
         Operations that touch the GUI (screenshots, view changes, selection,
-        hide/show, undo/redo) are routed through _call_on_gui_thread to
+        hide/show, undo/redo) are routed through _call_on_gui_thread_async to
         prevent crashes from calling Qt/Coin3D from the socket thread.
 
         Screenshot gets a longer timeout (60s) because saveImage() on
@@ -1617,7 +1607,6 @@ class FreeCADSocketServer:
                 '_dispatch_sketch',
                 '_dispatch_part_operations',
                 '_dispatch_to_handler',
-                '_call_on_gui_thread',
                 '_call_on_gui_thread_reload',
                 '_reload_handlers',   # rebind self so future reloads use latest code
                 '_instantiate_handlers',

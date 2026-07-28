@@ -488,7 +488,6 @@ class TestExecuteTool:
 
     def test_all_direct_map_tools(self, server):
         """Every tool in the direct_map should route without error."""
-        server._call_on_gui_thread = MagicMock(return_value=json.dumps({"result": "ok"}))
         direct_tools = [
             "create_box", "create_cylinder", "create_sphere", "create_cone",
             "create_torus", "create_wedge", "fuse_objects", "cut_objects",
@@ -555,7 +554,6 @@ class TestDispatchToHandler:
 class TestDispatchPartDesign:
     def test_known_operations(self, server):
         """All mapped PartDesign operations should route correctly."""
-        server._call_on_gui_thread = MagicMock(return_value=json.dumps({"result": "ok"}))
         ops = ["pad", "fillet", "chamfer", "hole", "linear_pattern",
                "mirror", "revolution", "loft", "sweep", "draft", "shell"]
         for op in ops:
@@ -575,28 +573,24 @@ class TestDispatchPartDesign:
 
 class TestDispatchPartOperations:
     def test_primitive_routing(self, server):
-        server._call_on_gui_thread = MagicMock(return_value=json.dumps({"result": "ok"}))
         for op in ["box", "cylinder", "sphere", "cone", "torus", "wedge"]:
             result = server._dispatch_part_operations({"operation": op})
             parsed = json.loads(result)
             assert "error" not in parsed, f"Part {op} returned error"
 
     def test_boolean_routing(self, server):
-        server._call_on_gui_thread = MagicMock(return_value=json.dumps({"result": "ok"}))
         for op in ["fuse", "cut", "common"]:
             result = server._dispatch_part_operations({"operation": op})
             parsed = json.loads(result)
             assert "error" not in parsed, f"Part {op} returned error"
 
     def test_transform_routing(self, server):
-        server._call_on_gui_thread = MagicMock(return_value=json.dumps({"result": "ok"}))
         for op in ["move", "rotate", "copy", "array"]:
             result = server._dispatch_part_operations({"operation": op})
             parsed = json.loads(result)
             assert "error" not in parsed, f"Part {op} returned error"
 
     def test_advanced_routing(self, server):
-        server._call_on_gui_thread = MagicMock(return_value=json.dumps({"result": "ok"}))
         for op in ["extrude", "revolve", "loft", "sweep"]:
             result = server._dispatch_part_operations({"operation": op})
             parsed = json.loads(result)
@@ -678,49 +672,9 @@ class TestDispatchViewControl:
         assert "list failed" in parsed["error"]
 
 
-# ---------------------------------------------------------------------------
-# _call_on_gui_thread
-# ---------------------------------------------------------------------------
-
-class TestCallOnGuiThread:
-    def _simulate_gui_thread(self, server):
-        """Simulate the GUI timer draining the task queue with tagged request IDs."""
-        def process():
-            time.sleep(0.05)
-            req_id, task = server._gui_task_queue.get(timeout=1)
-            result = task()
-            server._gui_response_queue.put((req_id, result))
-        return process
-
-    def test_wraps_handler_success(self, server):
-        """Should wrap handler result in {success: True, result: ...}."""
-        handler_method = MagicMock(return_value="created")
-
-        t = threading.Thread(target=self._simulate_gui_thread(server))
-        t.start()
-
-        response = server._call_on_gui_thread(handler_method, {"x": 1}, "test")
-        t.join()
-        parsed = json.loads(response)
-        assert parsed["result"] == "created"
-        handler_method.assert_called_once_with({"x": 1})
-
-    def test_wraps_handler_exception(self, server):
-        """If handler raises, should return error with traceback."""
-        handler_method = MagicMock(side_effect=ValueError("bad value"))
-
-        t = threading.Thread(target=self._simulate_gui_thread(server))
-        t.start()
-
-        response = server._call_on_gui_thread(handler_method, {}, "test")
-        t.join()
-        parsed = json.loads(response)
-        assert "bad value" in parsed["error"]
-
-
 class TestCallOnGuiThreadReload:
     """_call_on_gui_thread_reload wraps _reload_handlers() for GUI-thread
-    execution. Unlike _call_on_gui_thread/_call_on_gui_thread_async,
+    execution. Unlike _call_on_gui_thread_async,
     _reload_handlers() already returns a full JSON string rather than a
     plain result value, so this has to parse-then-rewrap instead of letting
     _run_on_gui_thread's generic dict handling wrap it directly -- otherwise
@@ -1315,7 +1269,7 @@ class TestDispatchSketch:
     """Tests for _dispatch_sketch routing."""
 
     def test_known_operations(self, server):
-        """All sketch operations should route through _call_on_gui_thread."""
+        """All sketch operations should route through _call_on_gui_thread_async."""
         sketch_ops = [
             "create_sketch", "close_sketch", "verify_sketch",
             "add_line", "add_circle", "add_rectangle", "add_arc",
@@ -1324,11 +1278,9 @@ class TestDispatchSketch:
             "add_external_geometry",
         ]
         for op in sketch_ops:
-            with patch.object(server, '_call_on_gui_thread',
-                              return_value=json.dumps({"result": "ok"})):
-                result = server._dispatch_sketch({"operation": op})
-                parsed = json.loads(result)
-                assert "error" not in parsed, f"sketch {op} returned error: {parsed}"
+            result = server._dispatch_sketch({"operation": op})
+            parsed = json.loads(result)
+            assert "error" not in parsed, f"sketch {op} returned error: {parsed}"
 
     def test_unknown_operation(self, server):
         result = json.loads(server._dispatch_sketch({"operation": "nonexistent"}))
@@ -1587,9 +1539,7 @@ class TestExecuteToolInnerRouting:
         server._call_on_gui_thread_reload.assert_called_once()
 
     def test_run_inspector_routing(self, server):
-        with patch.object(server, '_call_on_gui_thread',
-                          return_value=json.dumps({"result": "ok"})):
-            server._execute_tool_inner("run_inspector", {})
+        server._execute_tool_inner("run_inspector", {})
 
     def test_sketch_operations_routing(self, server):
         server._dispatch_sketch = MagicMock(
