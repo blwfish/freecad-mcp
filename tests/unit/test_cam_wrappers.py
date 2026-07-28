@@ -979,5 +979,52 @@ class TestAdaptiveStepoverValidation(unittest.TestCase):
         self.assertEqual(op.StepOverPercent, 40)
 
 
+# ---------------------------------------------------------------------------
+# cam_ops: create_tool/tool_controller/simulate -- legacy alias delegation
+#
+# These three cam_operations entries used to be GUI-instruction stubs
+# shadowing the real, working implementations reachable under cam_tools/
+# cam_tool_controllers (same operation name, different top-level tool) or,
+# for simulate, under a different operation name (simulate_job) in the
+# same handler. Verify they now delegate instead of stubbing.
+# ---------------------------------------------------------------------------
+
+class TestCAMOpsLegacyAliasesDelegate(unittest.TestCase):
+    def setUp(self):
+        reset_mocks()
+
+    def test_create_tool_delegates_to_cam_tools_handler(self):
+        server = MagicMock()
+        server.cam_tools.create_tool = MagicMock(return_value="created via cam_tools")
+        handler = CAMOpsHandler(server=server, log_operation=MagicMock(), capture_state=MagicMock())
+
+        args = {'name': 'EM6', 'tool_type': 'endmill', 'diameter': 6.0}
+        result = handler.create_tool(args)
+
+        server.cam_tools.create_tool.assert_called_once_with(args)
+        self.assertEqual(result, "created via cam_tools")
+
+    def test_tool_controller_delegates_to_cam_tool_controllers_handler(self):
+        server = MagicMock()
+        server.cam_tool_controllers.add_tool_controller = MagicMock(return_value="controller added")
+        handler = CAMOpsHandler(server=server, log_operation=MagicMock(), capture_state=MagicMock())
+
+        args = {'job_name': 'Job1', 'tool_name': 'EM6', 'spindle_speed': 12000}
+        result = handler.tool_controller(args)
+
+        server.cam_tool_controllers.add_tool_controller.assert_called_once_with(args)
+        self.assertEqual(result, "controller added")
+
+    def test_simulate_delegates_to_simulate_job(self):
+        handler = make_handler(CAMOpsHandler)
+        handler.simulate_job = MagicMock(return_value="launched simulator")
+
+        args = {'job_name': 'Job1'}
+        result = handler.simulate(args)
+
+        handler.simulate_job.assert_called_once_with(args)
+        self.assertEqual(result, "launched simulator")
+
+
 if __name__ == '__main__':
     unittest.main()

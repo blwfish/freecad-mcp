@@ -468,39 +468,34 @@ class CAMOpsHandler(BaseHandler):
         return self._placeholder_dressup("Z-Correction", args)
 
     def create_tool(self, args: Dict[str, Any]) -> str:
-        """Create a tool bit."""
-        try:
-            tool_type = args.get('tool_type', 'endmill')
-            diameter = args.get('diameter', 6.0)
-            name = args.get('name', f'{tool_type}_{diameter}mm')
+        """Create a tool bit.
 
-            return f"Tool creation: Please use FreeCAD's Tool Library manager (CAM -> Tool Library Editor) to create tool '{name}' ({tool_type}, {diameter}mm diameter)"
-
-        except Exception as e:
-            return f"Error: {e}"
+        cam_operations' create_tool/tool_controller are legacy aliases (see
+        this tool's schema "deprecated" note) -- delegate to the real,
+        maintained implementations on cam_tools/cam_tool_controllers rather
+        than re-implementing (or worse, stubbing) tool-bit creation here.
+        No log_and_return wrapper: the delegate already logs its own
+        operation, so wrapping here would double-log and double-wrap the
+        returned message.
+        """
+        return self.server.cam_tools.create_tool(args)
 
     def tool_controller(self, args: Dict[str, Any]) -> str:
-        """Create a tool controller."""
-        try:
-            job_name = args.get('job_name', '')
-            tool_name = args.get('tool_name', '')
-            spindle_speed = args.get('spindle_speed', 10000)
-            feed_rate = args.get('feed_rate', 1000)
+        """Create/attach a tool controller to a CAM job.
 
-            return f"Tool controller setup: Please add tool controller in job '{job_name}' with spindle speed {spindle_speed} RPM and feed rate {feed_rate} mm/min"
-
-        except Exception as e:
-            return f"Error: {e}"
+        See create_tool's docstring above -- delegates to the real
+        implementation on cam_tool_controllers rather than duplicating it.
+        """
+        return self.server.cam_tool_controllers.add_tool_controller(args)
 
     def simulate(self, args: Dict[str, Any]) -> str:
-        """Simulate CAM operations."""
-        try:
-            job_name = args.get('job_name', '')
+        """Simulate CAM operations.
 
-            return f"Simulation: Please use CAM -> Simulate (or click Simulate button) to run simulation for job '{job_name}'"
-
-        except Exception as e:
-            return f"Error: {e}"
+        Legacy alias -- delegates to simulate_job, the real implementation.
+        This method used to be a GUI-instruction stub while simulate_job
+        (below) did the actual work under a different operation name.
+        """
+        return self.simulate_job(args)
 
     def post_process(self, args: Dict[str, Any]) -> str:
         """Post-process CAM job to generate G-code."""
