@@ -35,7 +35,7 @@ jobs:
         run: |
           mkdir -p ~/freecad-appimage
           cd ~/freecad-appimage
-          gh release download "${{ inputs.tag }}" \
+          gh release download "$TAG" \
             --repo FreeCAD/FreeCAD \
             --pattern '*Linux-x86_64.AppImage' \
             --pattern '*Linux-x86_64.AppImage-SHA256.txt' \
@@ -46,6 +46,7 @@ jobs:
           "./$APPIMAGE" --appimage-extract
           rm "$APPIMAGE"
         env:
+          TAG: ${{ inputs.tag }}
           GH_TOKEN: ${{ github.token }}
 
       - name: Set up FreeCAD environment
