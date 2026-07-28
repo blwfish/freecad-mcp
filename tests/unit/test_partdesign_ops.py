@@ -477,6 +477,60 @@ class TestLinearPattern(unittest.TestCase):
         doc.copyObject.assert_not_called()
         assert_success_contains(self, result, "1 instances")
 
+    def test_creates_partdesign_linear_pattern_in_body(self):
+        """When the feature is in a Body, linear_pattern should behave
+        like mirror_feature/create_helix already do: create a genuine
+        PartDesign::LinearPattern instead of copying the feature by hand.
+        Confirmed live: Length is the total span from first to last
+        occurrence (spacing * (count - 1)), not the per-step spacing
+        value directly, and Body.Tip needed an explicit assignment
+        (PartDesign::LinearPattern doesn't auto-update it)."""
+        feat = make_part_object("Pad")
+        body = make_body("Body", group=[feat])
+        doc = make_mock_doc([body, feat])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.linear_pattern({
+            'feature_name': 'Pad', 'direction': 'x', 'count': 4, 'spacing': 10,
+        })
+
+        body.newObject.assert_called_with("PartDesign::LinearPattern", "LinearPattern")
+        doc.copyObject.assert_not_called()
+        linpat = body.newObject.return_value
+        self.assertEqual(linpat.Originals, [feat])
+        x_axis = body.Origin.OriginFeatures[0]
+        self.assertEqual(linpat.Direction, (x_axis, ['']))
+        self.assertEqual(linpat.Length, 30)
+        self.assertEqual(linpat.Occurrences, 4)
+        self.assertEqual(body.Tip, linpat)
+        assert_success_contains(self, result, "4 instances", "x", "10mm", "PartDesign::LinearPattern", "Body")
+
+    def test_invalid_direction_rejected_in_body(self):
+        feat = make_part_object("Pad")
+        body = make_body("Body", group=[feat])
+        doc = make_mock_doc([body, feat])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.linear_pattern({
+            'feature_name': 'Pad', 'direction': 'q', 'count': 4, 'spacing': 10,
+        })
+
+        assert_error_contains(self, result, "invalid direction", "q")
+        body.newObject.assert_not_called()
+
+    def test_count_zero_rejected_in_body_before_creating_anything(self):
+        feat = make_part_object("Pad")
+        body = make_body("Body", group=[feat])
+        doc = make_mock_doc([body, feat])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.linear_pattern({
+            'feature_name': 'Pad', 'direction': 'x', 'count': 0, 'spacing': 10,
+        })
+
+        assert_error_contains(self, result, "count")
+        body.newObject.assert_not_called()
+
 
 class TestPolarPattern(unittest.TestCase):
     def setUp(self):
@@ -512,6 +566,59 @@ class TestPolarPattern(unittest.TestCase):
 
         self.assertIn("count", result)
         self.assertEqual(doc.copyObject.call_count, 0)
+
+    def test_creates_partdesign_polar_pattern_in_body(self):
+        """When the feature is in a Body, polar_pattern should behave
+        like linear_pattern/mirror_feature/create_helix already do:
+        create a genuine PartDesign::PolarPattern instead of copying the
+        feature by hand. Confirmed live: volume scaled exactly by count
+        for a full-circle pattern, and Body.Tip needed an explicit
+        assignment (PartDesign::PolarPattern doesn't auto-update it)."""
+        feat = make_part_object("Pad")
+        body = make_body("Body", group=[feat])
+        doc = make_mock_doc([body, feat])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.polar_pattern({
+            'feature_name': 'Pad', 'axis': 'z', 'angle': 360, 'count': 6,
+        })
+
+        body.newObject.assert_called_with("PartDesign::PolarPattern", "PolarPattern")
+        doc.copyObject.assert_not_called()
+        polpat = body.newObject.return_value
+        self.assertEqual(polpat.Originals, [feat])
+        z_axis = body.Origin.OriginFeatures[2]
+        self.assertEqual(polpat.Axis, (z_axis, ['']))
+        self.assertEqual(polpat.Angle, 360)
+        self.assertEqual(polpat.Occurrences, 6)
+        self.assertEqual(body.Tip, polpat)
+        assert_success_contains(self, result, "6 instances", "Z", "360", "PartDesign::PolarPattern", "Body")
+
+    def test_invalid_axis_rejected_in_body(self):
+        feat = make_part_object("Pad")
+        body = make_body("Body", group=[feat])
+        doc = make_mock_doc([body, feat])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.polar_pattern({
+            'feature_name': 'Pad', 'axis': 'q', 'angle': 360, 'count': 4,
+        })
+
+        assert_error_contains(self, result, "invalid axis", "q")
+        body.newObject.assert_not_called()
+
+    def test_count_zero_rejected_in_body_before_creating_anything(self):
+        feat = make_part_object("Pad")
+        body = make_body("Body", group=[feat])
+        doc = make_mock_doc([body, feat])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.polar_pattern({
+            'feature_name': 'Pad', 'axis': 'z', 'angle': 360, 'count': 0,
+        })
+
+        self.assertIn("count", result)
+        body.newObject.assert_not_called()
 
 
 class TestMirrorFeature(unittest.TestCase):
@@ -558,6 +665,45 @@ class TestMirrorFeature(unittest.TestCase):
         result = self.handler.mirror_feature({'feature_name': 'F', 'plane': 'QQ'})
 
         assert_error_contains(self, result, "invalid plane", "qq")
+        doc.addObject.assert_not_called()
+
+    def test_creates_partdesign_mirrored_in_body(self):
+        """When the feature is in a Body, mirror_feature should behave
+        like its siblings revolution()/groove()/create_helix() already
+        do: create a genuine PartDesign::Mirrored instead of standalone
+        Part::Mirroring. Confirmed working via a live FreeCAD instance --
+        volume exactly doubled and Body.Tip correctly ended up pointing
+        at the new Mirrored feature (which required an explicit
+        body.Tip = mirror assignment; PartDesign::Mirrored doesn't
+        auto-update Tip the way Pad/Pocket/Hole/AdditiveHelix do)."""
+        feat = make_part_object("Pad")
+        body = make_body("Body", group=[feat])
+        doc = make_mock_doc([body, feat])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.mirror_feature({
+            'feature_name': 'Pad', 'plane': 'YZ', 'name': 'M',
+        })
+
+        body.newObject.assert_called_with("PartDesign::Mirrored", "M")
+        doc.addObject.assert_not_called()
+        mirror = body.newObject.return_value
+        self.assertEqual(mirror.Originals, [feat])
+        yz_plane = body.Origin.OriginFeatures[5]
+        self.assertEqual(mirror.MirrorPlane, (yz_plane, ['']))
+        self.assertEqual(body.Tip, mirror)
+        assert_success_contains(self, result, "M", "Pad", "YZ", "PartDesign::Mirrored", "Body")
+
+    def test_invalid_plane_rejected_in_body(self):
+        feat = make_part_object("Pad")
+        body = make_body("Body", group=[feat])
+        doc = make_mock_doc([body, feat])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.mirror_feature({'feature_name': 'Pad', 'plane': 'QQ'})
+
+        assert_error_contains(self, result, "invalid plane", "qq")
+        body.newObject.assert_not_called()
         doc.addObject.assert_not_called()
 
 

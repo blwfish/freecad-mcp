@@ -651,6 +651,19 @@ def make_body(name="Body", tip=None, group=None):
     obj.Group = list(group) if group else []
     obj.Shape = _make_shape()
 
+    # Mock App::Origin with the 6 standard OriginFeatures every real
+    # PartDesign::Body has (confirmed live) -- needed by any operation
+    # that references a Body's origin planes/axes (mirror_feature's
+    # MirrorPlane, linear_pattern's Direction, polar_pattern's Axis).
+    origin = MagicMock()
+    origin_features = []
+    for feat_name in ("X_Axis", "Y_Axis", "Z_Axis", "XY_Plane", "XZ_Plane", "YZ_Plane"):
+        of = MagicMock()
+        of.Name = feat_name
+        origin_features.append(of)
+    origin.OriginFeatures = origin_features
+    obj.Origin = origin
+
     feat = MagicMock()
     feat.Name = "AutoFeature"
     feat.Label = "AutoFeature"

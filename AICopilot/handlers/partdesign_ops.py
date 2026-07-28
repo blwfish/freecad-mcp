@@ -504,7 +504,23 @@ class PartDesignOpsHandler(BaseHandler):
             return f"Error creating hole: {e}"
 
     def linear_pattern(self, args: Dict[str, Any]) -> str:
-        """Create linear pattern of features."""
+        """Create linear pattern of features.
+
+        Body-aware like mirror_feature/create_helix: creates a genuine
+        PartDesign::LinearPattern (chains onto the Body's feature tree)
+        when the feature is in a Body, falling back to the standalone
+        doc.copyObject approach otherwise (unchanged from before).
+        Confirmed live via a real FreeCAD instance that
+        PartDesign::LinearPattern requires a Body-resident Originals
+        member -- pointing it at a plain, non-Body object throws
+        BRepCheck_Analyzer::Init() - NULL shape -- so the standalone path
+        stays as the only route for non-Body features. Unlike
+        revolution/groove/create_helix, there's no degenerate-axis
+        restriction here: Direction references the Body's global Origin
+        axes (X_Axis/Y_Axis/Z_Axis), not the feature's own local axes, so
+        all three of x/y/z remain valid (matching the old standalone
+        path's own unrestricted x/y/z).
+        """
         try:
             feature_name = args.get('feature_name', '')
             direction = args.get('direction', 'x')
@@ -523,6 +539,46 @@ class PartDesignOpsHandler(BaseHandler):
             if count < 1:
                 return f"count must be >= 1 (got {count})"
 
+            body = self.find_body_for_object(feature, doc)
+
+            if body:
+                axis_name = direction.upper() + "_Axis"
+                if axis_name not in ("X_Axis", "Y_Axis", "Z_Axis"):
+                    return f"Invalid direction '{direction}': must be 'x', 'y', or 'z'"
+                axis_obj = next(
+                    (f for f in body.Origin.OriginFeatures if f.Name == axis_name), None
+                )
+                if axis_obj is None:
+                    return f"Body {body.Name}'s Origin has no {axis_name} feature"
+
+                linpat = body.newObject("PartDesign::LinearPattern", name)
+                linpat.Originals = [feature]
+                linpat.Direction = (axis_obj, [''])
+                # Length is the total span from the first to the last
+                # occurrence (confirmed live: spacing=10, count=4 ->
+                # Length=30 produces occurrences exactly 10mm apart) --
+                # not the old per-step "spacing" value directly.
+                linpat.Length = spacing * (count - 1)
+                linpat.Occurrences = count
+
+                # PartDesign pattern/transform features don't auto-update
+                # Body.Tip the way Pad/Pocket/Hole/AdditiveHelix do
+                # (confirmed live in the mirror_feature/create_helix work)
+                # -- must set it explicitly.
+                body.Tip = linpat
+                self.recompute(doc)
+
+                err = self._check_feature_state(linpat, "Linear pattern")
+                if err:
+                    return err
+
+                return (
+                    f"Created linear pattern: {count} instances of {feature_name} "
+                    f"in {direction} direction with {spacing}mm spacing "
+                    f"(PartDesign::LinearPattern in {body.Name})"
+                )
+
+            # No Body — standalone doc.copyObject approach (unchanged).
             if direction.lower() == 'x':
                 direction_vector = FreeCAD.Vector(spacing, 0, 0)
             elif direction.lower() == 'y':
@@ -561,7 +617,19 @@ class PartDesignOpsHandler(BaseHandler):
             return f"Error creating linear pattern: {e}"
 
     def polar_pattern(self, args: Dict[str, Any]) -> str:
-        """Create circular/polar pattern of features."""
+        """Create circular/polar pattern of features.
+
+        Body-aware like linear_pattern/mirror_feature/create_helix:
+        creates a genuine PartDesign::PolarPattern (chains onto the
+        Body's feature tree) when the feature is in a Body, falling back
+        to the standalone doc.copyObject approach otherwise (unchanged
+        from before). Confirmed live via a real FreeCAD instance that
+        PartDesign::PolarPattern requires a Body-resident Originals
+        member, same as its LinearPattern/Mirrored siblings. Axis
+        references the Body's global Origin axes (X_Axis/Y_Axis/Z_Axis),
+        so all three of x/y/z remain valid -- there's no degenerate-axis
+        restriction here, unlike revolution/groove/create_helix.
+        """
         try:
             feature_name = args.get('feature_name', '')
             axis = args.get('axis', 'z')
@@ -579,6 +647,43 @@ class PartDesignOpsHandler(BaseHandler):
 
             if count < 1:
                 return f"count must be >= 1 (got {count})"
+
+            body = self.find_body_for_object(feature, doc)
+
+            if body:
+                axis_name = axis.upper() + "_Axis"
+                if axis_name not in ("X_Axis", "Y_Axis", "Z_Axis"):
+                    return f"Invalid axis '{axis}': must be 'x', 'y', or 'z'"
+                axis_obj = next(
+                    (f for f in body.Origin.OriginFeatures if f.Name == axis_name), None
+                )
+                if axis_obj is None:
+                    return f"Body {body.Name}'s Origin has no {axis_name} feature"
+
+                polpat = body.newObject("PartDesign::PolarPattern", name)
+                polpat.Originals = [feature]
+                polpat.Axis = (axis_obj, [''])
+                polpat.Angle = angle
+                polpat.Occurrences = count
+
+                # PartDesign pattern/transform features don't auto-update
+                # Body.Tip the way Pad/Pocket/Hole/AdditiveHelix do
+                # (confirmed live in the mirror_feature/linear_pattern
+                # work) -- must set it explicitly.
+                body.Tip = polpat
+                self.recompute(doc)
+
+                err = self._check_feature_state(polpat, "Polar pattern")
+                if err:
+                    return err
+
+                return (
+                    f"Created polar pattern: {count} instances of {feature_name} "
+                    f"around {axis.upper()}-axis, {angle}° total "
+                    f"(PartDesign::PolarPattern in {body.Name})"
+                )
+
+            # No Body — standalone doc.copyObject approach (unchanged).
             angle_step = angle / count
 
             axis_vector = FreeCAD.Vector(0, 0, 1)
@@ -613,7 +718,18 @@ class PartDesignOpsHandler(BaseHandler):
             return f"Error creating polar pattern: {e}"
 
     def mirror_feature(self, args: Dict[str, Any]) -> str:
-        """Mirror features across a plane."""
+        """Mirror features across a plane.
+
+        Body-aware like create_helix/revolution/groove: creates a genuine
+        PartDesign::Mirrored (chains onto the Body's feature tree) when
+        the feature is in a Body, falling back to standalone
+        Part::Mirroring otherwise (unchanged from before). Confirmed live
+        via a real FreeCAD instance that PartDesign::Mirrored requires a
+        Body-resident Originals member -- pointing it at a plain,
+        non-Body object throws BRepCheck_Analyzer::Init() - NULL shape --
+        so the standalone path stays as the only route for non-Body
+        features, exactly as it was.
+        """
         try:
             feature_name = args.get('feature_name', '')
             plane = args.get('plane', 'YZ')
@@ -627,6 +743,43 @@ class PartDesignOpsHandler(BaseHandler):
             if not feature:
                 return f"Feature not found: {feature_name}"
 
+            body = self.find_body_for_object(feature, doc)
+
+            if body:
+                plane_name = plane.upper() + "_Plane"
+                origin_planes = {"XY_Plane", "XZ_Plane", "YZ_Plane"}
+                if plane_name not in origin_planes:
+                    return f"Invalid plane '{plane}': must be 'XY', 'XZ', or 'YZ'"
+                plane_obj = next(
+                    (f for f in body.Origin.OriginFeatures if f.Name == plane_name), None
+                )
+                if plane_obj is None:
+                    return f"Body {body.Name}'s Origin has no {plane_name} feature"
+
+                mirror = body.newObject("PartDesign::Mirrored", name)
+                mirror.Originals = [feature]
+                mirror.MirrorPlane = (plane_obj, [''])
+
+                # PartDesign pattern/transform features (Mirrored,
+                # LinearPattern, PolarPattern) don't auto-update Body.Tip
+                # the way Pad/Pocket/Hole/AdditiveHelix do -- confirmed
+                # live: Body.Shape stays the pre-mirror shape until Tip is
+                # set explicitly. Without this, the mirror exists in the
+                # document but the Body's own visible/reported shape
+                # silently doesn't include it.
+                body.Tip = mirror
+                self.recompute(doc)
+
+                err = self._check_feature_state(mirror, "Mirror")
+                if err:
+                    return err
+
+                return (
+                    f"Created mirror: {mirror.Name} of {feature_name} across "
+                    f"{plane} plane (PartDesign::Mirrored in {body.Name})"
+                )
+
+            # No Body — standalone Part::Mirroring (unchanged).
             plane_normals = {'XY': (0, 0, 1), 'XZ': (0, 1, 0), 'YZ': (1, 0, 0)}
             normal = plane_normals.get(plane.upper())
             if normal is None:
