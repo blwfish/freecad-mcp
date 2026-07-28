@@ -36,58 +36,13 @@ jobs:
       - name: Install test dependencies
         run: pip install pytest pytest-timeout
 
-      - name: Cache FreeCAD AppImage
-        id: cache-freecad
-        uses: actions/cache@v4
+      - name: Set up FreeCAD AppImage
+        uses: ./.github/actions/setup-freecad-appimage
         with:
-          path: ~/freecad-appimage
-          key: freecad-${{ matrix.tag }}-x86_64
-
-      - name: Download FreeCAD AppImage
-        if: steps.cache-freecad.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p ~/freecad-appimage
-          cd ~/freecad-appimage
-
-          if [ -n "${{ matrix.appimage }}" ]; then
-            # Stable release — exact filename known
-            gh release download "${{ matrix.tag }}" \
-              --repo FreeCAD/FreeCAD \
-              --pattern "${{ matrix.appimage }}" \
-              --dir .
-            APPIMAGE="${{ matrix.appimage }}"
-          else
-            # Weekly build — glob + checksum
-            gh release download "${{ matrix.tag }}" \
-              --repo FreeCAD/FreeCAD \
-              --pattern '*Linux-x86_64.AppImage' \
-              --pattern '*Linux-x86_64.AppImage-SHA256.txt' \
-              --dir .
-            APPIMAGE=$(ls *Linux-x86_64.AppImage | head -1)
-            sha256sum -c "${APPIMAGE}-SHA256.txt"
-          fi
-
-          chmod +x "$APPIMAGE"
-          "./$APPIMAGE" --appimage-extract
-          rm "$APPIMAGE"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Set up FreeCAD environment
-        run: |
-          SQUASHFS="$HOME/freecad-appimage/squashfs-root"
-
-          printf '#!/bin/bash\nexec "%s/AppRun" freecadcmd "$@"\n' "$SQUASHFS" \
-            > ~/freecad-appimage/freecadcmd-wrapper.sh
-          chmod +x ~/freecad-appimage/freecadcmd-wrapper.sh
-
-          ln -sfn "${{ github.workspace }}/AICopilot" "$SQUASHFS/usr/Mod/AICopilot"
-
-          echo "FREECAD_MCP_FREECAD_BIN=$HOME/freecad-appimage/freecadcmd-wrapper.sh" >> "$GITHUB_ENV"
-          echo "FREECAD_MCP_MODULE_DIR=${{ github.workspace }}/AICopilot" >> "$GITHUB_ENV"
-
-      - name: Install gdb
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq gdb
+          tag: ${{ matrix.tag }}
+          appimage: ${{ matrix.appimage }}
+          use-cache: 'true'
+          install-gdb: 'true'
 
       - name: Run integration tests
         shell: bash
