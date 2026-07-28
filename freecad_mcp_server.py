@@ -2335,7 +2335,7 @@ async def main():
         # Route smart dispatcher tools to socket with enhanced routing
         elif name in ["partdesign_operations", "sketch_operations", "part_operations",
                       "view_control", "cam_operations", "cam_tools", "cam_tool_controllers",
-                      "cam_machines", "mesh_operations", "measurement_operations",
+                      "mesh_operations", "measurement_operations",
                       "assembly_operations",
                       "spatial_query", "geometric_verification", "fixture_operations",
                       "run_inspector", "get_last_traceback",
