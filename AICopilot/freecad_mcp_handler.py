@@ -647,12 +647,12 @@ class FreeCADSocketServer:
 
             # Matched -- process result. Structurally identical to the
             # headless branch above: a task dict with no "result" key (e.g.
-            # view_ops.set_view_gui_safe's {"success": True, "view": ...})
-            # previously matched a GUI-only `if "success" in result:` branch
-            # that indexed result["result"] unconditionally -> KeyError.
-            # Falling through to str(result) instead (as headless mode
-            # always did) is what set_view_gui_safe's own
-            # `"success" in str(result_str)` check actually depends on.
+            # {"success": True, "view": ...}, the shape the now-removed
+            # view_ops.set_view_gui_safe used to return) previously matched
+            # a GUI-only `if "success" in result:` branch that indexed
+            # result["result"] unconditionally -> KeyError. Falling through
+            # to str(result) instead (as headless mode always did) is the
+            # general contract any GUI task returning a bare dict depends on.
             if isinstance(result, dict):
                 if "error" in result:
                     return json.dumps({"error": result["error"]})

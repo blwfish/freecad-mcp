@@ -276,16 +276,17 @@ class TestRunOnGuiThread:
 
     def test_qt_mode_success_dict_without_result_key_does_not_crash(self, server):
         """M3: a task dict with 'success' but no 'result' key (e.g.
-        view_ops.set_view_gui_safe's task returns {"success": True, "view":
-        "top"}) previously matched a GUI-mode-only `if "success" in result:`
-        branch that unconditionally indexed result["result"] -> KeyError.
-        Pre-loading the response queue directly (rather than a background
-        thread) avoids needing QtCore's real event loop timing at all —
-        same pattern as test_stale_response_discarded above.
+        {"success": True, "view": "top"}, the shape the now-removed
+        view_ops.set_view_gui_safe used to return) previously matched a
+        GUI-mode-only `if "success" in result:` branch that unconditionally
+        indexed result["result"] -> KeyError. Pre-loading the response
+        queue directly (rather than a background thread) avoids needing
+        QtCore's real event loop timing at all — same pattern as
+        test_stale_response_discarded above.
 
         Must fall through to stringifying the whole dict, matching what the
-        headless branch has always done and what set_view_gui_safe's own
-        `"success" in str(result_str)` check depends on.
+        headless branch has always done — the general contract any GUI
+        task returning a bare dict depends on.
         """
         import freecad_mcp_handler as ss_mod
         ss_mod.QtCore = MagicMock()
