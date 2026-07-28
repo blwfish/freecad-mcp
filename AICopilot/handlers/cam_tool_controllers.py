@@ -58,18 +58,19 @@ class CAMToolControllersHandler(BaseHandler):
                 return self.log_and_return("add_tool_controller", args, error=error, duration=time.time() - start_time)
 
             # Get the job
-            job = self.get_object(job_name, doc)
-            if not job:
-                error = Exception(f"Job '{job_name}' not found")
-                return self.log_and_return("add_tool_controller", args, error=error, duration=time.time() - start_time)
+            doc, job, err = self.resolve_object(job_name, doc, noun='Job')
+            if err:
+                return self.log_and_return("add_tool_controller", args, error=Exception(err), duration=time.time() - start_time)
 
             # Get the tool bit
-            tool = self.get_object(tool_name, doc)
-            if not tool:
-                error = Exception(f"Tool '{tool_name}' not found")
-                return self.log_and_return("add_tool_controller", args, error=error, duration=time.time() - start_time)
+            doc, tool, err = self.resolve_object(tool_name, doc, noun='Tool')
+            if err:
+                return self.log_and_return("add_tool_controller", args, error=Exception(err), duration=time.time() - start_time)
 
-            # In FreeCAD 1.2+, tool bits are Part::FeaturePython with ShapeID attribute
+            # In FreeCAD 1.2+, tool bits are Part::FeaturePython with ShapeID attribute.
+            # Pinned wording (test_non_tool_object_rejected) — kept as a manual check
+            # rather than resolve_object's attr= message, same precedent as part_ops.py's
+            # mirror_object/section checks.
             if not hasattr(tool, 'ShapeID'):
                 error = Exception(f"Object '{tool_name}' is not a tool bit (no ShapeID attribute)")
                 return self.log_and_return("add_tool_controller", args, error=error, duration=time.time() - start_time)
@@ -153,15 +154,10 @@ class CAMToolControllersHandler(BaseHandler):
                 error = Exception("job_name parameter required")
                 return self.log_and_return("list_tool_controllers", args, error=error, duration=time.time() - start_time)
 
-            job = self.get_object(job_name, doc)
-            if not job:
-                error = Exception(f"Job '{job_name}' not found")
-                return self.log_and_return("list_tool_controllers", args, error=error, duration=time.time() - start_time)
-
             # Get tool controllers
-            if not hasattr(job, 'Tools'):
-                error = Exception(f"Job '{job_name}' does not have tool controllers")
-                return self.log_and_return("list_tool_controllers", args, error=error, duration=time.time() - start_time)
+            doc, job, err = self.resolve_object(job_name, doc, attr='Tools', noun='Job')
+            if err:
+                return self.log_and_return("list_tool_controllers", args, error=Exception(err), duration=time.time() - start_time)
 
             controllers = job.Tools.Group if hasattr(job.Tools, 'Group') else []
 
@@ -215,19 +211,13 @@ class CAMToolControllersHandler(BaseHandler):
                 error = Exception("controller_name parameter required")
                 return self.log_and_return("get_tool_controller", args, error=error, duration=time.time() - start_time)
 
-            job = self.get_object(job_name, doc)
-            if not job:
-                error = Exception(f"Job '{job_name}' not found")
-                return self.log_and_return("get_tool_controller", args, error=error, duration=time.time() - start_time)
+            doc, _job, err = self.resolve_object(job_name, doc, noun='Job')
+            if err:
+                return self.log_and_return("get_tool_controller", args, error=Exception(err), duration=time.time() - start_time)
 
-            controller = self.get_object(controller_name, doc)
-            if not controller:
-                error = Exception(f"Tool controller '{controller_name}' not found")
-                return self.log_and_return("get_tool_controller", args, error=error, duration=time.time() - start_time)
-
-            if not hasattr(controller, 'SpindleSpeed'):
-                error = Exception(f"Object '{controller_name}' is not a tool controller")
-                return self.log_and_return("get_tool_controller", args, error=error, duration=time.time() - start_time)
+            doc, controller, err = self.resolve_object(controller_name, doc, attr='SpindleSpeed', noun='Tool controller')
+            if err:
+                return self.log_and_return("get_tool_controller", args, error=Exception(err), duration=time.time() - start_time)
 
             # Collect details
             result = f"Tool Controller: {controller.Label}\n"
@@ -292,14 +282,9 @@ class CAMToolControllersHandler(BaseHandler):
                 error = Exception("controller_name parameter required")
                 return self.log_and_return("update_tool_controller", args, error=error, duration=time.time() - start_time)
 
-            controller = self.get_object(controller_name, doc)
-            if not controller:
-                error = Exception(f"Tool controller '{controller_name}' not found")
-                return self.log_and_return("update_tool_controller", args, error=error, duration=time.time() - start_time)
-
-            if not hasattr(controller, 'SpindleSpeed'):
-                error = Exception(f"Object '{controller_name}' is not a tool controller")
-                return self.log_and_return("update_tool_controller", args, error=error, duration=time.time() - start_time)
+            doc, controller, err = self.resolve_object(controller_name, doc, attr='SpindleSpeed', noun='Tool controller')
+            if err:
+                return self.log_and_return("update_tool_controller", args, error=Exception(err), duration=time.time() - start_time)
 
             # Update parameters if provided
             updates = []
@@ -373,19 +358,13 @@ class CAMToolControllersHandler(BaseHandler):
                 error = Exception("controller_name parameter required")
                 return self.log_and_return("remove_tool_controller", args, error=error, duration=time.time() - start_time)
 
-            job = self.get_object(job_name, doc)
-            if not job:
-                error = Exception(f"Job '{job_name}' not found")
-                return self.log_and_return("remove_tool_controller", args, error=error, duration=time.time() - start_time)
+            doc, job, err = self.resolve_object(job_name, doc, noun='Job')
+            if err:
+                return self.log_and_return("remove_tool_controller", args, error=Exception(err), duration=time.time() - start_time)
 
-            controller = self.get_object(controller_name, doc)
-            if not controller:
-                error = Exception(f"Tool controller '{controller_name}' not found")
-                return self.log_and_return("remove_tool_controller", args, error=error, duration=time.time() - start_time)
-
-            if not hasattr(controller, 'SpindleSpeed'):
-                error = Exception(f"Object '{controller_name}' is not a tool controller")
-                return self.log_and_return("remove_tool_controller", args, error=error, duration=time.time() - start_time)
+            doc, controller, err = self.resolve_object(controller_name, doc, attr='SpindleSpeed', noun='Tool controller')
+            if err:
+                return self.log_and_return("remove_tool_controller", args, error=Exception(err), duration=time.time() - start_time)
 
             # Check if tool controller is in use by any operations
             in_use = []
