@@ -155,34 +155,59 @@ except ImportError as e:
 # =============================================================================
 # Modular Handlers
 # =============================================================================
+# Single source of truth for {attr_name: HandlerClass} -- __init__ and
+# _reload_handlers each used to hand-maintain their own copy of this same
+# 25-entry mapping (plus their own copy of the flat `from handlers import
+# (...)` name list), so a handler added to one but not the other would
+# silently only work until the next hot-reload. Both now derive their
+# instantiation dict from this one dict via _build_handler_class_map,
+# which resolves against whatever `handlers` module object is current
+# (the module-level import at startup, or the freshly-reloaded package
+# object _reload_handlers builds).
+_HANDLER_CLASS_NAMES = {
+    'primitives': 'PrimitivesHandler',
+    'boolean_ops': 'BooleanOpsHandler',
+    'transforms': 'TransformsHandler',
+    'sketch_ops': 'SketchOpsHandler',
+    'partdesign_ops': 'PartDesignOpsHandler',
+    'part_ops': 'PartOpsHandler',
+    'cam_ops': 'CAMOpsHandler',
+    'cam_tools': 'CAMToolsHandler',
+    'cam_tool_controllers': 'CAMToolControllersHandler',
+    'draft_ops': 'DraftOpsHandler',
+    'measurement_ops': 'MeasurementOpsHandler',
+    'spreadsheet_ops': 'SpreadsheetOpsHandler',
+    'mesh_ops': 'MeshOpsHandler',
+    'spatial_ops': 'SpatialOpsHandler',
+    'inspector_ops': 'InspectorOpsHandler',
+    'macro_ops': 'MacroOpsHandler',
+    'introspection_ops': 'IntrospectionOpsHandler',
+    'sketch_builder_ops': 'SketchBuilderOpsHandler',
+    'verification_ops': 'VerificationOpsHandler',
+    'fixture_ops': 'FixtureOpsHandler',
+    'diagnostics_ops': 'DiagnosticsOpsHandler',
+    'execute_python_ops': 'ExecutePythonOpsHandler',
+    'assembly_ops': 'AssemblyOpsHandler',
+    # GUI-sensitive handlers get the task queues for thread safety
+    # (see _instantiate_handlers) -- listed last only to mirror the
+    # historical dict order; position carries no behavioral meaning.
+    'view_ops': 'ViewOpsHandler',
+    'document_ops': 'DocumentOpsHandler',
+}
+
+
+def _build_handler_class_map(handlers_module) -> Dict[str, type]:
+    """Resolve _HANDLER_CLASS_NAMES against a `handlers` module/package
+    object into {attr_name: class}. Called with the module-level import
+    at startup, or with the freshly-reloaded package object during
+    _reload_handlers -- either way, the {attr_name: class_name} mapping
+    itself is defined in exactly one place."""
+    return {attr: getattr(handlers_module, cls_name)
+            for attr, cls_name in _HANDLER_CLASS_NAMES.items()}
+
+
 try:
-    from handlers import (
-        PrimitivesHandler,
-        BooleanOpsHandler,
-        TransformsHandler,
-        SketchOpsHandler,
-        PartDesignOpsHandler,
-        PartOpsHandler,
-        CAMOpsHandler,
-        CAMToolsHandler,
-        CAMToolControllersHandler,
-        DraftOpsHandler,
-        ViewOpsHandler,
-        DocumentOpsHandler,
-        MeasurementOpsHandler,
-        SpreadsheetOpsHandler,
-        MeshOpsHandler,
-        SpatialOpsHandler,
-        InspectorOpsHandler,
-        MacroOpsHandler,
-        IntrospectionOpsHandler,
-        SketchBuilderOpsHandler,
-        VerificationOpsHandler,
-        FixtureOpsHandler,
-        DiagnosticsOpsHandler,
-        ExecutePythonOpsHandler,
-        AssemblyOpsHandler,
-    )
+    import handlers as _handlers_module
     FreeCAD.Console.PrintMessage("Modular handlers loaded successfully\n")
 except ImportError as e:
     FreeCAD.Console.PrintError(f"Modular handlers required but not available: {e}\n")
@@ -312,39 +337,8 @@ class FreeCADSocketServer:
         # request_selection/complete_selection workflow, plus select/clear/get).
         self.selector = UniversalSelector()
 
-        # Interactive selection manager (fillet/chamfer/draft/shell/thickness
-        # request_selection/complete_selection workflow, plus select/clear/get).
-        self.selector = UniversalSelector()
-
         # Initialize handlers
-        self._instantiate_handlers({
-            'primitives': PrimitivesHandler,
-            'boolean_ops': BooleanOpsHandler,
-            'transforms': TransformsHandler,
-            'sketch_ops': SketchOpsHandler,
-            'partdesign_ops': PartDesignOpsHandler,
-            'part_ops': PartOpsHandler,
-            'cam_ops': CAMOpsHandler,
-            'cam_tools': CAMToolsHandler,
-            'cam_tool_controllers': CAMToolControllersHandler,
-            'draft_ops': DraftOpsHandler,
-            'measurement_ops': MeasurementOpsHandler,
-            'spreadsheet_ops': SpreadsheetOpsHandler,
-            'mesh_ops': MeshOpsHandler,
-            'spatial_ops': SpatialOpsHandler,
-            'inspector_ops': InspectorOpsHandler,
-            'macro_ops': MacroOpsHandler,
-            'introspection_ops': IntrospectionOpsHandler,
-            'sketch_builder_ops': SketchBuilderOpsHandler,
-            'verification_ops': VerificationOpsHandler,
-            'fixture_ops': FixtureOpsHandler,
-            'diagnostics_ops': DiagnosticsOpsHandler,
-            'execute_python_ops': ExecutePythonOpsHandler,
-            'assembly_ops': AssemblyOpsHandler,
-            # GUI-sensitive handlers get the task queues for thread safety
-            'view_ops': ViewOpsHandler,
-            'document_ops': DocumentOpsHandler,
-        })
+        self._instantiate_handlers(_build_handler_class_map(_handlers_module))
 
         FreeCAD.Console.PrintMessage("Socket server initialized with modular handlers\n")
 
@@ -1541,72 +1535,23 @@ class FreeCADSocketServer:
             import handlers.base as _base
             _reload('handlers.base', _base)
 
-            # Reload each handler module
-            handler_modules = [
-                'handlers.primitives',
-                'handlers.boolean_ops',
-                'handlers.transforms',
-                'handlers.sketch_ops',
-                'handlers.partdesign_ops',
-                'handlers.part_ops',
-                'handlers.cam_ops',
-                'handlers.cam_tools',
-                'handlers.cam_tool_controllers',
-                'handlers.draft_ops',
-                'handlers.view_ops',
-                'handlers.document_ops',
-                'handlers.measurement_ops',
-                'handlers.spreadsheet_ops',
-                'handlers.mesh_ops',
-                'handlers.spatial_ops',
-                'handlers.inspector_ops',
-                'handlers.macro_ops',
-                'handlers.introspection_ops',
-                'handlers.sketch_builder_ops',
-                'handlers.verification_ops',
-                'handlers.fixture_ops',
-                'handlers.diagnostics_ops',
-                'handlers.execute_python_ops',
-                'handlers.assembly_ops',
-            ]
+            # Reload each handler module. Derived from the same
+            # _HANDLER_CLASS_NAMES dict __init__ uses -- attr_name maps
+            # 1:1 onto its module's dotted path (handlers.<attr_name>).
+            handler_modules = [f'handlers.{attr}' for attr in _HANDLER_CLASS_NAMES]
             for mod_name in handler_modules:
                 mod = sys.modules.get(mod_name)
                 if mod:
                     _reload(mod_name, mod)
 
-            # Reload the package __init__ so `from handlers import X` picks
-            # up the reloaded classes
+            # Reload the package __init__ so lookups against it resolve to
+            # the freshly-reloaded classes, then rebuild the {attr_name:
+            # class} map against that fresh package object -- same
+            # _build_handler_class_map used at startup, just fed a
+            # different (freshly-reloaded) `handlers` module object.
             import handlers as _handlers_pkg
-            _reload('handlers', _handlers_pkg)
-
-            # Re-import fresh classes
-            from handlers import (
-                PrimitivesHandler,
-                BooleanOpsHandler,
-                TransformsHandler,
-                SketchOpsHandler,
-                PartDesignOpsHandler,
-                PartOpsHandler,
-                CAMOpsHandler,
-                CAMToolsHandler,
-                CAMToolControllersHandler,
-                DraftOpsHandler,
-                ViewOpsHandler,
-                DocumentOpsHandler,
-                MeasurementOpsHandler,
-                SpreadsheetOpsHandler,
-                MeshOpsHandler,
-                SpatialOpsHandler,
-                InspectorOpsHandler,
-                MacroOpsHandler,
-                IntrospectionOpsHandler,
-                SketchBuilderOpsHandler,
-                VerificationOpsHandler,
-                FixtureOpsHandler,
-                DiagnosticsOpsHandler,
-                ExecutePythonOpsHandler,
-                AssemblyOpsHandler,
-            )
+            _handlers_pkg = _reload('handlers', _handlers_pkg)
+            fresh_handler_classes = _build_handler_class_map(_handlers_pkg)
 
             # _checkpoints (DocumentOpsHandler), _clip_planes (ViewOpsHandler),
             # the traceback ring buffer (DiagnosticsOpsHandler), and the
@@ -1635,33 +1580,7 @@ class FreeCADSocketServer:
             old_python_ns = getattr(self, 'execute_python_ops', None) and getattr(self.execute_python_ops, '_python_namespace', None)
 
             # Re-create handler instances
-            self._instantiate_handlers({
-                'primitives': PrimitivesHandler,
-                'boolean_ops': BooleanOpsHandler,
-                'transforms': TransformsHandler,
-                'sketch_ops': SketchOpsHandler,
-                'partdesign_ops': PartDesignOpsHandler,
-                'part_ops': PartOpsHandler,
-                'cam_ops': CAMOpsHandler,
-                'cam_tools': CAMToolsHandler,
-                'cam_tool_controllers': CAMToolControllersHandler,
-                'draft_ops': DraftOpsHandler,
-                'measurement_ops': MeasurementOpsHandler,
-                'spreadsheet_ops': SpreadsheetOpsHandler,
-                'mesh_ops': MeshOpsHandler,
-                'spatial_ops': SpatialOpsHandler,
-                'inspector_ops': InspectorOpsHandler,
-                'macro_ops': MacroOpsHandler,
-                'introspection_ops': IntrospectionOpsHandler,
-                'sketch_builder_ops': SketchBuilderOpsHandler,
-                'verification_ops': VerificationOpsHandler,
-                'fixture_ops': FixtureOpsHandler,
-                'diagnostics_ops': DiagnosticsOpsHandler,
-                'execute_python_ops': ExecutePythonOpsHandler,
-                'assembly_ops': AssemblyOpsHandler,
-                'view_ops': ViewOpsHandler,
-                'document_ops': DocumentOpsHandler,
-            })
+            self._instantiate_handlers(fresh_handler_classes)
             if old_checkpoints:
                 self.document_ops._checkpoints = old_checkpoints
             if old_clip_planes:
