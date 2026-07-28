@@ -31,6 +31,8 @@ from tests.unit._freecad_mocks import (
     assert_error_contains,
     assert_success_contains,
     assert_awaiting_selection,
+    _Vec,
+    _Placement,
 )
 
 from handlers.partdesign_ops import PartDesignOpsHandler
@@ -404,6 +406,146 @@ class TestHoleWizard(unittest.TestCase):
         self.assertIn("Part::Cone", type_ids)
         self.assertIn("Part::Cylinder", type_ids)
         assert_success_contains(self, result, "countersink")
+
+    def test_creates_partdesign_hole_in_body_via_face_index(self):
+        """When face_index is given and the object is in a Body,
+        hole_wizard should create a genuine PartDesign::Hole (with an
+        auto-generated circle sketch attached to that face) instead of
+        the raw CSG cylinder-and-boolean-cut approach. Confirmed live via
+        a real FreeCAD instance -- including that FlatFace attachment's
+        native local origin is NOT the face's centroid (it's the
+        underlying surface's own parametric origin), so the sketch's
+        AttachmentOffset must be computed and set explicitly to recenter
+        local (0,0) at the face center."""
+        box = make_box_object("Pad")
+        face = box.Shape.Faces[5]  # face_index=6 (1-based)
+        face.CenterOfMass = _Vec(5, 5, 10)
+
+        body = make_body("Body", group=[box])
+        doc = make_mock_doc([body, box])
+        mock_FreeCAD.ActiveDocument = doc
+
+        hole_sketch = MagicMock()
+        hole_sketch.Placement = _Placement()  # identity: Base=(0,0,0), Rotation=identity
+        hole = MagicMock()
+        hole.State = []
+        body.newObject.side_effect = [hole_sketch, hole]
+
+        result = self.handler.hole_wizard({
+            'object_name': 'Pad', 'face_index': 6, 'hole_type': 'simple',
+            'diameter': 6, 'depth': 8, 'x': 2, 'y': 1,
+        })
+
+        body.newObject.assert_any_call("Sketcher::SketchObject", "Pad_HoleSketch")
+        body.newObject.assert_any_call("PartDesign::Hole", "Pad_Hole")
+        self.assertEqual(hole_sketch.AttachmentSupport, [(box, 'Face6')])
+        self.assertEqual(hole_sketch.MapMode, 'FlatFace')
+        # AttachmentOffset recenters local (0,0) to the face's centroid --
+        # identity placement means the offset equals the centroid itself.
+        self.assertEqual(hole_sketch.AttachmentOffset.Base, _Vec(5, 5, 10))
+        self.assertEqual(hole.Profile, hole_sketch)
+        self.assertEqual(hole.Diameter, 6)
+        self.assertEqual(hole.DepthType, "Dimension")
+        self.assertEqual(hole.Depth, 8)
+        self.assertEqual(hole.DrillPoint, 'Flat')
+        self.assertEqual(hole.HoleCutType, 'None')
+        assert_success_contains(self, result, "simple", "6mm", "Face6", "Pad", "PartDesign::Hole", "Body")
+
+    def test_creates_partdesign_hole_counterbore_in_body(self):
+        box = make_box_object("Pad")
+        box.Shape.Faces[5].CenterOfMass = _Vec(5, 5, 10)
+        body = make_body("Body", group=[box])
+        doc = make_mock_doc([body, box])
+        mock_FreeCAD.ActiveDocument = doc
+
+        hole_sketch = MagicMock()
+        hole_sketch.Placement = _Placement()
+        hole = MagicMock()
+        hole.State = []
+        body.newObject.side_effect = [hole_sketch, hole]
+
+        result = self.handler.hole_wizard({
+            'object_name': 'Pad', 'face_index': 6, 'hole_type': 'counterbore',
+            'diameter': 6, 'depth': 8, 'cb_diameter': 12, 'cb_depth': 3,
+        })
+
+        self.assertEqual(hole.HoleCutType, 'Counterbore')
+        self.assertEqual(hole.HoleCutDiameter, 12)
+        self.assertEqual(hole.HoleCutDepth, 3)
+        assert_success_contains(self, result, "counterbore")
+
+    def test_creates_partdesign_hole_countersink_derives_angle_in_body(self):
+        """PartDesign::Hole parameterizes a countersink by diameter +
+        included angle, not diameter + depth like the old CSG cone did --
+        the angle must be derived from cb_diameter/diameter/cb_depth.
+        Confirmed live: cb_diameter=12, diameter=6, cb_depth=3 -> 90
+        degrees exactly."""
+        box = make_box_object("Pad")
+        box.Shape.Faces[5].CenterOfMass = _Vec(5, 5, 10)
+        body = make_body("Body", group=[box])
+        doc = make_mock_doc([body, box])
+        mock_FreeCAD.ActiveDocument = doc
+
+        hole_sketch = MagicMock()
+        hole_sketch.Placement = _Placement()
+        hole = MagicMock()
+        hole.State = []
+        body.newObject.side_effect = [hole_sketch, hole]
+
+        result = self.handler.hole_wizard({
+            'object_name': 'Pad', 'face_index': 6, 'hole_type': 'countersink',
+            'diameter': 6, 'depth': 8, 'cb_diameter': 12, 'cb_depth': 3,
+        })
+
+        self.assertEqual(hole.HoleCutType, 'Countersink')
+        self.assertEqual(hole.HoleCutDiameter, 12)
+        self.assertAlmostEqual(hole.HoleCutCountersinkAngle, 90.0)
+        assert_success_contains(self, result, "countersink")
+
+    def test_invalid_hole_type_rejected_in_body(self):
+        box = make_box_object("Pad")
+        body = make_body("Body", group=[box])
+        doc = make_mock_doc([body, box])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.hole_wizard({
+            'object_name': 'Pad', 'face_index': 6, 'hole_type': 'square',
+        })
+
+        assert_error_contains(self, result, "invalid hole_type", "square")
+        body.newObject.assert_not_called()
+
+    def test_face_index_out_of_range_in_body(self):
+        box = make_box_object("Pad")
+        # _make_shape default: 6 faces
+        body = make_body("Body", group=[box])
+        doc = make_mock_doc([body, box])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.hole_wizard({
+            'object_name': 'Pad', 'face_index': 99, 'hole_type': 'simple',
+        })
+
+        assert_error_contains(self, result, "out of range", "6 faces")
+        body.newObject.assert_not_called()
+
+    def test_no_face_index_uses_standalone_csg_even_when_object_is_in_body(self):
+        """face_index is what opts into the Body-aware path -- a Body-
+        resident object with no face_index given must still get the old
+        CSG cylinder-and-cut behavior, not silently switch mechanisms."""
+        box = make_box_object("Pad")
+        body = make_body("Body", group=[box])
+        doc = make_mock_doc([body, box])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.hole_wizard({
+            'object_name': 'Pad', 'hole_type': 'simple', 'diameter': 6, 'depth': 10,
+        })
+
+        body.newObject.assert_not_called()
+        type_ids_added = [c.args[0] for c in doc.addObject.call_args_list]
+        self.assertIn("Part::Cylinder", type_ids_added)
+        assert_success_contains(self, result, "simple", "6mm", "Pad")
 
 
 # ---------------------------------------------------------------------------

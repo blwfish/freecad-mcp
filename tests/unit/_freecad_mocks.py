@@ -303,6 +303,10 @@ class _Rotation:
     def multiply(self, other):
         return _Rotation(self.axis, self.angle + other.angle)
 
+    def inverted(self):
+        """Inverse of an axis-angle rotation: same axis, negated angle."""
+        return _Rotation(self.axis, -self.angle)
+
     def multVec(self, vec):
         """Rotate vec by this axis-angle rotation (angle in degrees) via
         Rodrigues' formula — stand-in for FreeCAD.Rotation.multVec.

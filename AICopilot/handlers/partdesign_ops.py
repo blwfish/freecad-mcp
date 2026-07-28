@@ -1,6 +1,7 @@
 # PartDesign operation handlers for FreeCAD MCP
 
 import json
+import math
 import FreeCAD
 import Part
 from typing import Dict, Any
@@ -431,7 +432,27 @@ class PartDesignOpsHandler(BaseHandler):
             return f"Error creating auto chamfer: {e}"
 
     def hole_wizard(self, args: Dict[str, Any]) -> str:
-        """Create standard holes (simple, counterbore, countersink)."""
+        """Create standard holes (simple, counterbore, countersink).
+
+        Body-aware like mirror_feature/linear_pattern/polar_pattern/
+        create_helix: when face_index is given and the object is in a
+        Body, creates a genuine PartDesign::Hole instead of the raw CSG
+        cylinder-and-boolean-cut approach. PartDesign::Hole's Profile
+        must be a sketch attached to a planar face -- there's no way to
+        support the old "just x,y in space, no face needed" convenience
+        without a face reference, so face_index (1-based, same
+        convention as datum_from_face's face_index) is required to opt
+        into this path; omit it (or target a non-Body object) and
+        hole_wizard behaves exactly as it always has.
+
+        The generated sketch's local (x, y) origin is recentered to the
+        selected face's own centroid (confirmed live: FlatFace
+        attachment's native local origin is the underlying surface's own
+        parametric origin, which for a real solid is essentially
+        arbitrary and NOT the visible face's center) -- so x=0, y=0 means
+        "hole at the center of the selected face", matching
+        datum_from_face's "positioned at the face centroid" convention.
+        """
         try:
             object_name = args.get('object_name', '')
             hole_type = args.get('hole_type', 'simple')
@@ -441,6 +462,7 @@ class PartDesignOpsHandler(BaseHandler):
             y = args.get('y', 0)
             cb_diameter = args.get('cb_diameter', 12)
             cb_depth = args.get('cb_depth', 3)
+            face_index = args.get('face_index')
 
             doc = self.get_document()
             if not doc:
@@ -450,6 +472,85 @@ class PartDesignOpsHandler(BaseHandler):
             if not base_obj:
                 return f"Object not found: {object_name}"
 
+            body = self.find_body_for_object(base_obj, doc) if face_index is not None else None
+
+            if body:
+                hole_cut_types = {'simple': 'None', 'counterbore': 'Counterbore', 'countersink': 'Countersink'}
+                cut_type = hole_cut_types.get(hole_type.lower())
+                if cut_type is None:
+                    return f"Invalid hole_type '{hole_type}': must be 'simple', 'counterbore', or 'countersink'"
+
+                if not hasattr(base_obj, 'Shape'):
+                    return f"Object has no Shape: {object_name}"
+                faces = base_obj.Shape.Faces
+                face_index = int(face_index)
+                if face_index < 1 or face_index > len(faces):
+                    return f"Face index {face_index} out of range (object has {len(faces)} faces)"
+                face = faces[face_index - 1]
+                face_ref = f"Face{face_index}"
+
+                hole_sketch = body.newObject("Sketcher::SketchObject", f"{object_name}_HoleSketch")
+                hole_sketch.AttachmentSupport = [(base_obj, face_ref)]
+                hole_sketch.MapMode = 'FlatFace'
+                self.recompute(doc)
+
+                # Recenter local (0,0) to the face's own centroid --
+                # FlatFace's native local origin is the underlying
+                # surface's own parametric origin, not the visible face's
+                # center (confirmed live: for a face at global z=10, the
+                # native local origin mapped to global (0,0,10), not the
+                # face's actual centroid).
+                centroid = face.CenterOfMass
+                local_offset = hole_sketch.Placement.Rotation.inverted().multVec(
+                    centroid - hole_sketch.Placement.Base
+                )
+                hole_sketch.AttachmentOffset = FreeCAD.Placement(local_offset, FreeCAD.Rotation())
+                self.recompute(doc)
+
+                hole_sketch.addGeometry(Part.Circle(FreeCAD.Vector(x, y, 0), FreeCAD.Vector(0, 0, 1), diameter / 2))
+                self.recompute(doc)
+
+                hole = body.newObject("PartDesign::Hole", f"{object_name}_Hole")
+                hole.Profile = hole_sketch
+                hole.Diameter = diameter
+                hole.DepthType = "Dimension"
+                hole.Depth = depth
+                # 'Angled' (a realistic drill-bit point) is FreeCAD's own
+                # default, but the CSG path this Body-aware branch mirrors
+                # always cut a flat-bottomed cylinder -- match that
+                # geometry instead of silently changing hole shape.
+                hole.DrillPoint = 'Flat'
+                hole.HoleCutType = cut_type
+
+                if cut_type == 'Counterbore':
+                    hole.HoleCutDiameter = cb_diameter
+                    hole.HoleCutDepth = cb_depth
+                elif cut_type == 'Countersink':
+                    # PartDesign::Hole parameterizes a countersink by
+                    # diameter + included angle, not diameter + depth like
+                    # the old CSG cone did -- derive the equivalent angle
+                    # from the same cb_diameter/diameter/cb_depth inputs
+                    # so callers don't need new parameters. Verified live:
+                    # cb_diameter=12, diameter=6, cb_depth=3 -> 90 degrees,
+                    # a standard/sane countersink angle.
+                    hole.HoleCutDiameter = cb_diameter
+                    hole.HoleCutCountersinkAngle = 2 * math.degrees(
+                        math.atan2((cb_diameter - diameter) / 2, cb_depth)
+                    )
+
+                self.recompute(doc)
+
+                err = self._check_feature_state(hole, "Hole")
+                if err:
+                    return err
+
+                return (
+                    f"Created {hole_type} hole: {diameter}mm diameter at ({x}, {y}) "
+                    f"on {face_ref} of {object_name} (PartDesign::Hole in {body.Name})"
+                )
+
+            # No Body (or no face_index given) — standalone CSG cylinder
+            # cut approach (unchanged).
             # Create hole cylinder
             hole = doc.addObject("Part::Cylinder", "Hole")
             hole.Radius = diameter / 2
