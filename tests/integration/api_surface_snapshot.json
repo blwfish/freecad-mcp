@@ -140,6 +140,15 @@
     "Zmax": "App::PropertyDistance",
     "Zmin": "App::PropertyDistance"
   },
+  "PartDesign::AdditiveHelix": {
+    "Height": "App::PropertyLength",
+    "LeftHanded": "App::PropertyBool",
+    "Mode": "App::PropertyEnumeration",
+    "Pitch": "App::PropertyLength",
+    "Profile": "App::PropertyLinkSub",
+    "ReferenceAxis": "App::PropertyLinkSub",
+    "Turns": "App::PropertyFloatConstraint"
+  },
   "PartDesign::AdditivePipe": {
     "Profile": "App::PropertyLinkSub",
     "Spine": "App::PropertyLinkSub"
@@ -163,9 +172,30 @@
     "Profile": "App::PropertyLinkSub",
     "ReferenceAxis": "App::PropertyLinkSub"
   },
+  "PartDesign::Hole": {
+    "Depth": "App::PropertyLength",
+    "DepthType": "App::PropertyEnumeration",
+    "Diameter": "App::PropertyLength",
+    "DrillPoint": "App::PropertyEnumeration",
+    "HoleCutCountersinkAngle": "App::PropertyAngle",
+    "HoleCutDepth": "App::PropertyLength",
+    "HoleCutDiameter": "App::PropertyLength",
+    "HoleCutType": "App::PropertyEnumeration",
+    "Profile": "App::PropertyLinkSub"
+  },
   "PartDesign::Line": {
     "AttachmentSupport": "App::PropertyLinkSubList",
     "MapMode": "App::PropertyEnumeration"
+  },
+  "PartDesign::LinearPattern": {
+    "Direction": "App::PropertyLinkSub",
+    "Length": "App::PropertyLength",
+    "Occurrences": "App::PropertyIntegerConstraint",
+    "Originals": "App::PropertyLinkList"
+  },
+  "PartDesign::Mirrored": {
+    "MirrorPlane": "App::PropertyLinkSub",
+    "Originals": "App::PropertyLinkList"
   },
   "PartDesign::Pad": {
     "Length": "App::PropertyLength",
@@ -187,6 +217,12 @@
     "AttachmentSupport": "App::PropertyLinkSubList",
     "MapMode": "App::PropertyEnumeration"
   },
+  "PartDesign::PolarPattern": {
+    "Angle": "App::PropertyAngle",
+    "Axis": "App::PropertyLinkSub",
+    "Occurrences": "App::PropertyIntegerConstraint",
+    "Originals": "App::PropertyLinkList"
+  },
   "PartDesign::Revolution": {
     "Angle": "App::PropertyAngle",
     "Profile": "App::PropertyLinkSub",
@@ -204,6 +240,9 @@
     "Value": "App::PropertyLength"
   },
   "Sketcher::SketchObject": {
+    "AttachmentOffset": "App::PropertyPlacement",
+    "AttachmentSupport": "App::PropertyLinkSubList",
+    "MapMode": "App::PropertyEnumeration",
     "Placement": "App::PropertyPlacement"
   },
   "Spreadsheet::Sheet": {},
@@ -218,6 +257,6 @@
       "blw-fixes-v7",
       "e66fa73e6fe62a60f7bdbe495d42eb906da2493c"
     ],
-    "generated_at": "2026-07-25T06:33:18.219637+00:00"
+    "generated_at": "2026-07-28T19:42:48.338890+00:00"
   }
 }
