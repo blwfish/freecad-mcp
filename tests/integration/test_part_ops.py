@@ -30,7 +30,7 @@ def clean_document():
     })
     yield doc_name
     try:
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": f"FreeCAD.closeDocument('{doc_name}')"
         })
     except Exception:
@@ -177,7 +177,7 @@ class TestPartLoftSweep:
     def test_loft_two_sketches(self, clean_document):
         """Loft between two sketches at different heights."""
         # Create two sketches at different Z heights via execute_python
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": """
 import Part
 doc = FreeCAD.ActiveDocument
@@ -204,7 +204,7 @@ doc.recompute()
 
     def test_sweep_along_path(self, clean_document):
         """Sweep a profile along a path."""
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": """
 import Part
 doc = FreeCAD.ActiveDocument

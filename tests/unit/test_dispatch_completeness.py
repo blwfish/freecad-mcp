@@ -48,6 +48,23 @@ BRIDGE_ONLY_TOOLS = frozenset({
     "stop_freecad_instance",
 })
 
+# MCP-facing tool name -> the (differently-named) handler-side dispatch key
+# the bridge actually forwards it as. Unlike BRIDGE_ONLY_TOOLS, these DO
+# reach the FreeCAD-side handler -- just not under their own name, so a
+# literal-string match against the handler source finds nothing for the
+# MCP name itself.
+#
+# execute_python: the bridge always submits it as execute_python_async and
+# polls, specifically so long-running code can't hold the GUI thread until
+# the socket timeout (commit ecbe827). The handler's OWN raw-socket
+# "execute_python_sync" entry is a *different*, synchronous op that only
+# direct-socket callers (the integration test suite) use -- the MCP tool
+# never reaches it. Two names now, on purpose, after this used to be one
+# name meaning two different things depending which layer called it.
+MCP_NAME_TRANSLATIONS = {
+    "execute_python": "execute_python_async",
+}
+
 
 def _read(path: str) -> str:
     with open(path, 'r', encoding='utf-8') as f:
@@ -183,11 +200,15 @@ class TestDispatchCompleteness(unittest.TestCase):
         )
 
     def test_every_server_tool_is_routed_or_bridge_only(self):
-        """Each MCP tool must either route in the handler or be on the
-        bridge-only allow-list. Catches the 7ad1498 dead-letter bug."""
-        unrouted = (self.server_tools
-                    - self.handler_tools
-                    - BRIDGE_ONLY_TOOLS)
+        """Each MCP tool must either route in the handler under its own
+        name, route under an explicit MCP_NAME_TRANSLATIONS entry (the
+        bridge forwards it as a different name), or be on the bridge-only
+        allow-list. Catches the 7ad1498 dead-letter bug."""
+        translated_names = {MCP_NAME_TRANSLATIONS.get(t, t) for t in self.server_tools}
+        unrouted_translated = translated_names - self.handler_tools - BRIDGE_ONLY_TOOLS
+        # Map back to the original MCP-facing name for a readable error.
+        reverse_translation = {v: k for k, v in MCP_NAME_TRANSLATIONS.items()}
+        unrouted = {reverse_translation.get(t, t) for t in unrouted_translated}
         self.assertEqual(
             unrouted, set(),
             f"\nMCP tool(s) registered in freecad_mcp_server.py but with "
@@ -196,7 +217,9 @@ class TestDispatchCompleteness(unittest.TestCase):
             + "\n\nFix: add the tool name to direct_map, generic_dispatch_map, "
               "or an explicit `tool_name ==` branch in _execute_tool_inner. "
               "If the tool is intentionally bridge-only (no FreeCAD call), "
-              "add it to BRIDGE_ONLY_TOOLS in this test."
+              "add it to BRIDGE_ONLY_TOOLS in this test. If the bridge "
+              "forwards it under a different name, add that mapping to "
+              "MCP_NAME_TRANSLATIONS instead."
         )
 
     def test_every_server_tool_is_dispatched_by_bridge(self):

@@ -29,7 +29,7 @@ def clean_document():
     })
     yield doc_name
     try:
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": f"FreeCAD.closeDocument('{doc_name}')"
         })
     except Exception:
@@ -39,7 +39,7 @@ def clean_document():
 @pytest.fixture
 def body_with_pad(clean_document):
     """Create a PartDesign Body with a padded rectangular sketch (20x15x10)."""
-    send_command("execute_python", {
+    send_command("execute_python_sync", {
         "code": """
 import Part
 doc = FreeCAD.ActiveDocument
@@ -110,7 +110,7 @@ class TestRevolution:
         'x'/'y' mean sketch-local H_Axis/V_Axis, not global vectors — 'y'
         (V_Axis) is the axis that reproduces the same valid geometry here.
         """
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": """
 import Part, Sketcher
 doc = FreeCAD.ActiveDocument
@@ -145,7 +145,7 @@ result = None
         props = get_shape_props(clean_document, "Revolution")
         assert props is not None, "Revolution produced no Shape"
         assert_volume_close(props['volume'], 12566.37, op_label="revolution full")
-        type_id = send_command("execute_python", {
+        type_id = send_command("execute_python_sync", {
             "code": "FreeCAD.ActiveDocument.getObject('Revolution').TypeId"
         })
         assert "PartDesign::Revolution" in _text(type_id), \
@@ -156,7 +156,7 @@ result = None
         annular cross-section: 0.5 * pi*(15^2-5^2)*10 = 1000*pi = ~3141.59.
         Axis 'y' for the same reason as test_revolution_full above.
         """
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": """
 import Part, Sketcher
 doc = FreeCAD.ActiveDocument
@@ -201,7 +201,7 @@ doc.recompute()
         Body-aware fix; that axis/path combination no longer applies once
         the sketch's Body membership routes it through PartDesign::Revolution.
         """
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": """
 import Part, Sketcher
 doc = FreeCAD.ActiveDocument
@@ -255,7 +255,7 @@ class TestRevolutionStandalone:
         'Z' is a global vector here (the standalone path's mapping), and
         it's in-plane for this sketch, giving the same known-correct volume.
         """
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": """
 import Part, Sketcher
 doc = FreeCAD.ActiveDocument
@@ -283,7 +283,7 @@ doc.recompute()
         props = get_shape_props(clean_document, "Revolution")
         assert props is not None, "Revolution produced no Shape"
         assert_volume_close(props['volume'], 12566.37, op_label="standalone revolution")
-        type_id = send_command("execute_python", {
+        type_id = send_command("execute_python_sync", {
             "code": "FreeCAD.ActiveDocument.getObject('Revolution').TypeId"
         })
         assert "Part::Revolution" in _text(type_id) and "PartDesign" not in _text(type_id), \
@@ -293,7 +293,7 @@ doc.recompute()
         """The standalone path's degenerate case: axis="Y" is this sketch's
         own plane normal (placement-dependent check, distinct from the
         Body path's unconditional N_Axis rejection above)."""
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": """
 import Part, Sketcher
 doc = FreeCAD.ActiveDocument
@@ -408,7 +408,7 @@ class TestRib:
 
         A 20x15 rectangle extruded 5mm vertically: volume = 20*15*5 = 1500.
         """
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": """
 import Part, Sketcher
 doc = FreeCAD.ActiveDocument
@@ -457,7 +457,7 @@ class TestHelix:
         Both handedness values should produce a valid, non-degenerate swept
         solid from the same small circular profile.
         """
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": """
 import Part, Sketcher
 doc = FreeCAD.ActiveDocument

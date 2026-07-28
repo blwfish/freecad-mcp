@@ -1118,7 +1118,18 @@ class FreeCADSocketServer:
             return self._dispatch_to_handler(generic_dispatch_map[tool_name], args, tool_name)
 
         # Special tools
-        if tool_name == "execute_python":
+        # execute_python_sync: the raw-socket synchronous entry, used only by
+        # direct-socket callers (the integration test suite's send_command
+        # helper) that want to block until the code finishes rather than
+        # poll a job. This is NOT what the MCP-facing "execute_python" tool
+        # calls -- that tool (freecad_mcp_server.py) always submits via
+        # execute_python_async and polls, specifically to avoid holding the
+        # GUI thread until the socket timeout on long-running code (see
+        # commit ecbe827, "Make execute_python use async+poll with unlimited
+        # timeout"). Two different names now, on purpose, to end the
+        # confusing state where the same string meant two different things
+        # depending which layer called it.
+        if tool_name == "execute_python_sync":
             return self.execute_python_ops.execute(args)
         if tool_name == "execute_python_async":
             return self._execute_python_async(args)

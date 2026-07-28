@@ -108,7 +108,7 @@ def clean_document():
     yield doc_name
     # Cleanup: close document without saving
     try:
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": f"FreeCAD.closeDocument('{doc_name}')"
         })
     except Exception:
@@ -133,13 +133,13 @@ class TestDocumentCreation:
             f"Document creation failed: {result}"
 
         # Verify document exists
-        check = send_command("execute_python", {
+        check = send_command("execute_python_sync", {
             "code": f"FreeCAD.getDocument('{doc_name}').Name"
         })
         assert doc_name in str(check), f"Document not found after creation: {check}"
 
         # Cleanup
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": f"FreeCAD.closeDocument('{doc_name}')"
         })
 
@@ -194,7 +194,7 @@ class TestPrimitives:
         not crash or deadlock (issue #16: FreeCAD.newDocument() on wrong thread).
         """
         # Close all documents first
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": "for name in list(FreeCAD.listDocuments().keys()): FreeCAD.closeDocument(name)"
         })
 
@@ -230,7 +230,7 @@ class TestSketchPadWorkflow:
     def test_full_sketch_to_pad(self, clean_document):
         """Full workflow: create sketch → add rectangle → pad to solid."""
         # Step 1: Create a sketch on XY plane via execute_python
-        sketch_result = send_command("execute_python", {
+        sketch_result = send_command("execute_python_sync", {
             "code": """
 import FreeCAD
 import Part
@@ -609,7 +609,7 @@ class TestPartDesignDispatch:
             "length": 30, "width": 30, "height": 10,
         })
         # Create sketch for pocket
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": """
 import FreeCAD, Part
 doc = FreeCAD.ActiveDocument
@@ -661,14 +661,14 @@ class TestConnection:
 
     def test_ping(self):
         """Sending a ping should get a response."""
-        result = send_command("execute_python", {
+        result = send_command("execute_python_sync", {
             "code": "'pong'"
         })
         assert "pong" in str(result).lower(), f"Ping failed: {result}"
 
     def test_freecad_version(self):
         """Should be able to read FreeCAD version."""
-        result = send_command("execute_python", {
+        result = send_command("execute_python_sync", {
             "code": "FreeCAD.Version()[0] + '.' + FreeCAD.Version()[1]"
         })
         result_str = str(result)

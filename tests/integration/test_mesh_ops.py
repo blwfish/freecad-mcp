@@ -33,7 +33,7 @@ def _mesh(args: dict, timeout: float = 30.0) -> str:
 
 
 def _exec(code: str, timeout: float = 10.0):
-    return send_command("execute_python", {"code": code}, timeout=timeout)
+    return send_command("execute_python_sync", {"code": code}, timeout=timeout)
 
 
 # ---------------------------------------------------------------------------

@@ -53,7 +53,7 @@ def _load_snapshot() -> dict:
 
 def _live_scan(scope: dict) -> dict:
     code = build_remote_scan_code(scope)
-    resp = send_command("execute_python", {"code": code}, timeout=60.0)
+    resp = send_command("execute_python_sync", {"code": code}, timeout=60.0)
     assert "error" not in resp, f"execute_python failed while live-scanning API surface: {resp}"
     result_str = resp.get("result", "")
     try:

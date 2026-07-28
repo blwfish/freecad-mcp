@@ -31,7 +31,7 @@ def _placement_base(doc_name: str, obj_name: str) -> tuple:
         f"print(json.dumps([float(p.x), float(p.y), float(p.z)]))\n"
         f"result = None\n"
     )
-    raw = send_command("execute_python", {"code": code})
+    raw = send_command("execute_python_sync", {"code": code})
     text = _result_text(raw).strip()
     if text.startswith("Result: "):
         text = text[len("Result: "):].strip()
@@ -47,7 +47,7 @@ def clean_document():
     })
     yield doc_name
     try:
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": f"FreeCAD.closeDocument('{doc_name}')"
         })
     except Exception:

@@ -18,7 +18,7 @@ from .test_e2e_workflows import send_command
 
 @pytest.fixture(scope="module", autouse=True)
 def _require_draft():
-    result = send_command("execute_python", {
+    result = send_command("execute_python_sync", {
         "code": """
 try:
     import Draft
@@ -44,7 +44,7 @@ def clean_document():
     })
     yield doc_name
     try:
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": f"FreeCAD.closeDocument('{doc_name}')"
         })
     except Exception:
@@ -130,7 +130,7 @@ class TestDraftArrays:
     def test_path_array(self, box_in_document):
         """Array along a wire path."""
         # Create a path via execute_python
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": """
 import Part
 doc = FreeCAD.ActiveDocument
@@ -155,7 +155,7 @@ doc.recompute()
 
     def test_point_array(self, box_in_document):
         """Array at specified point locations."""
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": """
 import Part
 doc = FreeCAD.ActiveDocument

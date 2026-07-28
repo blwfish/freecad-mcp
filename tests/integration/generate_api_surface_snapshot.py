@@ -55,7 +55,7 @@ def _ensure_connection():
 def generate_snapshot() -> dict:
     scope = scan_type_properties()
     code = build_remote_scan_code(scope)
-    resp = send_command("execute_python", {"code": code}, timeout=60.0)
+    resp = send_command("execute_python_sync", {"code": code}, timeout=60.0)
     if "error" in resp:
         raise RuntimeError(f"execute_python failed while scanning API surface: {resp}")
     result_str = resp.get("result", "")

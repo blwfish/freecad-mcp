@@ -32,7 +32,7 @@ import os
 os.environ['FREECAD_MCP_FEEDBACK_FILE'] = {path!r}
 result = os.environ['FREECAD_MCP_FEEDBACK_FILE']
 """
-    return send_command("execute_python", {"code": code}, timeout=10.0)
+    return send_command("execute_python_sync", {"code": code}, timeout=10.0)
 
 
 def _clear_feedback_path() -> dict:
@@ -41,7 +41,7 @@ import os
 os.environ.pop('FREECAD_MCP_FEEDBACK_FILE', None)
 result = 'cleared'
 """
-    return send_command("execute_python", {"code": code}, timeout=10.0)
+    return send_command("execute_python_sync", {"code": code}, timeout=10.0)
 
 
 def _intro(tool_args: dict) -> dict:

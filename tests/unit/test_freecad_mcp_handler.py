@@ -467,9 +467,13 @@ class TestExecuteTool:
         server._execute_tool("part_operations", {"operation": "box"})
         server._dispatch_part_operations.assert_called_once_with({"operation": "box"})
 
-    def test_execute_python_routing(self, server):
+    def test_execute_python_sync_routing(self, server):
+        """execute_python_sync is the raw-socket synchronous entry (used by
+        the integration test suite's direct-socket send_command helper) --
+        distinct from the MCP-facing "execute_python" tool, which the
+        bridge always forwards as execute_python_async + polls."""
         server.execute_python_ops.execute = MagicMock(return_value=json.dumps({"result": "2"}))
-        server._execute_tool("execute_python", {"code": "1+1"})
+        server._execute_tool("execute_python_sync", {"code": "1+1"})
         server.execute_python_ops.execute.assert_called_once_with({"code": "1+1"})
 
     def test_get_debug_logs_routing(self, server):
