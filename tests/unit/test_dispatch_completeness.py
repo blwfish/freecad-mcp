@@ -110,6 +110,13 @@ def extract_bridge_dispatched_names(src: str) -> set:
       * ``name == "x"`` / ``elif name == "x"`` comparisons
       * names inside an ``elif name in ["a", "b", ...]`` list (possibly
         spanning several lines)
+      * ``elif name in _generic_dispatch_tools:`` — the whitelist is no
+        longer a literal list (that duplication is exactly how
+        "cam_machines" shipped as a dead routing entry: the schema list
+        and the routing list drifted independently). It's now derived as
+        ``{t.name for t in _smart_dispatcher_tools} - _BESPOKE_DISPATCH_TOOLS``,
+        so recognizing the derivation means parsing both operands instead
+        of a literal list.
     """
     names = set()
     for m in re.finditer(r'\bname\s*==\s*["\']([a-zA-Z_][a-zA-Z0-9_]*)["\']', src):
@@ -117,7 +124,35 @@ def extract_bridge_dispatched_names(src: str) -> set:
     for block in re.finditer(r'\bname\s+in\s*\[(.*?)\]', src, re.DOTALL):
         for m in re.finditer(r'["\']([a-zA-Z_][a-zA-Z0-9_]*)["\']', block.group(1)):
             names.add(m.group(1))
+    if re.search(r'\bname\s+in\s+_generic_dispatch_tools\b', src):
+        names |= _extract_generic_dispatch_tools(src)
     return names
+
+
+def _extract_generic_dispatch_tools(src: str) -> set:
+    """Statically compute _generic_dispatch_tools's value: every name in
+    _smart_dispatcher_tools minus every name literally listed in
+    _BESPOKE_DISPATCH_TOOLS. Mirrors the actual expression in
+    freecad_mcp_server.py without executing it."""
+    smart_block = re.search(
+        r'_smart_dispatcher_tools\s*=\s*\[(.*?)\n    \]\n', src, re.DOTALL
+    )
+    if not smart_block:
+        return set()
+    smart_names = {m.group(1) for m in re.finditer(
+        r'types\.Tool\(\s*\n?\s*name="([a-zA-Z_][a-zA-Z0-9_]*)"', smart_block.group(1)
+    )}
+
+    bespoke_block = re.search(
+        r'_BESPOKE_DISPATCH_TOOLS\s*=\s*\{(.*?)\}', src, re.DOTALL
+    )
+    bespoke_names = set()
+    if bespoke_block:
+        bespoke_names = {m.group(1) for m in re.finditer(
+            r'["\']([a-zA-Z_][a-zA-Z0-9_]*)["\']', bespoke_block.group(1)
+        )}
+
+    return smart_names - bespoke_names
 
 
 class TestDispatchCompleteness(unittest.TestCase):
