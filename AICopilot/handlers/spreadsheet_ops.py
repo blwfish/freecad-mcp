@@ -66,14 +66,9 @@ class SpreadsheetOpsHandler(BaseHandler):
             cell = args.get('cell', 'A1')
             value = args.get('value', '')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            spreadsheet = self.get_object(spreadsheet_name, doc)
-            if not spreadsheet:
-                return f"Spreadsheet not found: {spreadsheet_name}"
-
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            if err:
+                return err
             if spreadsheet.TypeId != 'Spreadsheet::Sheet':
                 return f"Object {spreadsheet_name} is not a spreadsheet"
 
@@ -92,14 +87,9 @@ class SpreadsheetOpsHandler(BaseHandler):
             spreadsheet_name = args.get('spreadsheet_name', '')
             cell = args.get('cell', 'A1')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            spreadsheet = self.get_object(spreadsheet_name, doc)
-            if not spreadsheet:
-                return f"Spreadsheet not found: {spreadsheet_name}"
-
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            if err:
+                return err
             if spreadsheet.TypeId != 'Spreadsheet::Sheet':
                 return f"Object {spreadsheet_name} is not a spreadsheet"
 
@@ -130,14 +120,9 @@ class SpreadsheetOpsHandler(BaseHandler):
             cell = args.get('cell', 'A1')
             alias = args.get('alias', '')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            spreadsheet = self.get_object(spreadsheet_name, doc)
-            if not spreadsheet:
-                return f"Spreadsheet not found: {spreadsheet_name}"
-
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            if err:
+                return err
             if spreadsheet.TypeId != 'Spreadsheet::Sheet':
                 return f"Object {spreadsheet_name} is not a spreadsheet"
 
@@ -158,14 +143,9 @@ class SpreadsheetOpsHandler(BaseHandler):
             spreadsheet_name = args.get('spreadsheet_name', '')
             cell = args.get('cell', 'A1')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            spreadsheet = self.get_object(spreadsheet_name, doc)
-            if not spreadsheet:
-                return f"Spreadsheet not found: {spreadsheet_name}"
-
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            if err:
+                return err
             if spreadsheet.TypeId != 'Spreadsheet::Sheet':
                 return f"Object {spreadsheet_name} is not a spreadsheet"
 
@@ -185,14 +165,9 @@ class SpreadsheetOpsHandler(BaseHandler):
             spreadsheet_name = args.get('spreadsheet_name', '')
             cell = args.get('cell', 'A1')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            spreadsheet = self.get_object(spreadsheet_name, doc)
-            if not spreadsheet:
-                return f"Spreadsheet not found: {spreadsheet_name}"
-
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            if err:
+                return err
             if spreadsheet.TypeId != 'Spreadsheet::Sheet':
                 return f"Object {spreadsheet_name} is not a spreadsheet"
 
@@ -211,14 +186,9 @@ class SpreadsheetOpsHandler(BaseHandler):
             start_cell = args.get('start_cell', 'A1')
             values = args.get('values', [])  # 2D array of values
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            spreadsheet = self.get_object(spreadsheet_name, doc)
-            if not spreadsheet:
-                return f"Spreadsheet not found: {spreadsheet_name}"
-
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            if err:
+                return err
             if spreadsheet.TypeId != 'Spreadsheet::Sheet':
                 return f"Object {spreadsheet_name} is not a spreadsheet"
 
@@ -259,14 +229,9 @@ class SpreadsheetOpsHandler(BaseHandler):
             start_cell = args.get('start_cell', 'A1')
             end_cell = args.get('end_cell', 'A1')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            spreadsheet = self.get_object(spreadsheet_name, doc)
-            if not spreadsheet:
-                return f"Spreadsheet not found: {spreadsheet_name}"
-
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            if err:
+                return err
             if spreadsheet.TypeId != 'Spreadsheet::Sheet':
                 return f"Object {spreadsheet_name} is not a spreadsheet"
 
@@ -312,17 +277,13 @@ class SpreadsheetOpsHandler(BaseHandler):
             spreadsheet_name = args.get('spreadsheet_name', '')
             cell_or_alias = args.get('cell', '')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
+            doc, obj, err = self.resolve_object(object_name)
+            if err:
+                return err
 
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
-
-            spreadsheet = self.get_object(spreadsheet_name, doc)
-            if not spreadsheet:
-                return f"Spreadsheet not found: {spreadsheet_name}"
+            _, spreadsheet, err = self.resolve_object(spreadsheet_name, doc, noun='Spreadsheet')
+            if err:
+                return err
 
             # Set expression binding
             expression = f"{spreadsheet_name}.{cell_or_alias}"
@@ -340,14 +301,9 @@ class SpreadsheetOpsHandler(BaseHandler):
         try:
             spreadsheet_name = args.get('spreadsheet_name', '')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            spreadsheet = self.get_object(spreadsheet_name, doc)
-            if not spreadsheet:
-                return f"Spreadsheet not found: {spreadsheet_name}"
-
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            if err:
+                return err
             if spreadsheet.TypeId != 'Spreadsheet::Sheet':
                 return f"Object {spreadsheet_name} is not a spreadsheet"
 
@@ -401,14 +357,9 @@ class SpreadsheetOpsHandler(BaseHandler):
             start_cell = args.get('start_cell', 'A1')
             delimiter = args.get('delimiter', ',')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            spreadsheet = self.get_object(spreadsheet_name, doc)
-            if not spreadsheet:
-                return f"Spreadsheet not found: {spreadsheet_name}"
-
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            if err:
+                return err
             if spreadsheet.TypeId != 'Spreadsheet::Sheet':
                 return f"Object {spreadsheet_name} is not a spreadsheet"
 
@@ -454,14 +405,9 @@ class SpreadsheetOpsHandler(BaseHandler):
             end_cell = args.get('end_cell')   # None => auto-detect the used range
             delimiter = args.get('delimiter', ',')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            spreadsheet = self.get_object(spreadsheet_name, doc)
-            if not spreadsheet:
-                return f"Spreadsheet not found: {spreadsheet_name}"
-
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            if err:
+                return err
             if spreadsheet.TypeId != 'Spreadsheet::Sheet':
                 return f"Object {spreadsheet_name} is not a spreadsheet"
 

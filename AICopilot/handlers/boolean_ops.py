@@ -24,11 +24,10 @@ class BooleanOpsHandler(BaseHandler):
             # Get object references
             objs = []
             for obj_name in objects:
-                obj = self.get_object(obj_name, doc)
-                if obj:
-                    objs.append(obj)
-                else:
-                    return f"Object not found: {obj_name}"
+                _, obj, err = self.resolve_object(obj_name, doc)
+                if err:
+                    return err
+                objs.append(obj)
 
             # Safety: warn on high complexity, save before risky op
             warning = self.check_complexity(objs)
@@ -70,17 +69,16 @@ class BooleanOpsHandler(BaseHandler):
                 return "No active document"
 
             # Get object references
-            base_obj = self.get_object(base, doc)
-            if not base_obj:
-                return f"Base object not found: {base}"
+            _, base_obj, err = self.resolve_object(base, doc, noun='Base object')
+            if err:
+                return err
 
             tool_objs = []
             for tool_name in tools:
-                tool_obj = self.get_object(tool_name, doc)
-                if tool_obj:
-                    tool_objs.append(tool_obj)
-                else:
-                    return f"Tool object not found: {tool_name}"
+                _, tool_obj, err = self.resolve_object(tool_name, doc, noun='Tool object')
+                if err:
+                    return err
+                tool_objs.append(tool_obj)
 
             # Safety: save before risky op
             self.save_before_risky_op(doc)
@@ -126,11 +124,10 @@ class BooleanOpsHandler(BaseHandler):
             # Get object references
             objs = []
             for obj_name in objects:
-                obj = self.get_object(obj_name, doc)
-                if obj:
-                    objs.append(obj)
-                else:
-                    return f"Object not found: {obj_name}"
+                _, obj, err = self.resolve_object(obj_name, doc)
+                if err:
+                    return err
+                objs.append(obj)
 
             # Safety: warn on high complexity, save before risky op
             warning = self.check_complexity(objs)

@@ -24,13 +24,9 @@ class TransformsHandler(BaseHandler):
             z = args.get('z', 0)
             relative = args.get('relative', True)
 
-            doc = self.get_document()
-            if not doc:
-                return self.log_and_return("move_object", args, error=Exception("No active document"))
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return self.log_and_return("move_object", args, error=Exception(f"Object not found: {object_name}"))
+            doc, obj, err = self.resolve_object(object_name)
+            if err:
+                return self.log_and_return("move_object", args, error=Exception(err))
 
             if relative:
                 obj.Placement.Base = FreeCAD.Vector(
@@ -58,13 +54,9 @@ class TransformsHandler(BaseHandler):
             axis = args.get('axis', 'z')
             angle = args.get('angle', 90)
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
+            doc, obj, err = self.resolve_object(object_name)
+            if err:
+                return err
 
             # Set rotation axis
             axis_vectors = {
@@ -99,13 +91,9 @@ class TransformsHandler(BaseHandler):
             y = args.get('y', 0)
             z = args.get('z', 0)
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
+            doc, obj, err = self.resolve_object(object_name)
+            if err:
+                return err
 
             # Create copy. with_dependencies=True so parametric/body-backed
             # objects copy their dependency chain instead of referencing the
@@ -133,13 +121,9 @@ class TransformsHandler(BaseHandler):
             spacing_y = args.get('spacing_y', 0)
             spacing_z = args.get('spacing_z', 0)
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
+            doc, obj, err = self.resolve_object(object_name)
+            if err:
+                return err
 
             # Create array copies
             copies = []

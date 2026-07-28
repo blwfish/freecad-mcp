@@ -248,6 +248,105 @@ class TestGetObject:
 
 
 # ---------------------------------------------------------------------------
+# resolve_object — the shared doc/object/attr preamble extracted from
+# ~200 call sites across every handler file.
+# ---------------------------------------------------------------------------
+
+class TestResolveObject:
+    def _make_doc(self, objects_dict):
+        doc = MagicMock()
+        doc.getObject = lambda name: objects_dict.get(name)
+        doc.getObjectsByLabel = lambda label: [
+            o for o in objects_dict.values() if getattr(o, 'Label', None) == label
+        ]
+        return doc
+
+    def test_success_no_attr_check(self, base_handler):
+        obj = MagicMock(Label="Box")
+        doc = self._make_doc({"Box": obj})
+        got_doc, got_obj, err = base_handler.resolve_object("Box", doc)
+        assert got_doc is doc
+        assert got_obj is obj
+        assert err is None
+
+    def test_no_active_document(self, base_handler, mock_freecad):
+        mock_freecad.ActiveDocument = None
+        doc, obj, err = base_handler.resolve_object("Box")
+        assert doc is None
+        assert obj is None
+        assert err == "No active document"
+
+    def test_fetches_active_document_when_none_given(self, base_handler, mock_freecad):
+        obj = MagicMock(Label="Box")
+        active_doc = self._make_doc({"Box": obj})
+        mock_freecad.ActiveDocument = active_doc
+        doc, got_obj, err = base_handler.resolve_object("Box")
+        assert doc is active_doc
+        assert got_obj is obj
+        assert err is None
+
+    def test_object_not_found_default_noun(self, base_handler):
+        doc = self._make_doc({})
+        got_doc, obj, err = base_handler.resolve_object("Ghost", doc)
+        assert got_doc is doc
+        assert obj is None
+        assert err == "Object not found: Ghost"
+
+    def test_object_not_found_custom_noun(self, base_handler):
+        """Callers preserve their own noun (Sketch/Spreadsheet/etc.)
+        instead of a flattened generic 'Object' wording."""
+        doc = self._make_doc({})
+        _, _, err = base_handler.resolve_object("Ghost", doc, noun="Sketch")
+        assert err == "Sketch not found: Ghost"
+
+    def test_attr_check_passes_when_present(self, base_handler):
+        obj = MagicMock(Label="Box")
+        obj.Shape = MagicMock()
+        doc = self._make_doc({"Box": obj})
+        got_doc, got_obj, err = base_handler.resolve_object("Box", doc, attr="Shape")
+        assert got_obj is obj
+        assert err is None
+
+    def test_attr_check_fails_when_missing(self, base_handler):
+        obj = MagicMock(Label="Box", spec=["Label"])  # no Shape attribute
+        doc = self._make_doc({"Box": obj})
+        doc_out, obj_out, err = base_handler.resolve_object("Box", doc, attr="Shape", noun="Object")
+        # obj is still returned even on attr failure -- caller may want it
+        # for a more specific message, but must treat err as authoritative.
+        assert obj_out is obj
+        assert err == "Object Box has no Shape property"
+
+    def test_attr_check_or_semantics_with_tuple(self, base_handler):
+        """mesh_ops needs 'has Mesh OR Shape' -- a tuple means any one
+        of the given attributes satisfies the check."""
+        obj = MagicMock(Label="M", spec=["Label", "Mesh"])  # has Mesh, no Shape
+        doc = self._make_doc({"M": obj})
+        _, _, err = base_handler.resolve_object("M", doc, attr=("Mesh", "Shape"))
+        assert err is None
+
+    def test_attr_check_tuple_fails_when_none_present(self, base_handler):
+        obj = MagicMock(Label="M", spec=["Label"])  # neither Mesh nor Shape
+        doc = self._make_doc({"M": obj})
+        _, _, err = base_handler.resolve_object("M", doc, attr=("Mesh", "Shape"), noun="Object")
+        assert err == "Object M has no Mesh or Shape property"
+
+    def test_ambiguous_label_propagates_valueerror(self, base_handler):
+        """resolve_object must NOT swallow get_object's ambiguous-label
+        ValueError -- it propagates to the caller's own try/except,
+        exactly as it did before this helper existed."""
+        obj1 = MagicMock(Label="Tab")
+        obj1.Name = "Box001"
+        obj2 = MagicMock(Label="Tab")
+        obj2.Name = "Box002"
+        doc = MagicMock()
+        doc.getObject = lambda n: None
+        doc.getObjectsByLabel = lambda label: [obj1, obj2] if label == "Tab" else []
+
+        with pytest.raises(ValueError, match="Ambiguous label 'Tab'"):
+            base_handler.resolve_object("Tab", doc)
+
+
+# ---------------------------------------------------------------------------
 # recompute
 # ---------------------------------------------------------------------------
 

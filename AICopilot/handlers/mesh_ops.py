@@ -139,17 +139,10 @@ class MeshOpsHandler(BaseHandler):
                     error=Exception(f"Unsupported mesh format '{ext}'. Supported: {', '.join(sorted(self.MESH_FORMATS))}"),
                     duration=time.time() - start_time)
 
-            doc = self.get_document()
-            if not doc:
+            doc, obj, err = self.resolve_object(object_name)
+            if err:
                 return self.log_and_return("export_mesh", args,
-                    error=Exception("No active document"),
-                    duration=time.time() - start_time)
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return self.log_and_return("export_mesh", args,
-                    error=Exception(f"Object '{object_name}' not found"),
-                    duration=time.time() - start_time)
+                    error=Exception(err), duration=time.time() - start_time)
 
             # Ensure output directory exists
             out_dir = os.path.dirname(file_path)
@@ -213,17 +206,10 @@ class MeshOpsHandler(BaseHandler):
                     error=Exception("object_name parameter required"),
                     duration=time.time() - start_time)
 
-            doc = self.get_document()
-            if not doc:
+            doc, obj, err = self.resolve_object(object_name)
+            if err:
                 return self.log_and_return("mesh_to_solid", args,
-                    error=Exception("No active document"),
-                    duration=time.time() - start_time)
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return self.log_and_return("mesh_to_solid", args,
-                    error=Exception(f"Object '{object_name}' not found"),
-                    duration=time.time() - start_time)
+                    error=Exception(err), duration=time.time() - start_time)
 
             if not hasattr(obj, 'Mesh'):
                 return self.log_and_return("mesh_to_solid", args,
@@ -299,17 +285,10 @@ class MeshOpsHandler(BaseHandler):
                     error=Exception("object_name parameter required"),
                     duration=time.time() - start_time)
 
-            doc = self.get_document()
-            if not doc:
+            doc, obj, err = self.resolve_object(object_name)
+            if err:
                 return self.log_and_return("get_mesh_info", args,
-                    error=Exception("No active document"),
-                    duration=time.time() - start_time)
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return self.log_and_return("get_mesh_info", args,
-                    error=Exception(f"Object '{object_name}' not found"),
-                    duration=time.time() - start_time)
+                    error=Exception(err), duration=time.time() - start_time)
 
             if not hasattr(obj, 'Mesh'):
                 return self.log_and_return("get_mesh_info", args,
@@ -471,17 +450,10 @@ class MeshOpsHandler(BaseHandler):
             if ext in self.CAD_FORMATS:
                 import Part
 
-                doc = self.get_document()
-                if not doc:
+                doc, obj, err = self.resolve_object(object_name)
+                if err:
                     return self.log_and_return("export_file", args,
-                        error=Exception("No active document"),
-                        duration=time.time() - start_time)
-
-                obj = self.get_object(object_name, doc)
-                if not obj:
-                    return self.log_and_return("export_file", args,
-                        error=Exception(f"Object '{object_name}' not found"),
-                        duration=time.time() - start_time)
+                        error=Exception(err), duration=time.time() - start_time)
 
                 if not hasattr(obj, 'Shape'):
                     return self.log_and_return("export_file", args,
@@ -531,17 +503,10 @@ class MeshOpsHandler(BaseHandler):
                     error=Exception("object_name parameter required"),
                     duration=time.time() - start_time)
 
-            doc = self.get_document()
-            if not doc:
+            doc, obj, err = self.resolve_object(object_name)
+            if err:
                 return self.log_and_return("validate_mesh", args,
-                    error=Exception("No active document"),
-                    duration=time.time() - start_time)
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return self.log_and_return("validate_mesh", args,
-                    error=Exception(f"Object '{object_name}' not found"),
-                    duration=time.time() - start_time)
+                    error=Exception(err), duration=time.time() - start_time)
 
             if not hasattr(obj, 'Mesh'):
                 return self.log_and_return("validate_mesh", args,
@@ -693,17 +658,10 @@ class MeshOpsHandler(BaseHandler):
                     error=Exception("object_name parameter required"),
                     duration=time.time() - start_time)
 
-            doc = self.get_document()
-            if not doc:
+            doc, obj, err = self.resolve_object(object_name)
+            if err:
                 return self.log_and_return("simplify_mesh", args,
-                    error=Exception("No active document"),
-                    duration=time.time() - start_time)
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return self.log_and_return("simplify_mesh", args,
-                    error=Exception(f"Object '{object_name}' not found"),
-                    duration=time.time() - start_time)
+                    error=Exception(err), duration=time.time() - start_time)
 
             if not hasattr(obj, 'Mesh'):
                 return self.log_and_return("simplify_mesh", args,
