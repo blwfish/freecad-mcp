@@ -487,6 +487,10 @@ class ViewOpsHandler(BaseHandler):
             # removeObject needs the internal Name; object_name may be a
             # Label that get_object resolved, so use the resolved obj.Name.
             doc.removeObject(obj.Name)
+            # Recompute so any feature that referenced the deleted object
+            # (a dependent Boolean, a Sketch, a Body) doesn't sit on stale
+            # computed state until the next unrelated recompute triggers it.
+            self.recompute(doc)
             return f"Object '{object_name}' deleted"
         except Exception as e:
             return f"Error deleting object: {e}"
