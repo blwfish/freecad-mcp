@@ -1018,6 +1018,78 @@ class TestCreateHelix(unittest.TestCase):
 
         assert_error_contains(self, result, "failed to compute")
 
+    def test_creates_partdesign_additive_helix_in_body_turns_driven(self):
+        """When the sketch is in a Body, create_helix should behave like
+        its siblings revolution()/groove() already do: create a genuine
+        PartDesign::AdditiveHelix instead of the standalone Part::Sweep
+        path. Confirmed working via a live FreeCAD instance -- unlike
+        Part::Helix, PartDesign::AdditiveHelix does have a LeftHanded
+        property, and Mode must be set to 'pitch-turns-angle' before Turns
+        takes effect (setting Turns while Mode is still the default
+        'pitch-height-angle' silently no-ops)."""
+        sketch = make_sketch("S")
+        body = make_body("Body", group=[sketch])
+        doc = make_mock_doc([body, sketch])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_helix({
+            'sketch_name': 'S', 'pitch': 5, 'turns': 3, 'axis': 'x',
+        })
+
+        body.newObject.assert_called_with("PartDesign::AdditiveHelix", "Helix")
+        doc.addObject.assert_not_called()
+        helix = body.newObject.return_value
+        self.assertEqual(helix.Profile, sketch)
+        self.assertEqual(helix.ReferenceAxis, (sketch, ['H_Axis']))
+        self.assertEqual(helix.Mode, 'pitch-turns-angle')
+        self.assertEqual(helix.Pitch, 5)
+        self.assertEqual(helix.Turns, 3)
+        assert_success_contains(self, result, "S", "X-axis", "pitch=5", "PartDesign::AdditiveHelix", "Body")
+
+    def test_creates_partdesign_additive_helix_in_body_height_driven_left_handed(self):
+        sketch = make_sketch("S")
+        body = make_body("Body", group=[sketch])
+        doc = make_mock_doc([body, sketch])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_helix({
+            'sketch_name': 'S', 'pitch': 4, 'height': 20, 'axis': 'y', 'left_handed': True,
+        })
+
+        helix = body.newObject.return_value
+        self.assertEqual(helix.ReferenceAxis, (sketch, ['V_Axis']))
+        self.assertEqual(helix.Mode, 'pitch-height-angle')
+        self.assertEqual(helix.Height, 20)
+        self.assertTrue(helix.LeftHanded)
+        assert_success_contains(self, result, "Y-axis")
+
+    def test_n_axis_rejected_in_body_as_always_degenerate(self):
+        """N_Axis (default axis) is the sketch's own plane normal by
+        construction, for every sketch unconditionally -- mirroring
+        revolution()/groove()'s identical rejection."""
+        sketch = make_sketch("S")
+        body = make_body("Body", group=[sketch])
+        doc = make_mock_doc([body, sketch])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_helix({'sketch_name': 'S', 'pitch': 2, 'height': 10})
+
+        assert_error_contains(self, result, "n_axis")
+        body.newObject.assert_not_called()
+        doc.addObject.assert_not_called()
+
+    def test_invalid_axis_rejected_in_body(self):
+        sketch = make_sketch("S")
+        body = make_body("Body", group=[sketch])
+        doc = make_mock_doc([body, sketch])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.create_helix({'sketch_name': 'S', 'pitch': 2, 'height': 10, 'axis': 'q'})
+
+        assert_error_contains(self, result, "invalid axis", "q")
+        body.newObject.assert_not_called()
+        doc.addObject.assert_not_called()
+
 
 class TestCreateRib(unittest.TestCase):
     def setUp(self):

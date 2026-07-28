@@ -1336,7 +1336,22 @@ class PartDesignOpsHandler(BaseHandler):
             return f"Error creating thickness with selection: {e}"
 
     def create_helix(self, args: Dict[str, Any]) -> str:
-        """Create helical features (threads, springs)."""
+        """Create helical features (threads, springs).
+
+        Body-aware like revolution()/groove(): creates a genuine
+        PartDesign::AdditiveHelix (chains onto the Body's feature tree,
+        gains LeftHanded/Reversed/Midplane) when the sketch is in a Body,
+        falling back to the standalone Part::Sweep-along-a-computed-path
+        approach otherwise (unchanged from before -- still the only route
+        for a sketch with no Body).
+
+        Previously this always took the standalone path regardless of
+        Body membership, on the belief that no parametric FreeCAD type
+        supports LeftHanded. That's true of Part::Helix (the primitive
+        curve type the standalone path still uses below) but NOT of
+        PartDesign::AdditiveHelix -- confirmed via a live FreeCAD instance
+        that it has a real LeftHanded property and produces a valid shape.
+        """
         try:
             sketch_name = args.get('sketch_name', '')
             axis = args.get('axis', 'z')
@@ -1347,7 +1362,8 @@ class PartDesignOpsHandler(BaseHandler):
             # so height ignored it and the success message lied. If turns is given,
             # it drives the height (height = pitch * turns); otherwise derive turns
             # from height so the reported value is real.
-            if turns is not None:
+            turns_given = turns is not None
+            if turns_given:
                 height = pitch * turns
             else:
                 if height is None:
@@ -1364,6 +1380,62 @@ class PartDesignOpsHandler(BaseHandler):
             if not sketch:
                 return f"Sketch not found: {sketch_name}"
 
+            body = self.find_body_for_object(sketch, doc)
+
+            if body:
+                # Same in-plane-axis mapping as revolution()/groove(): a
+                # helix's ReferenceAxis must lie in the sketch's own plane
+                # -- geometrically a helix is a revolution with
+                # progressive translation added along that same axis.
+                # N_Axis (the sketch's own normal) is degenerate for the
+                # identical reason it is for revolution/groove: winding a
+                # planar profile around its own plane's normal sweeps zero
+                # volume, for any sketch.
+                axis_refs = {'x': 'H_Axis', 'y': 'V_Axis'}
+                ref_axis = axis_refs.get(axis.lower())
+                if ref_axis is None:
+                    if axis.lower() == 'z':
+                        return (
+                            "Invalid axis 'z': the sketch's own normal "
+                            "(N_Axis) cannot be used as a helix axis — "
+                            "winding a planar profile around its own "
+                            "plane's normal always sweeps zero volume, for "
+                            "any sketch. Use 'x' (H_Axis) or 'y' (V_Axis), "
+                            "which lie in the sketch's plane."
+                        )
+                    return f"Invalid axis '{axis}': must be 'x' or 'y'"
+
+                helix = body.newObject("PartDesign::AdditiveHelix", name)
+                helix.Profile = sketch
+                helix.ReferenceAxis = (sketch, [ref_axis])
+                # Mode must be set before Pitch/Turns/Height -- confirmed
+                # live that AdditiveHelix only treats the Mode-selected
+                # pair as live input; the third value is a read-only
+                # derived output, and setting Turns/Height while Mode
+                # still pointed at the other pair silently no-ops.
+                if turns_given:
+                    helix.Mode = 'pitch-turns-angle'
+                    helix.Pitch = pitch
+                    helix.Turns = turns
+                else:
+                    helix.Mode = 'pitch-height-angle'
+                    helix.Pitch = pitch
+                    helix.Height = height
+                helix.LeftHanded = left_handed
+
+                self.recompute(doc)
+
+                err = self._check_feature_state(helix, "Helix", sketch=sketch)
+                if err:
+                    return err
+
+                return (
+                    f"Created helix: {helix.Name} from {sketch_name} around "
+                    f"{axis.upper()}-axis, pitch={pitch}mm, height={height}mm, "
+                    f"turns={turns} (PartDesign::AdditiveHelix in {body.Name})"
+                )
+
+            # No Body — standalone Part::Sweep-along-computed-path (unchanged).
             # Part::Helix (the parametric document-object type) has no
             # LeftHanded property at all - setting it raised AttributeError
             # unconditionally on every call ('PrimitivePy' object has no
