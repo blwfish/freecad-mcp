@@ -2036,6 +2036,51 @@ class TestProcessCommandExtended:
             ss_mod.DEBUG_ENABLED = original_debug
             ss_mod._monitor = original_monitor
 
+    def test_capture_state_not_called_per_command_by_default(self, server):
+        """capture_state() walks every object's Shape and calls shape.isValid()
+        -- a full OCCT BRep check -- measured at up to 75s on a
+        heavy-geometry document (2026-07-29). It must NOT run on every
+        command by default; CAPTURE_STATE_PER_COMMAND (opt-in via
+        FREECAD_MCP_CAPTURE_STATE_PER_COMMAND=1) gates it."""
+        import freecad_mcp_handler as ss_mod
+        original_debug = ss_mod.DEBUG_ENABLED
+        original_capture_flag = ss_mod.CAPTURE_STATE_PER_COMMAND
+        original_capture_fn = ss_mod._capture_state
+        ss_mod.DEBUG_ENABLED = True
+        ss_mod.CAPTURE_STATE_PER_COMMAND = False
+        ss_mod._capture_state = MagicMock()
+
+        server._execute_tool = MagicMock(return_value='{"result": "ok"}')
+        try:
+            server._process_command(json.dumps({"tool": "test", "args": {}}))
+            ss_mod._capture_state.assert_not_called()
+        finally:
+            ss_mod.DEBUG_ENABLED = original_debug
+            ss_mod.CAPTURE_STATE_PER_COMMAND = original_capture_flag
+            ss_mod._capture_state = original_capture_fn
+
+    def test_capture_state_called_per_command_when_opted_in(self, server):
+        """The inverse of the above: explicitly opting in via
+        CAPTURE_STATE_PER_COMMAND=True must still call capture_state() on
+        every command, for sessions that genuinely need the pre-command
+        snapshot for live debugging."""
+        import freecad_mcp_handler as ss_mod
+        original_debug = ss_mod.DEBUG_ENABLED
+        original_capture_flag = ss_mod.CAPTURE_STATE_PER_COMMAND
+        original_capture_fn = ss_mod._capture_state
+        ss_mod.DEBUG_ENABLED = True
+        ss_mod.CAPTURE_STATE_PER_COMMAND = True
+        ss_mod._capture_state = MagicMock()
+
+        server._execute_tool = MagicMock(return_value='{"result": "ok"}')
+        try:
+            server._process_command(json.dumps({"tool": "test", "args": {}}))
+            ss_mod._capture_state.assert_called_once()
+        finally:
+            ss_mod.DEBUG_ENABLED = original_debug
+            ss_mod.CAPTURE_STATE_PER_COMMAND = original_capture_flag
+            ss_mod._capture_state = original_capture_fn
+
 
 # ---------------------------------------------------------------------------
 # start_server updates the health monitor's socket_path

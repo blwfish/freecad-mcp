@@ -76,6 +76,20 @@ DEBUG_ENABLED = False
 _debugger = None
 _monitor = None
 
+# capture_state() walks every object's Shape and calls shape.isValid() -- a
+# full OCCT BRep topology check -- before every single command, regardless
+# of whether anything goes wrong. Measured cost: 0ms on a 1-object sketch,
+# 13s on a 315-object structural model, 38-75s (and GIL-contention-driven
+# process death) on a document with ~33K faces concentrated in a handful of
+# FeaturePython objects (BrickedWall_*/SlateTiles, 2026-07-29). It's
+# diagnostic-only -- not part of the actual tool response -- and the
+# separate health-check/crash-watcher loop already captures state
+# independently when a command actually fails. Opt in per-session with
+# FREECAD_MCP_CAPTURE_STATE_PER_COMMAND=1 for real debugging; default off so
+# large documents aren't taxed on every call for a snapshot most calls never
+# need.
+CAPTURE_STATE_PER_COMMAND = os.environ.get("FREECAD_MCP_CAPTURE_STATE_PER_COMMAND") == "1"
+
 
 def _log_operation(operation, parameters=None, result=None, error=None, duration=None):
     """No-op fallback if debug not enabled"""
@@ -1129,7 +1143,8 @@ class FreeCADSocketServer:
                 return json.dumps({"error": "No tool specified"})
 
             if DEBUG_ENABLED:
-                _capture_state()
+                if CAPTURE_STATE_PER_COMMAND:
+                    _capture_state()
                 _log_operation(
                     operation="COMMAND_START",
                     parameters={"tool": tool_name, "args": args},
