@@ -718,3 +718,61 @@ file already uses successfully, and is covered by unit tests for the
 JSON-shape logic, but the actual thread-race fix itself is only verified by
 code inspection + the pattern match, not by reproducing the crash and
 confirming it no longer happens.
+
+## Execute Python
+
+### Issue: `execute_python()` never surfaces FreeCAD Console warnings/errors, only Python stdout
+
+**Status**: NOT FIXED (open) — design decision deferred, not just an
+implementation gap
+**Severity**: Low-medium — no crash, but real FreeCAD-level warnings
+(deprecation notices, recompute warnings, etc.) triggered by code run through
+`execute_python()` are silently invisible to the caller unless they separately
+call `view_control(operation="get_report_view")` afterward
+**Affected**: `AICopilot/handlers/execute_python_ops.py`, `run_code()`
+**Discovered**: 2026-07-27, building the Branchline coach side model —
+`execute_python()` code set the (deprecated, as of a recent FreeCAD version)
+`Midplane` property on several `PartDesign::Pad`/`Pocket` objects. FreeCAD
+logged a `PrintWarning`-level deprecation notice each time, but this only
+surfaced when the file was later reopened in the GUI and the Report View was
+checked by hand — several tool calls earlier, nothing in `execute_python()`'s
+response indicated anything had happened.
+
+#### Problem
+
+`run_code()` redirects `sys.stdout` into an `io.StringIO()` buffer and
+returns that plus the last expression's value. That only captures output from
+the executed code's own `print()` calls. FreeCAD's own logging —
+`Console.PrintWarning()`, `PrintError()`, and (more importantly) warnings
+emitted internally by FreeCAD's C++ layer as a side effect of property
+sets/recomputes (exactly what happened with the `Midplane` deprecation) — goes
+through FreeCAD's separate Console/observer system, not Python's `stdout`.
+None of it reaches `execute_python()`'s return value. It only becomes visible
+via a manual, separate `get_report_view` call.
+
+#### Investigated: no clean Python-level observer-registration API found
+
+Looked for a way to register a Python callback directly against FreeCAD's
+console so `run_code()` could capture messages as they're emitted, rather
+than needing to diff Report View text. `FreeCAD.Console`'s exposed API
+(`src/Base/FreeCAD.Console.module.pyi` in `FC-clone`) only has `Print*()`
+output functions plus `SetStatus`/`GetStatus`/`GetObservers` for observers
+that are already registered by name (e.g. the GUI Report View widget
+registers itself natively in C++) — no `SetObserver`/callback-registration
+entry point for arbitrary Python objects turned up in this version's source.
+
+#### Suggested fix (not yet decided on)
+
+Doesn't need that observer API — `get_report_view` already works (used
+successfully by hand during the coach-side session). `run_code()` could
+snapshot the Report View tail before executing user code, run it, then diff
+and fold any new Warning/Error-level lines into the response automatically.
+Same underlying mechanism as the manual workaround, just applied proactively.
+
+**Open design question, deliberately left unresolved:** should this live only
+in `execute_python()`, or should every mutating tool call pay the same
+before/after Report View diff? `execute_python()` is the highest-value target
+(arbitrary code, hardest to predict what it'll trigger), but the same class
+of silent-warning problem could in principle happen from any handler that
+calls into FreeCAD's property/recompute machinery. Deferred rather than
+guessed at — needs a real decision, not a quick patch.
