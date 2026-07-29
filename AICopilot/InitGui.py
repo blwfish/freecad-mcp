@@ -27,6 +27,32 @@ else:
     if path not in sys.path:
         sys.path.append(path)
 
+    def _connect_quit_cleanup(stop_callable):
+        """Hook *stop_callable* to Qt's aboutToQuit so registry/socket cleanup
+        runs on a normal quit (Cmd+Q, File>Quit), not just when something
+        explicitly calls stop_freecad_instance/restart_freecad.
+
+        Before this hook existed, GlobalAIService.stop() -- which removes the
+        discovery JSON and unlinks the socket file -- only ran when an MCP
+        tool call invoked it directly. A normal quit left both behind on disk
+        indefinitely. aboutToQuit fires while the Qt event loop is still
+        alive, so stop()'s cleanup can still run there. A crash/SIGKILL still
+        can't run any cleanup code -- that case is already covered separately
+        by instance_registry.scan_discovery's prune-on-next-scan.
+
+        Split out from start() as its own function so the wiring itself is
+        unit-testable against a fake QCoreApplication without having to run
+        the full GlobalAIService.start() dependency chain (which constructs
+        a real FreeCADSocketServer).
+        """
+        try:
+            from PySide import QtCore
+            app = QtCore.QCoreApplication.instance()
+            if app is not None:
+                app.aboutToQuit.connect(stop_callable)
+        except Exception as e:
+            FreeCAD.Console.PrintWarning(f"Could not hook aboutToQuit cleanup: {e}\n")
+
     class GlobalAIService:
         """Global MCP socket service that runs across all workbenches."""
 
@@ -83,6 +109,9 @@ else:
             self.is_running = True
             FreeCAD.__ai_global_service = self
             FreeCAD.Console.PrintMessage("AI Copilot Service running - available from all workbenches\n")
+
+            _connect_quit_cleanup(self.stop)
+
             return True
 
         def stop(self):
