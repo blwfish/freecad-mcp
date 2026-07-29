@@ -290,6 +290,7 @@ class TestRunOnGuiThread:
         """
         import freecad_mcp_handler as ss_mod
         ss_mod.QtCore = MagicMock()
+        server._heartbeat.stamp()
         try:
             req_id = server._request_counter + 1
             server._gui_response_queue.put((req_id, {"success": True, "view": "top"}))
@@ -785,6 +786,7 @@ class TestExecutePythonAsync:
         import freecad_mcp_handler as ss_mod
         # With QtCore set, async runs via queue (not inline) so status stays "running"
         ss_mod.QtCore = MagicMock()
+        server._heartbeat.stamp()
         try:
             result = json.loads(server._execute_python_async({"code": "x = 1"}))
             job_id = result["job_id"]
@@ -1072,6 +1074,7 @@ class TestRunOnGuiThreadEdgeCases:
         import freecad_mcp_handler as ss_mod
         # Busy guard only applies in Qt mode (QtCore is not None)
         ss_mod.QtCore = MagicMock()
+        server._heartbeat.stamp()
         try:
             server._gui_thread_busy = True
             result = json.loads(server._run_on_gui_thread(lambda: {"result": "ok"}))
@@ -1085,6 +1088,7 @@ class TestRunOnGuiThreadEdgeCases:
         import freecad_mcp_handler as ss_mod
         # Stale-response logic only applies in Qt mode
         ss_mod.QtCore = MagicMock()
+        server._heartbeat.stamp()
         try:
             # Pre-load the response queue: stale response first, then correct
             correct_id = server._request_counter + 1
@@ -2081,3 +2085,168 @@ class TestStartServerMonitorSocketPath:
 
         server.start_server()  # must not raise (the assertion is reaching this line)
         assert server.running is True
+
+
+# ---------------------------------------------------------------------------
+# GUI heartbeat + active-connection/queue-depth visibility
+# ---------------------------------------------------------------------------
+
+class TestGuiHeartbeatIntegration:
+    """A stale heartbeat means the Qt event loop isn't ticking at all --
+    distinct from (and checked before) the pre-existing _gui_thread_busy
+    guard, which only means "a sync task is currently running". If a
+    previous sync task never returned (FreeCAD died mid-task),
+    _gui_thread_busy stays stuck True forever and its message ("wait for
+    it to complete") would be actively wrong."""
+
+    def test_fresh_server_has_stale_heartbeat(self, server):
+        """A brand-new GuiHeartbeat has never been stamped -- is_stale()
+        must be True until _process_gui_tasks actually ticks."""
+        assert server._heartbeat.is_stale() is True
+
+    def test_stale_heartbeat_rejects_sync_call_immediately(self, server):
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        try:
+            result = json.loads(server._run_on_gui_thread(lambda: {"result": "x"}, timeout=30.0))
+            assert "unresponsive" in result["error"]
+        finally:
+            ss_mod.QtCore = None
+
+    def test_fresh_heartbeat_with_busy_guard_reports_busy_not_unresponsive(self, server):
+        """Once the heartbeat is fresh, the pre-existing busy-guard behavior
+        must be unchanged -- heartbeat-stale is a strict superset check
+        that runs first, not a replacement for the busy guard."""
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        try:
+            server._heartbeat.stamp()
+            server._gui_thread_busy = True
+            result = json.loads(server._run_on_gui_thread(lambda: {"result": "x"}, timeout=30.0))
+            assert "busy" in result["error"]
+            assert "unresponsive" not in result["error"]
+            assert result["active_connections"] == 0
+        finally:
+            ss_mod.QtCore = None
+            server._gui_thread_busy = False
+
+    def test_headless_mode_ignores_heartbeat(self, server):
+        """QtCore is None (headless/console): tasks run inline, no event
+        loop to have a heartbeat for -- must not spuriously reject."""
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = None
+        assert server._heartbeat.is_stale() is True  # never stamped
+        result = json.loads(server._run_on_gui_thread(lambda: {"result": "x"}))
+        assert "error" not in result or "unresponsive" not in result.get("error", "")
+        assert result.get("result") == "x"
+
+    def test_process_gui_tasks_stamps_heartbeat_on_empty_tick(self, server):
+        """The tick must stamp even when there's nothing queued -- that's
+        what proves the event loop itself is still alive, independent of
+        whether there happens to be work."""
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        try:
+            assert server._heartbeat.is_stale() is True
+            server._process_gui_tasks()
+            assert server._heartbeat.is_stale() is False
+        finally:
+            ss_mod.QtCore = None
+
+
+class TestAsyncSubmissionVisibility:
+
+    def test_execute_python_async_stale_heartbeat_returns_error_not_job(self, server):
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        try:
+            result = json.loads(server._execute_python_async({"code": "1+1"}))
+            assert "unresponsive" in result["error"]
+            assert "job_id" not in result
+        finally:
+            ss_mod.QtCore = None
+
+    def test_execute_python_async_fresh_heartbeat_includes_queue_depth(self, server):
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        try:
+            server._heartbeat.stamp()
+            result = json.loads(server._execute_python_async({"code": "1+1"}))
+            assert result["status"] == "submitted"
+            assert "job_id" in result
+            assert result["queue_depth"] == 0
+            assert result["active_connections"] == 0
+        finally:
+            ss_mod.QtCore = None
+
+    def test_call_on_gui_thread_async_stale_heartbeat_returns_error_not_job(self, server):
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        try:
+            result = json.loads(server._call_on_gui_thread_async(MagicMock(), {}, "some_op"))
+            assert "unresponsive" in result["error"]
+            assert "job_id" not in result
+        finally:
+            ss_mod.QtCore = None
+
+    def test_call_on_gui_thread_async_reports_nonzero_queue_depth(self, server):
+        """Prove queue_depth reflects real prior queue contents, not just a
+        hardcoded 0 -- put a dummy item on the queue before submitting."""
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        try:
+            server._heartbeat.stamp()
+            server._gui_task_queue.put((999, lambda: None))
+            result = json.loads(server._call_on_gui_thread_async(MagicMock(), {}, "some_op"))
+            assert result["queue_depth"] == 1
+        finally:
+            ss_mod.QtCore = None
+            # Drain so this test doesn't leak state into others via a shared queue.
+            try:
+                server._gui_task_queue.get_nowait()
+            except queue.Empty:
+                pass
+
+    def test_active_connections_reflected_in_submission_response(self, server):
+        server._active_connections = 3
+        server._heartbeat.stamp()
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        try:
+            result = json.loads(server._execute_python_async({"code": "1+1"}))
+            assert result["active_connections"] == 3
+        finally:
+            ss_mod.QtCore = None
+            server._active_connections = 0
+
+
+class TestActiveConnectionsCounter:
+
+    def test_handle_client_increments_then_decrements(self, server, monkeypatch):
+        import freecad_mcp_handler as ss_mod
+
+        seen_during = {}
+
+        def fake_receive(sock, timeout=30.0):
+            seen_during["active"] = server._active_connections
+            return None  # empty receive -- _handle_client returns early, nothing to dispatch
+
+        monkeypatch.setattr(ss_mod, "receive_message", fake_receive)
+
+        assert server._active_connections == 0
+        server._handle_client(MagicMock())
+        assert seen_during["active"] == 1
+        assert server._active_connections == 0
+
+    def test_handle_client_decrements_even_on_exception(self, server, monkeypatch):
+        """The counter must not leak upward forever if a client handler
+        raises -- finally-block decrement must run regardless."""
+        import freecad_mcp_handler as ss_mod
+
+        def raising_receive(sock, timeout=30.0):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(ss_mod, "receive_message", raising_receive)
+
+        server._handle_client(MagicMock())
+        assert server._active_connections == 0

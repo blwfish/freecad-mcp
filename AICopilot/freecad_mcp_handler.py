@@ -5,8 +5,13 @@
 #                   ~/.cache registry; GUI spawn + explicit freecad_binary;
 #                   list_freecad_instances enriched with active doc + window
 #                   title; startup banner shows handler version.
+# Version: 6.2.0 - GUI-thread heartbeat (fast unresponsive-vs-busy diagnosis
+#                   instead of a blind 30-120s timeout); active_connections +
+#                   queue_depth surfaced on busy rejections and async job
+#                   submission, so contention from another connected client
+#                   is visible instead of presenting as an unexplained delay.
 
-__version__ = "6.1.0"
+__version__ = "6.2.0"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
@@ -40,6 +45,7 @@ import traceback as tb_module
 from typing import Dict, Any, Optional
 
 from universal_selector import UniversalSelector
+from gui_heartbeat import GuiHeartbeat
 
 # Conditional GUI imports (not available in console mode)
 if FreeCAD.GuiUp:
@@ -330,6 +336,24 @@ class FreeCADSocketServer:
         self._gui_thread_busy = False
         self._stale_req_ids: set = set()
 
+        # Stamped every _process_gui_tasks tick (every ~100ms) as long as the
+        # Qt event loop is alive and pumping. Lets a request be rejected
+        # immediately with a clear "GUI thread unresponsive" error instead of
+        # silently queuing and only discovering the same thing after a full
+        # 30-120s timeout -- callers previously had no way to distinguish
+        # "genuinely busy" from "not responding at all" until the timeout hit.
+        self._heartbeat = GuiHeartbeat()
+
+        # Active _handle_client invocations right now. Every tool call opens
+        # its own short-lived socket connection (there's no persistent
+        # per-client session at this layer), so this counts concurrent
+        # in-flight requests across however many bridge processes happen to
+        # be connected to this instance -- surfaced in busy/queued responses
+        # so contention from another connection is visible instead of just
+        # presenting as an unexplained delay.
+        self._active_connections = 0
+        self._active_connections_lock = threading.Lock()
+
         # Async job tracking: job_id -> {status, started, result, error, elapsed}
         self._async_jobs: Dict[str, Dict] = {}
 
@@ -504,10 +528,23 @@ class FreeCADSocketServer:
         _gui_response_queue) and async jobs (req_id is "async:<job_id>",
         result stored in _async_jobs dict).
         """
+        # Confirms the Qt event loop is alive and this tick actually ran --
+        # the core heartbeat signal. Also re-stamped after grabbing each
+        # individual queued task below, so a slow multi-item batch doesn't
+        # go stale between items. A single task slower than the heartbeat's
+        # stale_after (default 2s) can still make the heartbeat look stale to
+        # a *different*, concurrently-checking caller for that task's
+        # duration -- an accepted narrow edge case, not a full fix, since the
+        # alternative (a background keep-alive ping during task execution)
+        # is real added complexity for a rare case that's still strictly
+        # better than today's only option, a 30-120s blind timeout.
+        self._heartbeat.stamp()
+
         while not self._gui_task_queue.empty():
             req_id = None
             try:
                 req_id, task = self._gui_task_queue.get_nowait()
+                self._heartbeat.stamp()
 
                 # Async job path
                 if isinstance(req_id, str) and req_id.startswith("async:"):
@@ -570,6 +607,57 @@ class FreeCADSocketServer:
         if QtCore:
             QtCore.QTimer.singleShot(100, self._process_gui_tasks)
 
+    def _gui_unresponsive_error(self) -> Optional[str]:
+        """Return a JSON error string if the GUI thread's heartbeat is stale,
+        else None.
+
+        Used by the async submission paths (_call_on_gui_thread_async /
+        _execute_python_async) before they queue a job. Unlike the sync path,
+        _run_on_gui_thread_async itself has no return value to signal a
+        problem through -- if the event loop truly isn't ticking, a silently
+        queued async job just sits at status "running" forever with no
+        useful signal, so the check has to happen at submission time, before
+        the job entry is even created, not inside the fire-and-forget call.
+        Only meaningful in GUI mode; headless/console mode has no event loop
+        to have a heartbeat for, so this is skipped there.
+        """
+        if QtCore is None:
+            return None
+        if not self._heartbeat.is_stale():
+            return None
+        age = self._heartbeat.age()
+        age_str = "never" if age is None else f"{age:.1f}s ago"
+        return json.dumps({
+            "error": f"GUI thread appears unresponsive (last confirmed alive: {age_str}). "
+                     "FreeCAD may have crashed, be blocked in a modal dialog, or be "
+                     "backgrounded/asleep. Not submitting this job -- check FreeCAD "
+                     "directly rather than polling a job that will never complete."
+        })
+
+    def _submission_status(self, job_id: str, queue_depth: int) -> str:
+        """Build the immediate {"job_id", "status": "submitted", ...} response
+        for an async job, including queue_depth and active_connections so
+        contention from other queued work or other connected clients is
+        visible up front rather than presenting as an unexplained delay.
+        Shared by _call_on_gui_thread_async and _execute_python_async so the
+        two submission paths can't drift on what they report.
+
+        queue_depth is passed in rather than read from self._gui_task_queue
+        here, because by the time this runs the caller has already queued
+        this job's own task -- reading qsize() at this point would count the
+        job against itself. Callers capture qsize() immediately before
+        submitting, so queue_depth means "how many other things are ahead of
+        you", which is what a caller deciding whether to wait actually wants.
+        """
+        with self._active_connections_lock:
+            active = self._active_connections
+        return json.dumps({
+            "job_id": job_id,
+            "status": "submitted",
+            "queue_depth": queue_depth,
+            "active_connections": active,
+        })
+
     def _run_on_gui_thread(self, task_fn, timeout=30.0) -> str:
         """Run a callable on the Qt GUI thread and wait for the result.
 
@@ -595,16 +683,39 @@ class FreeCADSocketServer:
             except Exception as e:
                 return json.dumps({"error": f"Headless task error: {e}"})
 
+        # Heartbeat check: if the Qt event loop hasn't ticked recently, the
+        # GUI thread isn't just busy -- it's not responding at all (crashed,
+        # blocked in a modal dialog, backgrounded and throttled, etc). This
+        # is checked BEFORE the busy guard below on purpose: if a previous
+        # sync task never returned (e.g. FreeCAD died mid-task), _gui_thread_busy
+        # stays stuck True forever, and the busy-guard's message ("wait for it
+        # to complete") would be actively misleading -- it implies the task is
+        # still progressing when the heartbeat says the event loop stopped
+        # entirely. Fails fast instead of making the caller wait through the
+        # full timeout to learn the same thing.
+        if self._heartbeat.is_stale():
+            age = self._heartbeat.age()
+            age_str = "never" if age is None else f"{age:.1f}s ago"
+            return json.dumps({
+                "error": f"GUI thread appears unresponsive (last confirmed alive: {age_str}). "
+                         "FreeCAD may have crashed, be blocked in a modal dialog, or be "
+                         "backgrounded/asleep. Not queuing this request -- check FreeCAD "
+                         "directly rather than waiting for a timeout."
+            })
+
         # Busy guard: if the GUI thread is already blocked on a synchronous task,
         # refuse to queue more work.  The stuck task is still running; piling up
         # additional tasks causes cascade failures when it eventually returns.
         if self._gui_thread_busy:
+            with self._active_connections_lock:
+                active = self._active_connections
             FreeCAD.Console.PrintWarning(
                 "[MCP] Rejected request — GUI thread is still busy with a previous operation\n"
             )
             return json.dumps({
                 "error": "GUI thread is busy with a previous operation. "
-                         "Wait for it to complete or use execute_python_async."
+                         "Wait for it to complete or use execute_python_async.",
+                "active_connections": active,
             })
 
         self._request_counter += 1
@@ -708,6 +819,10 @@ class FreeCADSocketServer:
         if not code:
             return json.dumps({"error": "No code provided"})
 
+        unresponsive = self._gui_unresponsive_error()
+        if unresponsive:
+            return unresponsive
+
         # Clean up old completed jobs before checking the limit
         self._cleanup_stale_async_jobs()
 
@@ -724,8 +839,9 @@ class FreeCADSocketServer:
             "tool": "execute_python_async",
         }
 
+        queue_depth = self._gui_task_queue.qsize()
         self._run_on_gui_thread_async(job_id, lambda: self.execute_python_ops.run_code(code))
-        return json.dumps({"job_id": job_id, "status": "submitted"})
+        return self._submission_status(job_id, queue_depth)
 
     def _poll_job(self, args: Dict[str, Any]) -> str:
         """Poll status and result of an async job.
@@ -897,7 +1013,18 @@ class FreeCADSocketServer:
                     FreeCAD.Console.PrintError(f"Server loop error: {e}\n")
 
     def _handle_client(self, client_socket):
-        """Handle a single client connection."""
+        """Handle a single client connection.
+
+        There's no persistent per-client session at this layer -- every tool
+        call is its own short-lived connection (receive one message, respond,
+        close) -- so active_connections counts concurrent in-flight requests
+        across however many bridge processes happen to be connected right
+        now, not identified individual clients. Surfaced in busy/queued
+        responses so contention from another connection is visible instead
+        of presenting as an unexplained delay.
+        """
+        with self._active_connections_lock:
+            self._active_connections += 1
         try:
             message_str = receive_message(client_socket)
             if message_str:
@@ -929,6 +1056,8 @@ class FreeCADSocketServer:
             except Exception:
                 pass
         finally:
+            with self._active_connections_lock:
+                self._active_connections -= 1
             try:
                 client_socket.close()
             except Exception:
@@ -1252,6 +1381,10 @@ class FreeCADSocketServer:
         operations (boolean ops on complex geometry) that would otherwise hit
         the sync timeout and leave the GUI thread stuck.
         """
+        unresponsive = self._gui_unresponsive_error()
+        if unresponsive:
+            return unresponsive
+
         self._cleanup_stale_async_jobs()
         if len(self._async_jobs) >= MAX_ASYNC_JOBS:
             return json.dumps({"error": f"Too many async jobs ({len(self._async_jobs)}). "
@@ -1271,8 +1404,9 @@ class FreeCADSocketServer:
                 return {"success": True, "result": result}
             except Exception as e:
                 return {"error": f"{label} error: {e}", "error_id": self.diagnostics_ops.store_traceback(tb_module.format_exc())}
+        queue_depth = self._gui_task_queue.qsize()
         self._run_on_gui_thread_async(job_id, task)
-        return json.dumps({"job_id": job_id, "status": "submitted"})
+        return self._submission_status(job_id, queue_depth)
 
     def _call_on_gui_thread_reload(self, timeout: float = 60.0) -> str:
         """Run _reload_handlers() on the Qt GUI thread instead of the socket
