@@ -61,7 +61,7 @@ class TestConnectQuitCleanup:
 
         module = _load_init_gui(mock_freecad)
         stop_fn = MagicMock()
-        module._connect_quit_cleanup(stop_fn)
+        module.GlobalAIService._connect_quit_cleanup(stop_fn)
 
         fake_app.aboutToQuit.connect.assert_called_once_with(stop_fn)
 
@@ -74,7 +74,7 @@ class TestConnectQuitCleanup:
 
         module = _load_init_gui(mock_freecad)
         stop_fn = MagicMock()
-        module._connect_quit_cleanup(stop_fn)  # must not raise
+        module.GlobalAIService._connect_quit_cleanup(stop_fn)  # must not raise
 
     def test_qtcore_import_failure_does_not_raise(self, mock_freecad, monkeypatch):
         """If PySide can't be imported at all, cleanup wiring is best-effort --
@@ -86,7 +86,7 @@ class TestConnectQuitCleanup:
 
         module = _load_init_gui(mock_freecad)
         stop_fn = MagicMock()
-        module._connect_quit_cleanup(stop_fn)  # must not raise
+        module.GlobalAIService._connect_quit_cleanup(stop_fn)  # must not raise
         mock_freecad.Console.PrintWarning.assert_called()
 
     def test_start_wires_cleanup_via_real_service(self, mock_freecad, monkeypatch):
@@ -112,6 +112,63 @@ class TestConnectQuitCleanup:
 
         module = _load_init_gui(mock_freecad)
         service = module.GlobalAIService()
+        assert service.start() is True
+
+        fake_app.aboutToQuit.connect.assert_called_once_with(service.stop)
+
+    def test_survives_freecads_real_separate_globals_locals_loader(self, mock_freecad, monkeypatch):
+        """Regression test for a NameError that shipped to production past
+        1700 green tests. FreeCAD's actual workbench loader
+        (FreeCADGuiInit.py's DirModGui.run_init_gui, source-confirmed) calls
+        bare `exec(code)` inside a method body -- which implicitly uses that
+        method's own globals()/locals() as TWO SEPARATE dicts, unlike
+        _load_init_gui's importlib.util.exec_module() above (a single shared
+        namespace). Under that split, a top-level `def` lands in locals only;
+        a *method* referencing it as a free name compiles to LOAD_GLOBAL,
+        which only ever consults __globals__ -- never locals -- so it raised
+        NameError in real FreeCAD while every test using the importlib loader
+        stayed green. _connect_quit_cleanup was moved onto GlobalAIService as
+        a staticmethod specifically so it resolves via attribute lookup
+        (self._connect_quit_cleanup) instead of __globals__ lookup, sidestepping
+        the split entirely. Reproduce the real loader's split explicitly here
+        so a future regression fails CI instead of only failing in a live
+        FreeCAD process, as this one did.
+        """
+        fake_app = MagicMock()
+        qtcore_mock = sys.modules["PySide"].QtCore
+        qtcore_mock.QCoreApplication.instance.return_value = fake_app
+
+        fake_server = MagicMock()
+        fake_server.start_server.return_value = True
+        fake_server.instance_uuid = "testuuid0002"
+        fake_server.socket_path = "/tmp/does_not_matter2.sock"
+        handler_mock = MagicMock()
+        handler_mock.FreeCADSocketServer.return_value = fake_server
+        handler_mock.__version__ = "test"
+        monkeypatch.setitem(sys.modules, "freecad_mcp_handler", handler_mock)
+        monkeypatch.setitem(sys.modules, "instance_registry", MagicMock())
+
+        mock_freecad.GuiUp = True
+        source = open(INIT_GUI_PATH, encoding="utf-8").read()
+        code = compile(source, INIT_GUI_PATH, "exec")
+        # g mirrors FreeCADGuiInit.py's OWN real module globals -- confirmed
+        # via source read to include `import FreeCAD` and `import FreeCADGui`
+        # at its own top level, which is exactly why THOSE names resolve fine
+        # via LOAD_GLOBAL inside start() in real FreeCAD while a
+        # workbench-specific name like _connect_quit_cleanup (never a
+        # FreeCADGuiInit.py global) does not. Omitting them here would make
+        # this repro fail on the wrong NameError (FreeCAD itself) instead of
+        # exercising the bug this test guards against.
+        g = {
+            "__name__": "InitGui_real_loader_repro",
+            "FreeCAD": sys.modules["FreeCAD"],
+            "FreeCADGui": sys.modules["FreeCADGui"],
+        }
+        l = {}
+        exec(code, g, l)  # mirrors FreeCADGuiInit.py's bare exec(code) inside a method
+
+        GlobalAIService = l["GlobalAIService"]
+        service = GlobalAIService()
         assert service.start() is True
 
         fake_app.aboutToQuit.connect.assert_called_once_with(service.stop)
