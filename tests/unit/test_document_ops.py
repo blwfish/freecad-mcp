@@ -28,6 +28,13 @@ def doc_handler():
 
     from handlers.document_ops import DocumentOpsHandler
     server = MagicMock()
+    # Real dict, not a MagicMock attribute: list_objects does
+    # self.server._visibility_cache.get(name), and a MagicMock's .get()
+    # would return another (non-JSON-serializable) MagicMock instead of
+    # None -- matching production's real dict shape (see
+    # FreeCADSocketServer._visibility_cache) keeps that path exercised
+    # the same way here as it runs for real.
+    server._visibility_cache = {}
     handler = DocumentOpsHandler(
         server=server,
         gui_task_queue=None,
@@ -382,6 +389,53 @@ class TestListObjectsDegeneratePagination:
         obj = result["objects"][0]
         for key in ("visible", "state", "in_list", "out_list"):
             assert key in obj, f"missing {key} in list_objects entry"
+
+    def test_visible_reads_from_server_cache_not_view_object(self, doc_handler, mock_freecad):
+        """visible must come from server._visibility_cache, never from
+        obj.ViewObject directly -- list_objects runs on the socket thread,
+        and obj.ViewObject touches Gui::ViewProviderDocumentObject, which
+        FreeCAD's requireMainThread() guard (Gui/Application.cpp) rejects
+        off the main thread. Giving obj.ViewObject a MagicMock that would
+        raise if ever touched -- as the real Gui-thread guard does --
+        proves the code path never reaches it."""
+        doc = self._make_doc(mock_freecad, n_objects=2)
+        for obj in doc.Objects:
+            type(obj).ViewObject = PropertyMock(
+                side_effect=AssertionError(f"{obj.Name}.ViewObject touched off the main thread")
+            )
+        doc_handler.server._visibility_cache = {"Obj0000": True, "Obj0001": False}
+        result = json.loads(doc_handler.list_objects({}))
+        visible_by_name = {o["name"]: o["visible"] for o in result["objects"]}
+        assert visible_by_name == {"Obj0000": True, "Obj0001": False}
+
+    def test_visible_none_when_object_missing_from_cache(self, doc_handler, mock_freecad):
+        """An object absent from the cache (not yet snapshotted by the ~100ms
+        GUI-thread tick, e.g. just created) must fall back to None rather
+        than raise or silently omit the key."""
+        self._make_doc(mock_freecad, n_objects=1)
+        doc_handler.server._visibility_cache = {}
+        result = json.loads(doc_handler.list_objects({}))
+        assert result["objects"][0]["visible"] is None
+
+    def test_visible_none_when_no_server(self, mock_freecad):
+        """Without a server reference (e.g. a standalone/test handler),
+        visible must fall back to None rather than raise on the missing
+        _visibility_cache attribute."""
+        for mod in ("handlers.base", "handlers.document_ops"):
+            if mod in sys.modules:
+                del sys.modules[mod]
+        from handlers.document_ops import DocumentOpsHandler
+
+        handler = DocumentOpsHandler(server=None)
+        doc = MagicMock()
+        obj = MagicMock()
+        obj.Name = "Solo"
+        obj.Label = "Solo"
+        obj.TypeId = "Part::Feature"
+        doc.Objects = [obj]
+        mock_freecad.ActiveDocument = doc
+        result = json.loads(handler.list_objects({}))
+        assert result["objects"][0]["visible"] is None
 
 
 # ---------------------------------------------------------------------------

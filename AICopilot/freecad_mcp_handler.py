@@ -344,6 +344,18 @@ class FreeCADSocketServer:
         # "genuinely busy" from "not responding at all" until the timeout hit.
         self._heartbeat = GuiHeartbeat()
 
+        # {obj.Name: bool} snapshot of ActiveDocument's per-object
+        # Visibility, rebuilt on the Qt main thread every _process_gui_tasks
+        # tick (see _refresh_visibility_cache). obj.ViewObject is a
+        # Gui::ViewProviderDocumentObject wrapper -- FreeCAD's own
+        # requireMainThread() guard (Gui/Application.cpp) raises if it's
+        # touched off the main thread, which is exactly what document_ops
+        # handlers do (list_objects is dispatched from the socket thread as
+        # a "safe_op"). Reading this plain dict instead means list_objects
+        # never calls into FreeCADGui at all, at the cost of up to one tick
+        # (~100ms) of staleness.
+        self._visibility_cache: Dict[str, bool] = {}
+
         # Active _handle_client invocations right now. Every tool call opens
         # its own short-lived socket connection (there's no persistent
         # per-client session at this layer), so this counts concurrent
@@ -521,6 +533,29 @@ class FreeCADSocketServer:
     # GUI thread task processing
     # -----------------------------------------------------------------
 
+    def _refresh_visibility_cache(self):
+        """Snapshot ActiveDocument's per-object Visibility into a plain dict.
+
+        Runs on the Qt main thread (called from _process_gui_tasks' timer
+        tick) -- the only thread .ViewObject may be touched from. Replaces
+        the whole dict rather than mutating in place, so a concurrent
+        socket-thread read (document_ops.list_objects doing
+        self.server._visibility_cache.get(name)) never observes a
+        partially-rebuilt cache; plain dict reference reassignment is
+        atomic under the GIL.
+        """
+        doc = FreeCAD.ActiveDocument
+        if doc is None:
+            self._visibility_cache = {}
+            return
+        cache = {}
+        for obj in doc.Objects:
+            try:
+                cache[obj.Name] = bool(obj.ViewObject.Visibility)
+            except Exception:
+                pass
+        self._visibility_cache = cache
+
     def _process_gui_tasks(self):
         """Process queued tasks on the Qt main thread (called by QTimer).
 
@@ -539,6 +574,7 @@ class FreeCADSocketServer:
         # is real added complexity for a rare case that's still strictly
         # better than today's only option, a 30-120s blind timeout.
         self._heartbeat.stamp()
+        self._refresh_visibility_cache()
 
         while not self._gui_task_queue.empty():
             req_id = None

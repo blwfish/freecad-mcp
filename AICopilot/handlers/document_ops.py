@@ -145,13 +145,24 @@ class DocumentOpsHandler(BaseHandler):
                         obj_info["property_count"] = len(obj.PropertiesList)
                     except Exception:
                         obj_info["property_count"] = None
-                    # Visibility (ViewObject is None in headless mode), recompute
-                    # State (carries 'Invalid'/'Touched' flags), and the dependency
-                    # graph (InList/OutList — the deletion-safety edges). Each is
-                    # guarded and set to null when unavailable rather than omitted.
-                    try:
-                        obj_info["visible"] = bool(obj.ViewObject.Visibility)
-                    except Exception:
+                    # Visibility comes from the server's _visibility_cache, a
+                    # plain dict snapshotted on the Qt main thread (see
+                    # FreeCADSocketServer._refresh_visibility_cache) -- NOT
+                    # from obj.ViewObject directly. list_objects is dispatched
+                    # from the socket thread as a "safe_op" (no GUI-thread
+                    # marshaling), and obj.ViewObject touches
+                    # Gui::ViewProviderDocumentObject, which FreeCAD's own
+                    # requireMainThread() guard rejects off the main thread.
+                    # Missing from the cache (headless mode, no server
+                    # reference, or object created since the last ~100ms
+                    # tick) all collapse to the same None fallback as before.
+                    # recompute State (carries 'Invalid'/'Touched' flags) and
+                    # the dependency graph (InList/OutList — the
+                    # deletion-safety edges) remain direct App-layer reads,
+                    # each guarded and set to null when unavailable.
+                    if self.server is not None:
+                        obj_info["visible"] = self.server._visibility_cache.get(obj.Name)
+                    else:
                         obj_info["visible"] = None
                     try:
                         obj_info["state"] = list(obj.State)
