@@ -57,7 +57,6 @@ from collections import deque
 from pathlib import Path
 from typing import Optional
 
-LAST_OP_FILE_GLOB = "/tmp/freecad_mcp_last_op_*.json"  # per-PID files written by crash_watcher
 OPLOG_FILE   = "/tmp/freecad_mcp_oplog.json"
 MAX_OPLOG    = 10
 
@@ -130,26 +129,35 @@ def _summarize(tool: str, args: dict) -> str:
 def _read_last_op(pid: Optional[int] = None) -> Optional[dict]:
     """Read what FreeCAD was executing (written by crash_watcher inside FC).
 
-    If pid is given, prefer the PID-specific file. Otherwise (or if that file
-    is missing), fall back to the most-recently-modified per-PID file.
-    """
-    candidates = []
-    if pid is not None:
-        candidates.append(f"/tmp/freecad_mcp_last_op_{pid}.json")
-    # Fallback: glob all per-PID files, newest first.
-    all_per_pid = glob.glob(LAST_OP_FILE_GLOB)
-    all_per_pid.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    for p in all_per_pid:
-        if p not in candidates:
-            candidates.append(p)
+    Only ever reads *this* pid's own file. Previously, when the pid-specific
+    file didn't exist yet (a freshly-started instance that hasn't logged an
+    operation of its own), this fell back to "the most-recently-modified
+    per-PID file across ALL pids" -- which serves up an unrelated process's
+    (or even a dead process's) last operation, mislabeled as this instance's
+    current activity. Confirmed in practice: a fresh instance's crash report
+    once claimed "FreeCAD was executing `bad_tool`" -- "bad_tool" exists in
+    this codebase only as a deliberately-invalid tool name in a unit test
+    (test_freecad_mcp_handler.py's unknown-tool-error test), so that file was
+    a leftover test artifact from an unrelated PID, presented as if it were
+    real, current state. "No data yet for this instance" is a more honest
+    answer than a guess -- matches this repo's own AGENT-DEBUGGING.md: "Don't
+    guess -- the diagnostic tools exist precisely so you don't have to."
 
-    for path in candidates:
-        try:
-            with open(path) as f:
-                return json.load(f)
-        except Exception:
-            continue
-    return None
+    If pid is None (the caller couldn't determine which process this is --
+    see freecad_mcp_server.py's lookup_pid), there is no way to identify
+    which file, if any, is "ours" among however many per-PID files happen to
+    be sitting in /tmp from current or past instances. Returning None (omit
+    the "FreeCAD was executing" section) is preferable to picking one by
+    recency and implying it's authoritative when it might belong to a
+    different instance entirely.
+    """
+    if pid is None:
+        return None
+    try:
+        with open(f"/tmp/freecad_mcp_last_op_{pid}.json") as f:
+            return json.load(f)
+    except Exception:
+        return None
 
 
 def _find_macos_crash_report(max_age_s: int = 180) -> Optional[str]:

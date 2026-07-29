@@ -12,6 +12,8 @@ import json
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import freecad_crash_report as cr
@@ -137,3 +139,79 @@ class TestLegacyCrashParsing:
         assert "real_crash_frame" in out
         # Must NOT have grabbed Thread 0's (non-crash) frames instead.
         assert "start + 1" not in out
+
+
+class TestReadLastOp:
+    """_read_last_op must only ever read the requested pid's own file.
+
+    Regression coverage for a real observed bug: with a fresh instance whose
+    own last-op file didn't exist yet, _read_last_op used to fall back to
+    "the most-recently-modified per-PID file across ALL pids" and returned
+    it as if it were this instance's current activity. In practice this
+    surfaced a crash report claiming "FreeCAD was executing `bad_tool`" --
+    "bad_tool" only exists in this codebase as a deliberately-invalid tool
+    name in test_freecad_mcp_handler.py's unknown-tool test; the file being
+    read belonged to an unrelated process entirely.
+    """
+
+    # Fake PIDs chosen to be implausible as real live PIDs on this machine.
+    OWN_PID = 999999901
+    OTHER_PID = 999999902
+
+    def _op_file(self, pid):
+        return f"/tmp/freecad_mcp_last_op_{pid}.json"
+
+    @pytest.fixture(autouse=True)
+    def _cleanup(self):
+        for pid in (self.OWN_PID, self.OTHER_PID):
+            path = self._op_file(pid)
+            if os.path.exists(path):
+                os.unlink(path)
+        yield
+        for pid in (self.OWN_PID, self.OTHER_PID):
+            path = self._op_file(pid)
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def _write_op(self, pid, tool):
+        with open(self._op_file(pid), "w") as f:
+            json.dump({"tool": tool, "args": {}, "started_at": 0, "pid": pid}, f)
+
+    def test_reads_own_pid_file(self):
+        self._write_op(self.OWN_PID, "execute_python_async")
+        result = cr._read_last_op(pid=self.OWN_PID)
+        assert result is not None
+        assert result["tool"] == "execute_python_async"
+
+    def test_own_file_missing_returns_none_not_another_pids_data(self):
+        """The core regression: OWN_PID has no file, but OTHER_PID does --
+        must return None, never OTHER_PID's data, no matter how recent it is."""
+        self._write_op(self.OTHER_PID, "bad_tool")
+        result = cr._read_last_op(pid=self.OWN_PID)
+        assert result is None
+
+    def test_own_file_corrupt_returns_none(self):
+        with open(self._op_file(self.OWN_PID), "w") as f:
+            f.write("{not valid json")
+        result = cr._read_last_op(pid=self.OWN_PID)
+        assert result is None
+
+    def test_pid_none_returns_none_even_with_other_files_present(self):
+        """No pid means no way to know which file (if any) is 'ours' --
+        must not guess by picking the newest file across all pids."""
+        self._write_op(self.OTHER_PID, "bad_tool")
+        result = cr._read_last_op(pid=None)
+        assert result is None
+
+    def test_pid_zero_is_not_treated_as_no_pid(self):
+        """pid=0 is falsy but is not None -- must still be looked up by its
+        own file, not silently collapsed into the pid=None 'no data' path."""
+        self._write_op(0, "some_tool")
+        try:
+            result = cr._read_last_op(pid=0)
+            assert result is not None
+            assert result["tool"] == "some_tool"
+        finally:
+            path = self._op_file(0)
+            if os.path.exists(path):
+                os.unlink(path)
