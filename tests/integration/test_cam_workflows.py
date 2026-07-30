@@ -29,7 +29,7 @@ pytestmark = pytest.mark.cam
 @pytest.fixture(scope="module", autouse=True)
 def _require_cam_workbench():
     """Skip all tests in this module if FreeCAD's CAM workbench isn't available."""
-    result = send_command("execute_python", {
+    result = send_command("execute_python_sync", {
         "code": """
 try:
     from Path.Main.Job import Create
@@ -56,7 +56,7 @@ def cam_document():
     })
 
     # Create a padded sketch (PartDesign body with a rectangular solid)
-    send_command("execute_python", {
+    send_command("execute_python_sync", {
         "code": f"""
 import FreeCAD, Part
 doc = FreeCAD.getDocument('{doc_name}')
@@ -79,7 +79,7 @@ doc.recompute()
     })
 
     # Pad it
-    send_command("execute_python", {
+    send_command("execute_python_sync", {
         "code": f"""
 import FreeCAD
 doc = FreeCAD.getDocument('{doc_name}')
@@ -96,7 +96,7 @@ pad.Shape.isValid()
     yield doc_name
 
     try:
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": f"FreeCAD.closeDocument('{doc_name}')"
         })
     except Exception:

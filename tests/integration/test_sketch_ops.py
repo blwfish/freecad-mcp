@@ -21,7 +21,7 @@ def clean_document():
     })
     yield doc_name
     try:
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": f"FreeCAD.closeDocument('{doc_name}')"
         })
     except Exception:

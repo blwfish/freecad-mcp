@@ -33,7 +33,7 @@ def _ss(args: dict, timeout: float = 10.0) -> str:
 
 
 def _exec(code: str, timeout: float = 10.0):
-    return send_command("execute_python", {"code": code}, timeout=timeout)
+    return send_command("execute_python_sync", {"code": code}, timeout=timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ class TestPropertyBinding:
              "spreadsheet_name": sheet, "cell": "A1", "alias": "boxLength"})
 
         # Create a box, then bind its Length to the spreadsheet
-        send_command("execute_python", {"code": f"""
+        send_command("execute_python_sync", {"code": f"""
 import FreeCAD
 doc = FreeCAD.getDocument({doc!r})
 box = doc.addObject('Part::Box', 'TestBox')

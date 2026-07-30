@@ -318,7 +318,7 @@ class TestRunOnGuiThreadHeadless:
             "SpatialOpsHandler", "InspectorOpsHandler",
             "MacroOpsHandler", "IntrospectionOpsHandler", "SketchBuilderOpsHandler",
             "VerificationOpsHandler", "FixtureOpsHandler", "DiagnosticsOpsHandler",
-            "ExecutePythonOpsHandler",
+            "ExecutePythonOpsHandler", "AssemblyOpsHandler",
         ]
         hmod = _t.ModuleType("handlers")
         for n in handler_names:

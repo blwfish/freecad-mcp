@@ -67,6 +67,13 @@ mock_PartDesign = _adopt_or_create('PartDesign')
 mock_Mesh = _adopt_or_create('Mesh')
 mock_MeshPart = _adopt_or_create('MeshPart')
 
+# Assembly workbench — assembly_ops.py does `import UtilsAssembly` /
+# `import JointObject` inside method bodies (real FreeCAD modules, not
+# importable outside a running FreeCAD). Tests configure Joint/GroundedJoint/
+# getJointGroup as needed per-case.
+mock_UtilsAssembly = _adopt_or_create('UtilsAssembly')
+mock_JointObject = _adopt_or_create('JointObject')
+
 # CAM workbench imports — handlers do `from Path.Tool.Bit import ToolBit`,
 # `from Path.Tool.Controller import Create`, `from Path.Post.Processor
 # import PostProcessorFactory` etc. inside method bodies. Pre-populate
@@ -180,7 +187,7 @@ def reset_mocks():
     """
     for m in (mock_FreeCAD, mock_FreeCADGui, mock_Part, mock_Sketcher,
               mock_Draft, mock_Spreadsheet, mock_PartDesign,
-              mock_Mesh, mock_MeshPart):
+              mock_Mesh, mock_MeshPart, mock_UtilsAssembly, mock_JointObject):
         m.reset_mock(return_value=True, side_effect=True)
 
     sys.modules['FreeCAD'] = mock_FreeCAD
@@ -192,6 +199,8 @@ def reset_mocks():
     sys.modules['PartDesign'] = mock_PartDesign
     sys.modules['Mesh'] = mock_Mesh
     sys.modules['MeshPart'] = mock_MeshPart
+    sys.modules['UtilsAssembly'] = mock_UtilsAssembly
+    sys.modules['JointObject'] = mock_JointObject
     sys.modules['Path'] = mock_Path
     sys.modules['Path.Main'] = mock_Path_Main
     sys.modules['Path.Main.Job'] = mock_Path_Main_Job
@@ -293,6 +302,10 @@ class _Rotation:
 
     def multiply(self, other):
         return _Rotation(self.axis, self.angle + other.angle)
+
+    def inverted(self):
+        """Inverse of an axis-angle rotation: same axis, negated angle."""
+        return _Rotation(self.axis, -self.angle)
 
     def multVec(self, vec):
         """Rotate vec by this axis-angle rotation (angle in degrees) via
@@ -642,6 +655,19 @@ def make_body(name="Body", tip=None, group=None):
     obj.Group = list(group) if group else []
     obj.Shape = _make_shape()
 
+    # Mock App::Origin with the 6 standard OriginFeatures every real
+    # PartDesign::Body has (confirmed live) -- needed by any operation
+    # that references a Body's origin planes/axes (mirror_feature's
+    # MirrorPlane, linear_pattern's Direction, polar_pattern's Axis).
+    origin = MagicMock()
+    origin_features = []
+    for feat_name in ("X_Axis", "Y_Axis", "Z_Axis", "XY_Plane", "XZ_Plane", "YZ_Plane"):
+        of = MagicMock()
+        of.Name = feat_name
+        origin_features.append(of)
+    origin.OriginFeatures = origin_features
+    obj.Origin = origin
+
     feat = MagicMock()
     feat.Name = "AutoFeature"
     feat.Label = "AutoFeature"
@@ -650,6 +676,42 @@ def make_body(name="Body", tip=None, group=None):
     feat.Shape = _make_shape()
     feat.State = []
     obj.newObject = MagicMock(return_value=feat)
+    return obj
+
+
+def make_assembly(name="Assembly", group=None):
+    """Mock Assembly::AssemblyObject.
+
+    assembly.newObject(type_id, name) creates a fresh MagicMock link object
+    (Name/Label/TypeId/Placement/LinkedObject) and appends it to .Group, so
+    add_component tests can assert on both the return value and the group's
+    new contents. isDerivedFrom defaults to False (plain part) — tests
+    checking the Assembly::AssemblyLink branch must override it explicitly,
+    since a bare MagicMock().isDerivedFrom(...) is truthy by default and
+    would silently misclassify every linked object as a sub-assembly.
+    """
+    obj = MagicMock()
+    obj.Name = name
+    obj.Label = name
+    obj.TypeId = "Assembly::AssemblyObject"
+    obj.Type = "Assembly"
+    obj.Placement = _Placement()
+    obj.Group = list(group) if group else []
+    obj.isDerivedFrom = MagicMock(
+        side_effect=lambda t: t == "Assembly::AssemblyObject"
+    )
+
+    def _new_object(type_id, link_name=None):
+        link = MagicMock()
+        link.Name = link_name or f"{type_id}_auto"
+        link.Label = link.Name
+        link.TypeId = type_id
+        link.Placement = _Placement()
+        link.LinkedObject = None
+        obj.Group.append(link)
+        return link
+
+    obj.newObject = MagicMock(side_effect=_new_object)
     return obj
 
 

@@ -48,6 +48,23 @@ BRIDGE_ONLY_TOOLS = frozenset({
     "stop_freecad_instance",
 })
 
+# MCP-facing tool name -> the (differently-named) handler-side dispatch key
+# the bridge actually forwards it as. Unlike BRIDGE_ONLY_TOOLS, these DO
+# reach the FreeCAD-side handler -- just not under their own name, so a
+# literal-string match against the handler source finds nothing for the
+# MCP name itself.
+#
+# execute_python: the bridge always submits it as execute_python_async and
+# polls, specifically so long-running code can't hold the GUI thread until
+# the socket timeout (commit ecbe827). The handler's OWN raw-socket
+# "execute_python_sync" entry is a *different*, synchronous op that only
+# direct-socket callers (the integration test suite) use -- the MCP tool
+# never reaches it. Two names now, on purpose, after this used to be one
+# name meaning two different things depending which layer called it.
+MCP_NAME_TRANSLATIONS = {
+    "execute_python": "execute_python_async",
+}
+
 
 def _read(path: str) -> str:
     with open(path, 'r', encoding='utf-8') as f:
@@ -110,6 +127,13 @@ def extract_bridge_dispatched_names(src: str) -> set:
       * ``name == "x"`` / ``elif name == "x"`` comparisons
       * names inside an ``elif name in ["a", "b", ...]`` list (possibly
         spanning several lines)
+      * ``elif name in _generic_dispatch_tools:`` — the whitelist is no
+        longer a literal list (that duplication is exactly how
+        "cam_machines" shipped as a dead routing entry: the schema list
+        and the routing list drifted independently). It's now derived as
+        ``{t.name for t in _smart_dispatcher_tools} - _BESPOKE_DISPATCH_TOOLS``,
+        so recognizing the derivation means parsing both operands instead
+        of a literal list.
     """
     names = set()
     for m in re.finditer(r'\bname\s*==\s*["\']([a-zA-Z_][a-zA-Z0-9_]*)["\']', src):
@@ -117,7 +141,35 @@ def extract_bridge_dispatched_names(src: str) -> set:
     for block in re.finditer(r'\bname\s+in\s*\[(.*?)\]', src, re.DOTALL):
         for m in re.finditer(r'["\']([a-zA-Z_][a-zA-Z0-9_]*)["\']', block.group(1)):
             names.add(m.group(1))
+    if re.search(r'\bname\s+in\s+_generic_dispatch_tools\b', src):
+        names |= _extract_generic_dispatch_tools(src)
     return names
+
+
+def _extract_generic_dispatch_tools(src: str) -> set:
+    """Statically compute _generic_dispatch_tools's value: every name in
+    _smart_dispatcher_tools minus every name literally listed in
+    _BESPOKE_DISPATCH_TOOLS. Mirrors the actual expression in
+    freecad_mcp_server.py without executing it."""
+    smart_block = re.search(
+        r'_smart_dispatcher_tools\s*=\s*\[(.*?)\n    \]\n', src, re.DOTALL
+    )
+    if not smart_block:
+        return set()
+    smart_names = {m.group(1) for m in re.finditer(
+        r'types\.Tool\(\s*\n?\s*name="([a-zA-Z_][a-zA-Z0-9_]*)"', smart_block.group(1)
+    )}
+
+    bespoke_block = re.search(
+        r'_BESPOKE_DISPATCH_TOOLS\s*=\s*\{(.*?)\}', src, re.DOTALL
+    )
+    bespoke_names = set()
+    if bespoke_block:
+        bespoke_names = {m.group(1) for m in re.finditer(
+            r'["\']([a-zA-Z_][a-zA-Z0-9_]*)["\']', bespoke_block.group(1)
+        )}
+
+    return smart_names - bespoke_names
 
 
 class TestDispatchCompleteness(unittest.TestCase):
@@ -148,11 +200,15 @@ class TestDispatchCompleteness(unittest.TestCase):
         )
 
     def test_every_server_tool_is_routed_or_bridge_only(self):
-        """Each MCP tool must either route in the handler or be on the
-        bridge-only allow-list. Catches the 7ad1498 dead-letter bug."""
-        unrouted = (self.server_tools
-                    - self.handler_tools
-                    - BRIDGE_ONLY_TOOLS)
+        """Each MCP tool must either route in the handler under its own
+        name, route under an explicit MCP_NAME_TRANSLATIONS entry (the
+        bridge forwards it as a different name), or be on the bridge-only
+        allow-list. Catches the 7ad1498 dead-letter bug."""
+        translated_names = {MCP_NAME_TRANSLATIONS.get(t, t) for t in self.server_tools}
+        unrouted_translated = translated_names - self.handler_tools - BRIDGE_ONLY_TOOLS
+        # Map back to the original MCP-facing name for a readable error.
+        reverse_translation = {v: k for k, v in MCP_NAME_TRANSLATIONS.items()}
+        unrouted = {reverse_translation.get(t, t) for t in unrouted_translated}
         self.assertEqual(
             unrouted, set(),
             f"\nMCP tool(s) registered in freecad_mcp_server.py but with "
@@ -161,7 +217,9 @@ class TestDispatchCompleteness(unittest.TestCase):
             + "\n\nFix: add the tool name to direct_map, generic_dispatch_map, "
               "or an explicit `tool_name ==` branch in _execute_tool_inner. "
               "If the tool is intentionally bridge-only (no FreeCAD call), "
-              "add it to BRIDGE_ONLY_TOOLS in this test."
+              "add it to BRIDGE_ONLY_TOOLS in this test. If the bridge "
+              "forwards it under a different name, add that mapping to "
+              "MCP_NAME_TRANSLATIONS instead."
         )
 
     def test_every_server_tool_is_dispatched_by_bridge(self):

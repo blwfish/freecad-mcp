@@ -22,6 +22,7 @@ class CAMOpsHandler(BaseHandler):
 
     def create_job(self, args: Dict[str, Any]) -> str:
         """Create a new CAM Job."""
+        start_time = time.time()
         try:
             # FreeCAD 1.0+ uses new module structure
             from Path.Main.Job import Create as CreateJob
@@ -43,7 +44,8 @@ class CAMOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "Error: No active document"
+                error = Exception("No active document")
+                return self.log_and_return("create_job", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('name', 'Job')
             base_object = args.get('base_object', '')
@@ -62,18 +64,19 @@ class CAMOpsHandler(BaseHandler):
                     if not obj and base_object.strip() != base_object:
                         obj = self.get_object(base_object.strip(), doc)
                 except ValueError as e:
-                    return f"Error: {e}"
+                    return self.log_and_return("create_job", args, error=e, duration=time.time() - start_time)
 
                 if obj:
                     model_list = [obj]
                 else:
                     # Provide helpful error with available objects
                     available = [f"{o.Name} ({o.Label})" for o in doc.Objects]
-                    return (
-                        f"Error: Base object '{base_object}' not found. "
+                    error = Exception(
+                        f"Base object '{base_object}' not found. "
                         f"Total objects: {len(available)}. "
                         f"Available: {', '.join(available)}"
                     )
+                    return self.log_and_return("create_job", args, error=error, duration=time.time() - start_time)
 
             # Create job programmatically WITHOUT GUI dialog
             # The Create function signature is: Create(name, base, templateFile=None)
@@ -85,31 +88,35 @@ class CAMOpsHandler(BaseHandler):
                 try:
                     job.ViewObject.Proxy = ViewProvider(job.ViewObject)
                     job.ViewObject.addExtension("Gui::ViewProviderGroupExtensionPython")
-                except Exception as e:
+                except Exception:
                     # ViewProvider setup is optional, just log if it fails
                     pass
 
             self.recompute(doc)
 
             if model_list:
-                return f"Created CAM Job '{job.Name}' with base object '{base_object}'"
+                result = f"Created CAM Job '{job.Name}' with base object '{base_object}'"
             else:
-                return f"Created CAM Job '{job.Name}' (no base object specified)"
+                result = f"Created CAM Job '{job.Name}' (no base object specified)"
+            return self.log_and_return("create_job", args, result=result, duration=time.time() - start_time)
 
         except ImportError:
-            return "Error: Path (CAM) module not available. Please install FreeCAD with CAM workbench support."
+            error = Exception("Path (CAM) module not available. Please install FreeCAD with CAM workbench support.")
+            return self.log_and_return("create_job", args, error=error, duration=time.time() - start_time)
         except Exception as e:
-            return f"Error creating CAM job: {e}"
+            return self.log_and_return("create_job", args, error=e, duration=time.time() - start_time)
 
     def setup_stock(self, args: Dict[str, Any]) -> str:
         """Setup stock for CAM job."""
+        start_time = time.time()
         try:
             # FreeCAD 1.0+ uses new module structure
             from Path.Main.Stock import CreateBox, CreateFromBase
 
             doc = self.get_document()
             if not doc:
-                return "Error: No active document"
+                error = Exception("No active document")
+                return self.log_and_return("setup_stock", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('job_name', '')
             stock_type = args.get('stock_type', 'CreateBox')
@@ -120,7 +127,8 @@ class CAMOpsHandler(BaseHandler):
 
             job = self.get_object(job_name, doc) if job_name else None
             if not job:
-                return f"Error: Job '{job_name}' not found"
+                error = Exception(f"Job '{job_name}' not found")
+                return self.log_and_return("setup_stock", args, error=error, duration=time.time() - start_time)
 
             if stock_type == 'CreateBox':
                 job.Stock = CreateBox(job)
@@ -140,10 +148,11 @@ class CAMOpsHandler(BaseHandler):
                 job.Stock.ExtZpos = extent_z
 
             job.recompute()
-            return f"Setup stock for job '{job_name}' using {stock_type}"
+            result = f"Setup stock for job '{job_name}' using {stock_type}"
+            return self.log_and_return("setup_stock", args, result=result, duration=time.time() - start_time)
 
         except Exception as e:
-            return f"Error setting up stock: {e}"
+            return self.log_and_return("setup_stock", args, error=e, duration=time.time() - start_time)
 
     def profile(self, args: Dict[str, Any]) -> str:
         """Create a profile (contour) operation.
@@ -153,6 +162,7 @@ class CAMOpsHandler(BaseHandler):
         With faces → perimeter of those faces (processPerimeter=True by default).
         With edges → trace specific edges.
         """
+        start_time = time.time()
         try:
             try:
                 from Path.Op.Profile import Create as CreateProfile
@@ -174,13 +184,15 @@ class CAMOpsHandler(BaseHandler):
             self.recompute(doc)
             faces, edges = args.get('faces', []), args.get('edges', [])
             mode = f"faces={faces}" if faces else (f"edges={edges}" if edges else "whole model exterior")
-            return f"Created Profile operation '{op.Name}' in job '{args.get('job_name')}' ({mode})"
+            result = f"Created Profile operation '{op.Name}' in job '{args.get('job_name')}' ({mode})"
+            return self.log_and_return("profile", args, result=result, duration=time.time() - start_time)
 
         except Exception as e:
-            return f"Error creating profile operation: {e}"
+            return self.log_and_return("profile", args, error=e, duration=time.time() - start_time)
 
     def pocket(self, args: Dict[str, Any]) -> str:
         """Create a pocket operation. Pass faces=['FaceN',...] to generate toolpath."""
+        start_time = time.time()
         try:
             # StepOver is a percentage of tool diameter — confirmed against
             # FreeCAD's own source (Path/Op/PocketBase.py):
@@ -189,9 +201,12 @@ class CAMOpsHandler(BaseHandler):
             # ridges/material — syntactically valid G-code with silently
             # wrong geometry. Validated before creating the op.
             if 'stepover' in args and args['stepover'] >= 100:
-                return (f"Error creating pocket operation: stepover ({args['stepover']}%) "
-                        f"must be < 100% of tool diameter — at or above 100% the tool "
-                        f"paths don't overlap, leaving uncut ridges/material")
+                error = Exception(
+                    f"stepover ({args['stepover']}%) must be < 100% of tool diameter — "
+                    f"at or above 100% the tool paths don't overlap, leaving uncut "
+                    f"ridges/material"
+                )
+                return self.log_and_return("pocket", args, error=error, duration=time.time() - start_time)
 
             try:
                 from Path.Op.Pocket import Create as CreatePocket
@@ -207,10 +222,11 @@ class CAMOpsHandler(BaseHandler):
             self.recompute(doc)
             faces = args.get('faces', [])
             face_info = f"faces={faces}" if faces else "no faces (provide faces= to generate toolpath)"
-            return f"Created Pocket operation '{op.Name}' in job '{args.get('job_name')}' ({face_info})"
+            result = f"Created Pocket operation '{op.Name}' in job '{args.get('job_name')}' ({face_info})"
+            return self.log_and_return("pocket", args, result=result, duration=time.time() - start_time)
 
         except Exception as e:
-            return f"Error creating pocket operation: {e}"
+            return self.log_and_return("pocket", args, error=e, duration=time.time() - start_time)
 
     def drilling(self, args: Dict[str, Any]) -> str:
         """Create a drilling operation.
@@ -218,6 +234,7 @@ class CAMOpsHandler(BaseHandler):
         Pass faces=['FaceN'] where FaceN is a cylindrical hole wall — FC extracts
         drill center and diameter automatically from the cylindrical face geometry.
         """
+        start_time = time.time()
         try:
             try:
                 from Path.Op.Drilling import Create as CreateDrilling
@@ -250,10 +267,11 @@ class CAMOpsHandler(BaseHandler):
             self.recompute(doc)
             faces = args.get('faces', [])
             face_info = f"faces={faces}" if faces else "no faces (provide cylindrical faces= to generate drill cycles)"
-            return f"Created Drilling operation '{op.Name}' in job '{args.get('job_name')}' ({face_info})"
+            result = f"Created Drilling operation '{op.Name}' in job '{args.get('job_name')}' ({face_info})"
+            return self.log_and_return("drilling", args, result=result, duration=time.time() - start_time)
 
         except Exception as e:
-            return f"Error creating drilling operation: {e}"
+            return self.log_and_return("drilling", args, error=e, duration=time.time() - start_time)
 
     def adaptive(self, args: Dict[str, Any]) -> str:
         """Create an adaptive clearing operation.
@@ -261,6 +279,7 @@ class CAMOpsHandler(BaseHandler):
         Trochoidal algorithm for constant tool engagement.
         Pass faces=['FaceN',...] to define the area to clear.
         """
+        start_time = time.time()
         try:
             # Same stepover-vs-tool-diameter validation as pocket() (see
             # its comment). Also: the real Adaptive property is
@@ -270,9 +289,12 @@ class CAMOpsHandler(BaseHandler):
             # is False on any modern Adaptive feature and the caller's
             # stepover argument was silently never applied.
             if 'stepover' in args and args['stepover'] >= 100:
-                return (f"Error creating adaptive operation: stepover ({args['stepover']}%) "
-                        f"must be < 100% of tool diameter — at or above 100% the tool "
-                        f"paths don't overlap, leaving uncut ridges/material")
+                error = Exception(
+                    f"stepover ({args['stepover']}%) must be < 100% of tool diameter — "
+                    f"at or above 100% the tool paths don't overlap, leaving uncut "
+                    f"ridges/material"
+                )
+                return self.log_and_return("adaptive", args, error=error, duration=time.time() - start_time)
 
             try:
                 from Path.Op.Adaptive import Create as CreateAdaptive
@@ -290,10 +312,11 @@ class CAMOpsHandler(BaseHandler):
             self.recompute(doc)
             faces = args.get('faces', [])
             face_info = f"faces={faces}" if faces else "no faces (provide faces= to generate toolpath)"
-            return f"Created Adaptive operation '{op.Name}' in job '{args.get('job_name')}' ({face_info})"
+            result = f"Created Adaptive operation '{op.Name}' in job '{args.get('job_name')}' ({face_info})"
+            return self.log_and_return("adaptive", args, result=result, duration=time.time() - start_time)
 
         except Exception as e:
-            return f"Error creating adaptive operation: {e}"
+            return self.log_and_return("adaptive", args, error=e, duration=time.time() - start_time)
 
     def face(self, args: Dict[str, Any]) -> str:
         """Create a face milling operation."""
@@ -445,48 +468,45 @@ class CAMOpsHandler(BaseHandler):
         return self._placeholder_dressup("Z-Correction", args)
 
     def create_tool(self, args: Dict[str, Any]) -> str:
-        """Create a tool bit."""
-        try:
-            tool_type = args.get('tool_type', 'endmill')
-            diameter = args.get('diameter', 6.0)
-            name = args.get('name', f'{tool_type}_{diameter}mm')
+        """Create a tool bit.
 
-            return f"Tool creation: Please use FreeCAD's Tool Library manager (CAM -> Tool Library Editor) to create tool '{name}' ({tool_type}, {diameter}mm diameter)"
-
-        except Exception as e:
-            return f"Error: {e}"
+        cam_operations' create_tool/tool_controller are legacy aliases (see
+        this tool's schema "deprecated" note) -- delegate to the real,
+        maintained implementations on cam_tools/cam_tool_controllers rather
+        than re-implementing (or worse, stubbing) tool-bit creation here.
+        No log_and_return wrapper: the delegate already logs its own
+        operation, so wrapping here would double-log and double-wrap the
+        returned message.
+        """
+        return self.server.cam_tools.create_tool(args)
 
     def tool_controller(self, args: Dict[str, Any]) -> str:
-        """Create a tool controller."""
-        try:
-            job_name = args.get('job_name', '')
-            tool_name = args.get('tool_name', '')
-            spindle_speed = args.get('spindle_speed', 10000)
-            feed_rate = args.get('feed_rate', 1000)
+        """Create/attach a tool controller to a CAM job.
 
-            return f"Tool controller setup: Please add tool controller in job '{job_name}' with spindle speed {spindle_speed} RPM and feed rate {feed_rate} mm/min"
-
-        except Exception as e:
-            return f"Error: {e}"
+        See create_tool's docstring above -- delegates to the real
+        implementation on cam_tool_controllers rather than duplicating it.
+        """
+        return self.server.cam_tool_controllers.add_tool_controller(args)
 
     def simulate(self, args: Dict[str, Any]) -> str:
-        """Simulate CAM operations."""
-        try:
-            job_name = args.get('job_name', '')
+        """Simulate CAM operations.
 
-            return f"Simulation: Please use CAM -> Simulate (or click Simulate button) to run simulation for job '{job_name}'"
-
-        except Exception as e:
-            return f"Error: {e}"
+        Legacy alias -- delegates to simulate_job, the real implementation.
+        This method used to be a GUI-instruction stub while simulate_job
+        (below) did the actual work under a different operation name.
+        """
+        return self.simulate_job(args)
 
     def post_process(self, args: Dict[str, Any]) -> str:
         """Post-process CAM job to generate G-code."""
+        start_time = time.time()
         try:
             from Path.Post.Processor import PostProcessorFactory
 
             doc = self.get_document()
             if not doc:
-                return "Error: No active document"
+                error = Exception("No active document")
+                return self.log_and_return("post_process", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('job_name', '')
             output_file = args.get('output_file', '')
@@ -494,14 +514,16 @@ class CAMOpsHandler(BaseHandler):
 
             job = self.get_object(job_name, doc) if job_name else None
             if not job:
-                return f"Error: Job '{job_name}' not found"
+                error = Exception(f"Job '{job_name}' not found")
+                return self.log_and_return("post_process", args, error=error, duration=time.time() - start_time)
 
             if not output_file:
                 output_file = f"/tmp/{job_name}.gcode"
 
             path_err = self._validate_file_path(output_file)
             if path_err:
-                return f"Error: {path_err}"
+                error = Exception(path_err)
+                return self.log_and_return("post_process", args, error=error, duration=time.time() - start_time)
 
             # Set post-processor on job
             job.PostProcessor = post_processor
@@ -510,11 +532,13 @@ class CAMOpsHandler(BaseHandler):
 
             processor = PostProcessorFactory.get_post_processor(job, post_processor)
             if processor is None:
-                return f"Error: Post processor '{post_processor}' not found"
+                error = Exception(f"Post processor '{post_processor}' not found")
+                return self.log_and_return("post_process", args, error=error, duration=time.time() - start_time)
 
             gcode_sections = processor.export()
             if not gcode_sections:
-                return "Error: No G-code generated (no operations or empty paths)"
+                error = Exception("No G-code generated (no operations or empty paths)")
+                return self.log_and_return("post_process", args, error=error, duration=time.time() - start_time)
 
             total_lines = 0
             with open(output_file, 'w') as f:
@@ -523,19 +547,23 @@ class CAMOpsHandler(BaseHandler):
                         f.write(gcode)
                         total_lines += gcode.count('\n')
 
-            return f"Generated G-code for job '{job_name}' -> {output_file} ({total_lines} lines)"
+            result = f"Generated G-code for job '{job_name}' -> {output_file} ({total_lines} lines)"
+            return self.log_and_return("post_process", args, result=result, duration=time.time() - start_time)
 
         except ImportError as e:
-            return f"Error: Path.Post module not available: {e}"
+            error = Exception(f"Path.Post module not available: {e}")
+            return self.log_and_return("post_process", args, error=error, duration=time.time() - start_time)
         except Exception as e:
-            return f"Error post-processing: {e}"
+            return self.log_and_return("post_process", args, error=e, duration=time.time() - start_time)
 
     def inspect(self, args: Dict[str, Any]) -> str:
         """Inspect CAM job and operations."""
+        start_time = time.time()
         try:
             doc = self.get_document()
             if not doc:
-                return "Error: No active document"
+                error = Exception("No active document")
+                return self.log_and_return("inspect", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('job_name', '')
 
@@ -544,13 +572,14 @@ class CAMOpsHandler(BaseHandler):
                 # List all jobs - look for Path::FeaturePython objects with Operations
                 jobs = [obj for obj in doc.Objects if hasattr(obj, 'Operations')]
                 if not jobs:
-                    return "No CAM jobs found in document"
+                    result = "No CAM jobs found in document"
+                    return self.log_and_return("inspect", args, result=result, duration=time.time() - start_time)
 
                 result = f"Found {len(jobs)} CAM job(s):\n"
                 for j in jobs:
                     ops = j.Operations.Group if hasattr(j, 'Operations') else []
                     result += f"  - {j.Name}: {len(ops)} operation(s)\n"
-                return result
+                return self.log_and_return("inspect", args, result=result, duration=time.time() - start_time)
 
             # Inspect specific job
             ops = job.Operations.Group if hasattr(job, 'Operations') else []
@@ -559,10 +588,10 @@ class CAMOpsHandler(BaseHandler):
             for i, op in enumerate(ops, 1):
                 result += f"    {i}. {op.Name} ({op.TypeId})\n"
 
-            return result
+            return self.log_and_return("inspect", args, result=result, duration=time.time() - start_time)
 
         except Exception as e:
-            return f"Error inspecting job: {e}"
+            return self.log_and_return("inspect", args, error=e, duration=time.time() - start_time)
 
     def list_operations(self, args: Dict[str, Any]) -> str:
         """List all operations in a CAM job with detailed information.

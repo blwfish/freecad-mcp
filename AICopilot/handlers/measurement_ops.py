@@ -20,17 +20,12 @@ class MeasurementOpsHandler(BaseHandler):
             object1 = args.get('object1', '')
             object2 = args.get('object2', '')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            obj1 = self.get_object(object1, doc)
-            obj2 = self.get_object(object2, doc)
-
-            if not obj1:
-                return f"Object not found: {object1}"
-            if not obj2:
-                return f"Object not found: {object2}"
+            doc, obj1, err = self.resolve_object(object1)
+            if err:
+                return err
+            _, obj2, err = self.resolve_object(object2, doc)
+            if err:
+                return err
 
             # Minimum surface-to-surface distance — NOT centroid distance, which
             # reports a positive value for touching/overlapping parts. distToShape
@@ -52,19 +47,12 @@ class MeasurementOpsHandler(BaseHandler):
         try:
             object_name = args.get('object_name', '')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
+            doc, obj, err = self.resolve_object(object_name, attr='Shape')
+            if err:
+                return err
 
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
-
-            if hasattr(obj, 'Shape'):
-                volume = obj.Shape.Volume
-                return f"Volume of {object_name}: {volume:.2f} mm³"
-            else:
-                return "Object must have Shape property for volume calculation"
+            volume = obj.Shape.Volume
+            return f"Volume of {object_name}: {volume:.2f} mm³"
 
         except Exception as e:
             return f"Error calculating volume: {e}"
@@ -74,24 +62,17 @@ class MeasurementOpsHandler(BaseHandler):
         try:
             object_name = args.get('object_name', '')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
+            doc, obj, err = self.resolve_object(object_name, attr='Shape')
+            if err:
+                return err
 
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
-
-            if hasattr(obj, 'Shape'):
-                bb = obj.Shape.BoundBox
-                return (
-                    f"Bounding box of {object_name}:\n"
-                    f"  X: {bb.XMin:.2f} to {bb.XMax:.2f} mm (length: {bb.XLength:.2f})\n"
-                    f"  Y: {bb.YMin:.2f} to {bb.YMax:.2f} mm (width: {bb.YLength:.2f})\n"
-                    f"  Z: {bb.ZMin:.2f} to {bb.ZMax:.2f} mm (height: {bb.ZLength:.2f})"
-                )
-            else:
-                return "Object must have Shape property for bounding box calculation"
+            bb = obj.Shape.BoundBox
+            return (
+                f"Bounding box of {object_name}:\n"
+                f"  X: {bb.XMin:.2f} to {bb.XMax:.2f} mm (length: {bb.XLength:.2f})\n"
+                f"  Y: {bb.YMin:.2f} to {bb.YMax:.2f} mm (width: {bb.YLength:.2f})\n"
+                f"  Z: {bb.ZMin:.2f} to {bb.ZMax:.2f} mm (height: {bb.ZLength:.2f})"
+            )
 
         except Exception as e:
             return f"Error calculating bounding box: {e}"
@@ -101,32 +82,25 @@ class MeasurementOpsHandler(BaseHandler):
         try:
             object_name = args.get('object_name', '')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
+            doc, obj, err = self.resolve_object(object_name, attr='Shape')
+            if err:
+                return err
 
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
+            shape = obj.Shape
+            volume = shape.Volume
+            center_of_mass = shape.CenterOfMass
 
-            if hasattr(obj, 'Shape'):
-                shape = obj.Shape
-                volume = shape.Volume
-                center_of_mass = shape.CenterOfMass
+            # Calculate surface area
+            area = 0
+            for face in shape.Faces:
+                area += face.Area
 
-                # Calculate surface area
-                area = 0
-                for face in shape.Faces:
-                    area += face.Area
-
-                return (
-                    f"Mass properties of {object_name}:\n"
-                    f"  Volume: {volume:.2f} mm³\n"
-                    f"  Surface Area: {area:.2f} mm²\n"
-                    f"  Center of Mass: ({center_of_mass.x:.2f}, {center_of_mass.y:.2f}, {center_of_mass.z:.2f})"
-                )
-            else:
-                return "Object must have Shape property for mass properties calculation"
+            return (
+                f"Mass properties of {object_name}:\n"
+                f"  Volume: {volume:.2f} mm³\n"
+                f"  Surface Area: {area:.2f} mm²\n"
+                f"  Center of Mass: ({center_of_mass.x:.2f}, {center_of_mass.y:.2f}, {center_of_mass.z:.2f})"
+            )
 
         except Exception as e:
             return f"Error calculating mass properties: {e}"
@@ -136,21 +110,14 @@ class MeasurementOpsHandler(BaseHandler):
         try:
             object_name = args.get('object_name', '')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
+            doc, obj, err = self.resolve_object(object_name, attr='Shape')
+            if err:
+                return err
 
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
-
-            if hasattr(obj, 'Shape'):
-                area = 0
-                for face in obj.Shape.Faces:
-                    area += face.Area
-                return f"Surface area of {object_name}: {area:.2f} mm²"
-            else:
-                return "Object must have Shape property for surface area calculation"
+            area = 0
+            for face in obj.Shape.Faces:
+                area += face.Area
+            return f"Surface area of {object_name}: {area:.2f} mm²"
 
         except Exception as e:
             return f"Error calculating surface area: {e}"
@@ -160,19 +127,12 @@ class MeasurementOpsHandler(BaseHandler):
         try:
             object_name = args.get('object_name', '')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
+            doc, obj, err = self.resolve_object(object_name, attr='Shape')
+            if err:
+                return err
 
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
-
-            if hasattr(obj, 'Shape'):
-                com = obj.Shape.CenterOfMass
-                return f"Center of mass of {object_name}: ({com.x:.2f}, {com.y:.2f}, {com.z:.2f}) mm"
-            else:
-                return "Object must have Shape property for center of mass calculation"
+            com = obj.Shape.CenterOfMass
+            return f"Center of mass of {object_name}: ({com.x:.2f}, {com.y:.2f}, {com.z:.2f}) mm"
 
         except Exception as e:
             return f"Error calculating center of mass: {e}"
@@ -182,27 +142,20 @@ class MeasurementOpsHandler(BaseHandler):
         try:
             object_name = args.get('object_name', '')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
+            doc, obj, err = self.resolve_object(object_name, attr='Shape')
+            if err:
+                return err
 
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
-
-            if hasattr(obj, 'Shape'):
-                shape = obj.Shape
-                return (
-                    f"Element count for {object_name}:\n"
-                    f"  Faces: {len(shape.Faces)}\n"
-                    f"  Edges: {len(shape.Edges)}\n"
-                    f"  Vertices: {len(shape.Vertexes)}\n"
-                    f"  Wires: {len(shape.Wires)}\n"
-                    f"  Shells: {len(shape.Shells)}\n"
-                    f"  Solids: {len(shape.Solids)}"
-                )
-            else:
-                return "Object must have Shape property for element counting"
+            shape = obj.Shape
+            return (
+                f"Element count for {object_name}:\n"
+                f"  Faces: {len(shape.Faces)}\n"
+                f"  Edges: {len(shape.Edges)}\n"
+                f"  Vertices: {len(shape.Vertexes)}\n"
+                f"  Wires: {len(shape.Wires)}\n"
+                f"  Shells: {len(shape.Shells)}\n"
+                f"  Solids: {len(shape.Solids)}"
+            )
 
         except Exception as e:
             return f"Error counting elements: {e}"
@@ -211,14 +164,10 @@ class MeasurementOpsHandler(BaseHandler):
         """List all faces of an object with index, normal, centroid, and area."""
         try:
             object_name = args.get('object_name', '')
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
-            if not hasattr(obj, 'Shape'):
-                return "Object must have Shape property"
+
+            doc, obj, err = self.resolve_object(object_name, attr='Shape')
+            if err:
+                return err
 
             lines = [f"Faces of {object_name} ({len(obj.Shape.Faces)} total):"]
             for i, face in enumerate(obj.Shape.Faces):
@@ -242,33 +191,26 @@ class MeasurementOpsHandler(BaseHandler):
         try:
             object_name = args.get('object_name', '')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
+            doc, obj, err = self.resolve_object(object_name, attr='Shape')
+            if err:
+                return err
 
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
+            shape = obj.Shape
+            is_solid = shape.isClosed() and len(shape.Solids) > 0
+            is_valid = shape.isValid()
 
-            if hasattr(obj, 'Shape'):
-                shape = obj.Shape
-                is_solid = shape.isClosed() and len(shape.Solids) > 0
-                is_valid = shape.isValid()
-
-                status = []
-                if is_solid:
-                    status.append("Is a closed solid")
-                else:
-                    status.append("Not a closed solid")
-
-                if is_valid:
-                    status.append("Shape is valid")
-                else:
-                    status.append("Shape has errors")
-
-                return f"Solid check for {object_name}:\n  " + "\n  ".join(status)
+            status = []
+            if is_solid:
+                status.append("Is a closed solid")
             else:
-                return "Object must have Shape property for solid check"
+                status.append("Not a closed solid")
+
+            if is_valid:
+                status.append("Shape is valid")
+            else:
+                status.append("Shape has errors")
+
+            return f"Solid check for {object_name}:\n  " + "\n  ".join(status)
 
         except Exception as e:
             return f"Error checking solid: {e}"

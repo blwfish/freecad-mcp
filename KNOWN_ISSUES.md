@@ -470,3 +470,309 @@ list_objects(type_filter="Part::Feature")
 # Get up to 500 objects
 list_objects(limit=500)
 ```
+
+## Sketch Operations
+
+### Issue: `sketch_operations(operation="add_constraint")` cannot bind a constraint to a spreadsheet expression
+
+**Status**: FIXED (2026-07-27), verified live against real FreeCAD 26.3.0.
+See "Resolution" at the end of this section.
+**Severity**: Medium — no crash, but it silently blocks the tool's most useful
+use case (spreadsheet-parametric sketches) and forces `execute_python()` as
+the only way to build them
+**Affected**: `AICopilot/handlers/sketch_ops.py`, `add_constraint()` (currently
+around line 550-685); the `value` field in the `sketch_operations` tool schema
+in `freecad_mcp_server.py` (around line 953)
+**Discovered**: 2026-07-27, building a spreadsheet-driven "master sketch" for
+an HO-scale coach side kit (window array + registration pins), where every
+constraint needed to track a `Dimensions` spreadsheet alias rather than a
+literal number
+
+#### Problem
+
+`add_constraint`'s `value` argument is typed as a plain number end to end —
+both in the JSON schema (`"value": {"type": "number", ...}`) and in the
+handler, which does `value = args.get('value', None)` and passes it straight
+into `Sketcher.Constraint(ct, ..., value)`. There is no way to pass an
+expression string (e.g. `"Dimensions.WindowWidthStd"` or
+`"Dimensions.PairCenter1 - Dimensions.PitchNarrow/2"`) instead of a bare
+number. Every dimensional constraint (`Distance`, `DistanceX`, `DistanceY`,
+`Radius`, `Diameter`, `Angle`) is affected identically.
+
+This isn't a FreeCAD limitation — `Sketcher::SketchObject.setExpression()`
+works exactly as documented once called directly:
+
+```python
+idx = sketch.addConstraint(Sketcher.Constraint('DistanceX', geo_id, 1, 0.0))
+sketch.setExpression(f'Constraints[{idx}]', 'Dimensions.PanelLength / -2')
+```
+
+That's a real, working pattern — I used it by hand via `execute_python()` for
+an entire sketch (dozens of constraints, all spreadsheet-bound, fully
+resolves `FullyConstrained=True`) because `sketch_operations` had no way to
+express it. `spreadsheet_operations`'s own handler
+(`AICopilot/handlers/spreadsheet_ops.py:329`) already calls `setExpression()`
+for cell-to-property bindings elsewhere in this same codebase, so the
+capability and the calling convention are already established here — sketch
+constraints just never picked it up.
+
+#### Root Cause
+
+Schema/implementation gap, not a FreeCAD API gap. `add_constraint` was built
+around literal dimensioning (matching the GUI's "type a number" default
+Ctrl workflow) and was never extended to accept an expression string, even
+though the underlying `Sketcher.Constraint` + `setExpression()` combination
+that would make it work is a two-line addition.
+
+#### Suggested Fix
+
+1. Add an `"expression"` string parameter to the `sketch_operations` schema
+   in `freecad_mcp_server.py` (sibling to `value`, both optional — exactly
+   one of the two should be provided for dimensional constraint types).
+2. In `add_constraint()` (`sketch_ops.py`), after `idx = sketch.addConstraint(c)`,
+   if `args.get('expression')` is set, call
+   `sketch.setExpression(f'Constraints[{idx}]', expression)` instead of (or
+   in addition to, for the initial literal seed value) using `value`.
+3. Recompute (`self.recompute(doc)`) after setting the expression — expressions
+   only evaluate on recompute, not immediately on `setExpression()`.
+4. Worth doing at the same time since it's the same code path: consider
+   exposing `sketch.FullyConstrained` / `sketch.DoF` / `sketch.ConflictingConstraints`
+   / `sketch.RedundantConstraints` in the return message instead of (or
+   alongside) the current `dof_msg` derived from `sketch.solve()`'s return
+   value. `solve()`'s return code is a solver-success code (0 = solved
+   without conflict), **not** a degrees-of-freedom count — a sketch can be
+   genuinely under-constrained (real leftover DOF) and still get `solve()==0`,
+   so the current `", DoF={dof}"` message is misleading. `sketch.DoF` and
+   `sketch.FullyConstrained` are the properties that actually answer "is this
+   sketch fully determined."
+
+#### Related, NOT a bug: `Symmetric` constraint type is already supported here
+
+While investigating this I confirmed `add_constraint(constraint_type="Symmetric",
+geo_id1=..., pos_id1=..., geo_id2=..., pos_id2=..., sym_geo=..., sym_pos=0)`
+already builds `Sketcher.Constraint('Symmetric', g1, p1, g2, p2, sym_geo, sym_pos)`
+correctly — including mirroring about a *line* (not just a point) via
+`sym_pos=0`, which FreeCAD's point-index convention (0=edge itself) maps onto
+correctly. I didn't realize this tool already covered that case and instead
+used FreeCAD's own `SketchObject.addSymmetric()` Python method directly via
+`execute_python()`, which turned out to have its own unrelated upstream gap
+(the Python binding never forwards the `addSymmetryConstraints` C++ parameter,
+so it silently never creates real constraints no matter how it's called —
+confirmed via `git blame`/`git log -S` against `FC-clone`, not something to
+fix in this repo). Noting it here only so a future session doesn't waste time
+suspecting `sketch_operations` itself of that problem too.
+
+#### Resolution (2026-07-27)
+
+Implemented the suggested fix essentially as written, plus item 4:
+
+1. Added an `"expression"` string param to the `sketch_operations` schema in
+   `freecad_mcp_server.py`, sibling to `value`.
+2. `add_constraint()` (`sketch_ops.py`) now accepts `expression` for the six
+   dimensional constraint types (`Distance`, `DistanceX`, `DistanceY`,
+   `Radius`, `Diameter`, `Angle`). Exactly one of `value`/`expression` is
+   required for those types; if both are given, `value` seeds the literal
+   `Sketcher.Constraint(...)` call and `expression` still overrides it via
+   `setExpression()` on the next recompute. Passing `expression` for a
+   non-dimensional type (e.g. `Horizontal`) is rejected explicitly rather
+   than silently ignored.
+3. After `sketch.addConstraint(c)`, calls
+   `sketch.setExpression(f'Constraints[{idx}]', expression)`, then
+   `self.recompute(doc)` — expressions only evaluate on recompute.
+4. `add_constraint`'s and `list_constraints`'s DoF reporting now reads
+   `sketch.DoF` / `sketch.FullyConstrained` directly instead of treating
+   `sketch.solve()`'s return value as a DoF count. `solve()` is still called
+   once as a forcing function before reading those properties, but its
+   return value is no longer part of the reported message.
+
+Verified live against real FreeCAD 26.3.0 (not just unit tests): created a
+spreadsheet with a `PanelLength` alias, bound a `DistanceX` constraint to
+`Dimensions.PanelLength / -2` with no literal `value`, confirmed the
+constraint resolved to the correct value and `sketch.ExpressionEngine` showed
+the binding, then changed the spreadsheet cell and confirmed the constraint
+value updated live on recompute. Also verified the value+expression seed path
+and the non-dimensional-type rejection live. 5 new unit tests added in
+`tests/unit/test_sketch_ops.py` (expression seeding, value+expression
+combined, rejection for non-dimensional types, missing-value-and-expression
+error, and DoF/FullyConstrained message sourcing).
+
+Found in passing: `reload_modules` failed with `No module named
+'universal_selector'`. Investigated and fixed as its own issue — see
+"`reload_modules` dispatched off the GUI thread — crashed FreeCAD live" below.
+
+## Server Infrastructure
+
+### Issue: `reload_modules` dispatched off the GUI thread — crashed FreeCAD live
+
+**Status**: FIXED (2026-07-27)
+**Severity**: High — reproduced a hard SIGSEGV crash of a live, GUI FreeCAD
+session (macOS, ~4h uptime) while investigating a lesser symptom
+**Affected**: `AICopilot/freecad_mcp_handler.py`, `_execute_tool_inner()`'s
+`reload_modules` dispatch (~line 1145) and `_reload_handlers()` (~line 1479)
+**Discovered**: 2026-07-27, while chasing a `reload_modules` failure found
+during the issue-48 fix above
+
+#### Symptom #1 (the one that got investigated first): stale deployment
+
+The first `reload_modules` call in this session failed with
+`Handler reload failed: No module named 'universal_selector'`, thrown from
+`_reload_handlers()`'s final step (reloading `freecad_mcp_handler.py` itself
+via `importlib.util.spec_from_file_location` + `exec_module`, which
+re-executes its top-level `from universal_selector import UniversalSelector`).
+
+Root cause turned out to be mundane: the FreeCAD instance's actually-loaded
+module directory (`FreeCAD-prefs/v26-3/Mod/AICopilot/` — see the corrected
+dev-paths note below) was stale relative to this repo — `universal_selector.py`
+plus several versions of other changes had never been rsynced there.
+`sys.path` and the reload mechanism itself were fine; the file the reload was
+trying to `from universal_selector import ...` genuinely did not exist yet at
+that path. Confirmed by checking `sys.modules` / `__file__` /  `__version__`
+on two long-running GUI instances: both had `freecad_mcp_handler.__version__
+== "5.8.0"` in memory (current source is 6.1.0) and no `universal_selector`
+in `sys.modules` at all — these processes had been running since well before
+`universal_selector` was added, and `reload_modules` had apparently never
+once succeeded end-to-end on them since, so none of the intervening deploys
+had ever taken live effect. Fixed for this session by rsyncing
+`AICopilot/` to `FreeCAD-prefs/v26-3/Mod/AICopilot/` (and the legacy
+`Mod/AICopilot/` / `v1-2/Mod/AICopilot/` paths for consistency).
+
+**Corrected dev-paths note**: `CLAUDE.md` documents the actual FreeCAD-side
+load path as `FreeCAD-prefs/Mod/AICopilot/` (with `v1-2/Mod/AICopilot/` as a
+secondary path for `pixi run freecad-release`). Neither is current — this
+FreeCAD 26.3.0 build actually loads from `FreeCAD-prefs/v26-3/Mod/AICopilot/`
+(a real directory, not a symlink; `Mod/AICopilot/` is a separate real
+directory too, not the same install). `AICopilot/execute_python`'s
+`os.path.realpath(module.__file__)` is the reliable way to check which path a
+given running instance actually loaded from — don't trust the doc.
+
+#### Symptom #2 (the real bug, found while investigating #1): thread-unsafe dispatch
+
+While manually working around symptom #1 by re-executing
+`freecad_mcp_handler.py`'s module code directly via `execute_python` (to
+verify the reload path would work once the stale-deploy fix landed), FreeCAD
+segfaulted and the process died. Crash report (macOS `.ips`, `SIGSEGV` /
+`KERN_INVALID_ADDRESS`): a `QTimer` fired on the GUI thread, hit PySide's
+`SignalManager::handleMetaCallError()`, which called `Py_Exit` and began
+tearing down the Python interpreter (`Py_FinalizeEx` → `finalize_modules` →
+GC) *while a `QPushButton` wrapper was mid-destroy*, crashing in Shiboken's
+`BindingManager::getOverride` on a stale pointer.
+
+That specific crash was caused by my own out-of-band `execute_python` call
+(re-executing PySide-touching module code from the socket thread, bypassing
+GUI-thread marshaling entirely) — but it exposed a real, pre-existing bug:
+`_execute_tool_inner()`'s dispatch for `reload_modules` called
+`self._reload_handlers()` **directly**, with no GUI-thread marshaling at all:
+
+```python
+if tool_name == "reload_modules":
+    return self._reload_handlers()   # ran on the socket thread
+```
+
+Every other GUI-touching tool in this dispatcher (`_dispatch_to_handler`,
+`_call_on_gui_thread_async` for primitives/booleans, etc.) routes through
+`_run_on_gui_thread`/`_run_on_gui_thread_async` for exactly the reason the
+crash demonstrates: `_reload_handlers()` re-executes `freecad_mcp_handler.py`
+itself (touching `PySide`/`QtCore` imports) and rebuilds handler instances
+that hold live Qt-bound state (`ViewOpsHandler._clip_planes`' Coin3D
+scene-graph nodes, etc.) — doing any of that from the socket thread races the
+live Qt event loop. `reload_modules` was the one dispatch entry that skipped
+this and called straight through.
+
+#### Fix
+
+`_execute_tool_inner()` now calls a new `_call_on_gui_thread_reload()`
+wrapper instead of `_reload_handlers()` directly. The wrapper runs
+`_reload_handlers()` via the existing `_run_on_gui_thread` primitive (same
+mechanism every other GUI-mutating tool already uses), so it now executes on
+the Qt main thread instead of racing it.
+
+One wrinkle: `_reload_handlers()` already returns a complete JSON string
+(`{"result": ..., "modules_reloaded": N}` or `{"error": ...}`), unlike the
+plain-string returns `_call_on_gui_thread`/`_call_on_gui_thread_async` are
+built around — `_run_on_gui_thread`'s generic dict-to-JSON wrapping would
+otherwise double-encode it as an escaped string inside another JSON object.
+`_call_on_gui_thread_reload()` parses `_reload_handlers()`'s JSON back into a
+dict first so the final response nests cleanly (`{"result": {"result": ...,
+"modules_reloaded": N}}`) instead of embedding an escaped JSON blob. This is
+a minor response-shape change from before (previously flat); nothing in this
+repo parses `reload_modules`' output programmatically, so this was accepted
+rather than preserving the old flat shape.
+
+Also added `_call_on_gui_thread_reload` to `_reload_handlers()`'s own
+self-rebind list (`_dispatch_methods`), so a future `reload_modules` call
+picks up edits to the wrapper itself, consistent with how `_reload_handlers`
+already rebinds itself there.
+
+3 new unit tests in `tests/unit/test_freecad_mcp_handler.py`
+(`TestCallOnGuiThreadReload`): correct nested (non-double-encoded) result
+shape, error-JSON passthrough, and exception-instead-of-error-JSON handling.
+Existing `test_reload_modules_routing` updated to assert dispatch now goes
+through `_call_on_gui_thread_reload()` rather than calling
+`_reload_handlers()` directly. Full suite: 1656 passed.
+
+**Not re-verified live against a real GUI FreeCAD crash reproduction** —
+given the fix was arrived at by causing a real crash once already this
+session, a second live GUI-thread stress test wasn't attempted. The fix is
+structurally identical to the pattern every other GUI-touching tool in this
+file already uses successfully, and is covered by unit tests for the
+JSON-shape logic, but the actual thread-race fix itself is only verified by
+code inspection + the pattern match, not by reproducing the crash and
+confirming it no longer happens.
+
+## Execute Python
+
+### Issue: `execute_python()` never surfaces FreeCAD Console warnings/errors, only Python stdout
+
+**Status**: NOT FIXED (open) — design decision deferred, not just an
+implementation gap
+**Severity**: Low-medium — no crash, but real FreeCAD-level warnings
+(deprecation notices, recompute warnings, etc.) triggered by code run through
+`execute_python()` are silently invisible to the caller unless they separately
+call `view_control(operation="get_report_view")` afterward
+**Affected**: `AICopilot/handlers/execute_python_ops.py`, `run_code()`
+**Discovered**: 2026-07-27, building the Branchline coach side model —
+`execute_python()` code set the (deprecated, as of a recent FreeCAD version)
+`Midplane` property on several `PartDesign::Pad`/`Pocket` objects. FreeCAD
+logged a `PrintWarning`-level deprecation notice each time, but this only
+surfaced when the file was later reopened in the GUI and the Report View was
+checked by hand — several tool calls earlier, nothing in `execute_python()`'s
+response indicated anything had happened.
+
+#### Problem
+
+`run_code()` redirects `sys.stdout` into an `io.StringIO()` buffer and
+returns that plus the last expression's value. That only captures output from
+the executed code's own `print()` calls. FreeCAD's own logging —
+`Console.PrintWarning()`, `PrintError()`, and (more importantly) warnings
+emitted internally by FreeCAD's C++ layer as a side effect of property
+sets/recomputes (exactly what happened with the `Midplane` deprecation) — goes
+through FreeCAD's separate Console/observer system, not Python's `stdout`.
+None of it reaches `execute_python()`'s return value. It only becomes visible
+via a manual, separate `get_report_view` call.
+
+#### Investigated: no clean Python-level observer-registration API found
+
+Looked for a way to register a Python callback directly against FreeCAD's
+console so `run_code()` could capture messages as they're emitted, rather
+than needing to diff Report View text. `FreeCAD.Console`'s exposed API
+(`src/Base/FreeCAD.Console.module.pyi` in `FC-clone`) only has `Print*()`
+output functions plus `SetStatus`/`GetStatus`/`GetObservers` for observers
+that are already registered by name (e.g. the GUI Report View widget
+registers itself natively in C++) — no `SetObserver`/callback-registration
+entry point for arbitrary Python objects turned up in this version's source.
+
+#### Suggested fix (not yet decided on)
+
+Doesn't need that observer API — `get_report_view` already works (used
+successfully by hand during the coach-side session). `run_code()` could
+snapshot the Report View tail before executing user code, run it, then diff
+and fold any new Warning/Error-level lines into the response automatically.
+Same underlying mechanism as the manual workaround, just applied proactively.
+
+**Open design question, deliberately left unresolved:** should this live only
+in `execute_python()`, or should every mutating tool call pay the same
+before/after Report View diff? `execute_python()` is the highest-value target
+(arbitrary code, hardest to predict what it'll trigger), but the same class
+of silent-warning problem could in principle happen from any handler that
+calls into FreeCAD's property/recompute machinery. Deferred rather than
+guessed at — needs a real decision, not a quick patch.

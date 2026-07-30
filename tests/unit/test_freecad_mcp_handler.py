@@ -37,7 +37,7 @@ def mock_handlers(monkeypatch):
         "SpatialOpsHandler", "InspectorOpsHandler",
         "MacroOpsHandler", "IntrospectionOpsHandler", "SketchBuilderOpsHandler",
         "VerificationOpsHandler", "FixtureOpsHandler", "DiagnosticsOpsHandler",
-        "ExecutePythonOpsHandler",
+        "ExecutePythonOpsHandler", "AssemblyOpsHandler",
     ]
 
     handlers_mod = types.ModuleType("handlers")
@@ -276,19 +276,21 @@ class TestRunOnGuiThread:
 
     def test_qt_mode_success_dict_without_result_key_does_not_crash(self, server):
         """M3: a task dict with 'success' but no 'result' key (e.g.
-        view_ops.set_view_gui_safe's task returns {"success": True, "view":
-        "top"}) previously matched a GUI-mode-only `if "success" in result:`
-        branch that unconditionally indexed result["result"] -> KeyError.
-        Pre-loading the response queue directly (rather than a background
-        thread) avoids needing QtCore's real event loop timing at all —
-        same pattern as test_stale_response_discarded above.
+        {"success": True, "view": "top"}, the shape the now-removed
+        view_ops.set_view_gui_safe used to return) previously matched a
+        GUI-mode-only `if "success" in result:` branch that unconditionally
+        indexed result["result"] -> KeyError. Pre-loading the response
+        queue directly (rather than a background thread) avoids needing
+        QtCore's real event loop timing at all — same pattern as
+        test_stale_response_discarded above.
 
         Must fall through to stringifying the whole dict, matching what the
-        headless branch has always done and what set_view_gui_safe's own
-        `"success" in str(result_str)` check depends on.
+        headless branch has always done — the general contract any GUI
+        task returning a bare dict depends on.
         """
         import freecad_mcp_handler as ss_mod
         ss_mod.QtCore = MagicMock()
+        server._heartbeat.stamp()
         try:
             req_id = server._request_counter + 1
             server._gui_response_queue.put((req_id, {"success": True, "view": "top"}))
@@ -466,9 +468,13 @@ class TestExecuteTool:
         server._execute_tool("part_operations", {"operation": "box"})
         server._dispatch_part_operations.assert_called_once_with({"operation": "box"})
 
-    def test_execute_python_routing(self, server):
+    def test_execute_python_sync_routing(self, server):
+        """execute_python_sync is the raw-socket synchronous entry (used by
+        the integration test suite's direct-socket send_command helper) --
+        distinct from the MCP-facing "execute_python" tool, which the
+        bridge always forwards as execute_python_async + polls."""
         server.execute_python_ops.execute = MagicMock(return_value=json.dumps({"result": "2"}))
-        server._execute_tool("execute_python", {"code": "1+1"})
+        server._execute_tool("execute_python_sync", {"code": "1+1"})
         server.execute_python_ops.execute.assert_called_once_with({"code": "1+1"})
 
     def test_get_debug_logs_routing(self, server):
@@ -483,7 +489,6 @@ class TestExecuteTool:
 
     def test_all_direct_map_tools(self, server):
         """Every tool in the direct_map should route without error."""
-        server._call_on_gui_thread = MagicMock(return_value=json.dumps({"result": "ok"}))
         direct_tools = [
             "create_box", "create_cylinder", "create_sphere", "create_cone",
             "create_torus", "create_wedge", "fuse_objects", "cut_objects",
@@ -550,7 +555,6 @@ class TestDispatchToHandler:
 class TestDispatchPartDesign:
     def test_known_operations(self, server):
         """All mapped PartDesign operations should route correctly."""
-        server._call_on_gui_thread = MagicMock(return_value=json.dumps({"result": "ok"}))
         ops = ["pad", "fillet", "chamfer", "hole", "linear_pattern",
                "mirror", "revolution", "loft", "sweep", "draft", "shell"]
         for op in ops:
@@ -570,28 +574,24 @@ class TestDispatchPartDesign:
 
 class TestDispatchPartOperations:
     def test_primitive_routing(self, server):
-        server._call_on_gui_thread = MagicMock(return_value=json.dumps({"result": "ok"}))
         for op in ["box", "cylinder", "sphere", "cone", "torus", "wedge"]:
             result = server._dispatch_part_operations({"operation": op})
             parsed = json.loads(result)
             assert "error" not in parsed, f"Part {op} returned error"
 
     def test_boolean_routing(self, server):
-        server._call_on_gui_thread = MagicMock(return_value=json.dumps({"result": "ok"}))
         for op in ["fuse", "cut", "common"]:
             result = server._dispatch_part_operations({"operation": op})
             parsed = json.loads(result)
             assert "error" not in parsed, f"Part {op} returned error"
 
     def test_transform_routing(self, server):
-        server._call_on_gui_thread = MagicMock(return_value=json.dumps({"result": "ok"}))
         for op in ["move", "rotate", "copy", "array"]:
             result = server._dispatch_part_operations({"operation": op})
             parsed = json.loads(result)
             assert "error" not in parsed, f"Part {op} returned error"
 
     def test_advanced_routing(self, server):
-        server._call_on_gui_thread = MagicMock(return_value=json.dumps({"result": "ok"}))
         for op in ["extrude", "revolve", "loft", "sweep"]:
             result = server._dispatch_part_operations({"operation": op})
             parsed = json.loads(result)
@@ -618,7 +618,7 @@ class TestDispatchViewControl:
         gui_ops = ["screenshot", "set_view", "fit_all", "zoom_in", "zoom_out",
                    "select_object", "clear_selection", "get_selection",
                    "hide_object", "show_object", "delete_object",
-                   "undo", "redo", "activate_workbench"]
+                   "undo", "redo", "activate_workbench", "open_document"]
         safe_ops = ["create_document", "save_document", "list_objects"]
 
         # GUI ops: mock _call_on_gui_thread_async to avoid blocking.
@@ -673,44 +673,44 @@ class TestDispatchViewControl:
         assert "list failed" in parsed["error"]
 
 
-# ---------------------------------------------------------------------------
-# _call_on_gui_thread
-# ---------------------------------------------------------------------------
+class TestCallOnGuiThreadReload:
+    """_call_on_gui_thread_reload wraps _reload_handlers() for GUI-thread
+    execution. Unlike _call_on_gui_thread_async,
+    _reload_handlers() already returns a full JSON string rather than a
+    plain result value, so this has to parse-then-rewrap instead of letting
+    _run_on_gui_thread's generic dict handling wrap it directly -- otherwise
+    the JSON string comes back double-encoded as an escaped string (see
+    _call_on_gui_thread_reload's docstring)."""
 
-class TestCallOnGuiThread:
-    def _simulate_gui_thread(self, server):
-        """Simulate the GUI timer draining the task queue with tagged request IDs."""
-        def process():
-            time.sleep(0.05)
-            req_id, task = server._gui_task_queue.get(timeout=1)
-            result = task()
-            server._gui_response_queue.put((req_id, result))
-        return process
-
-    def test_wraps_handler_success(self, server):
-        """Should wrap handler result in {success: True, result: ...}."""
-        handler_method = MagicMock(return_value="created")
-
-        t = threading.Thread(target=self._simulate_gui_thread(server))
-        t.start()
-
-        response = server._call_on_gui_thread(handler_method, {"x": 1}, "test")
-        t.join()
+    def test_wraps_reload_result_without_double_encoding(self, server):
+        server._reload_handlers = MagicMock(
+            return_value=json.dumps({
+                "result": "Reloaded 24 handler modules successfully",
+                "modules_reloaded": 24,
+            })
+        )
+        response = server._call_on_gui_thread_reload()
         parsed = json.loads(response)
-        assert parsed["result"] == "created"
-        handler_method.assert_called_once_with({"x": 1})
+        # The inner value must be a real nested object, not a JSON-in-a-string.
+        assert isinstance(parsed["result"], dict)
+        assert parsed["result"]["result"] == "Reloaded 24 handler modules successfully"
+        assert parsed["result"]["modules_reloaded"] == 24
 
-    def test_wraps_handler_exception(self, server):
-        """If handler raises, should return error with traceback."""
-        handler_method = MagicMock(side_effect=ValueError("bad value"))
-
-        t = threading.Thread(target=self._simulate_gui_thread(server))
-        t.start()
-
-        response = server._call_on_gui_thread(handler_method, {}, "test")
-        t.join()
+    def test_propagates_reload_error_json(self, server):
+        server._reload_handlers = MagicMock(
+            return_value=json.dumps({"error": "Handler reload failed: boom"})
+        )
+        response = server._call_on_gui_thread_reload()
         parsed = json.loads(response)
-        assert "bad value" in parsed["error"]
+        assert "boom" in parsed["error"]
+
+    def test_reload_handlers_raising_does_not_propagate_raw_traceback(self, server):
+        """If _reload_handlers itself raises instead of returning an error
+        JSON string, the wrapper must still return valid, parseable JSON."""
+        server._reload_handlers = MagicMock(side_effect=RuntimeError("kaboom"))
+        response = server._call_on_gui_thread_reload()
+        parsed = json.loads(response)
+        assert "kaboom" in parsed["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -786,6 +786,7 @@ class TestExecutePythonAsync:
         import freecad_mcp_handler as ss_mod
         # With QtCore set, async runs via queue (not inline) so status stays "running"
         ss_mod.QtCore = MagicMock()
+        server._heartbeat.stamp()
         try:
             result = json.loads(server._execute_python_async({"code": "x = 1"}))
             job_id = result["job_id"]
@@ -1073,6 +1074,7 @@ class TestRunOnGuiThreadEdgeCases:
         import freecad_mcp_handler as ss_mod
         # Busy guard only applies in Qt mode (QtCore is not None)
         ss_mod.QtCore = MagicMock()
+        server._heartbeat.stamp()
         try:
             server._gui_thread_busy = True
             result = json.loads(server._run_on_gui_thread(lambda: {"result": "ok"}))
@@ -1086,6 +1088,7 @@ class TestRunOnGuiThreadEdgeCases:
         import freecad_mcp_handler as ss_mod
         # Stale-response logic only applies in Qt mode
         ss_mod.QtCore = MagicMock()
+        server._heartbeat.stamp()
         try:
             # Pre-load the response queue: stale response first, then correct
             correct_id = server._request_counter + 1
@@ -1270,7 +1273,7 @@ class TestDispatchSketch:
     """Tests for _dispatch_sketch routing."""
 
     def test_known_operations(self, server):
-        """All sketch operations should route through _call_on_gui_thread."""
+        """All sketch operations should route through _call_on_gui_thread_async."""
         sketch_ops = [
             "create_sketch", "close_sketch", "verify_sketch",
             "add_line", "add_circle", "add_rectangle", "add_arc",
@@ -1279,11 +1282,9 @@ class TestDispatchSketch:
             "add_external_geometry",
         ]
         for op in sketch_ops:
-            with patch.object(server, '_call_on_gui_thread',
-                              return_value=json.dumps({"result": "ok"})):
-                result = server._dispatch_sketch({"operation": op})
-                parsed = json.loads(result)
-                assert "error" not in parsed, f"sketch {op} returned error: {parsed}"
+            result = server._dispatch_sketch({"operation": op})
+            parsed = json.loads(result)
+            assert "error" not in parsed, f"sketch {op} returned error: {parsed}"
 
     def test_unknown_operation(self, server):
         result = json.loads(server._dispatch_sketch({"operation": "nonexistent"}))
@@ -1329,6 +1330,20 @@ class TestDispatchViewControlExtended:
                 server._dispatch_view_control({"operation": "insert_shape"})
             )
             assert result["result"] == "inserted"
+
+    def test_open_document_is_gui_op(self, server):
+        """open_document has no internal GUI-thread self-dispatch of its own
+        (unlike create_document) -- it must route through the outer async
+        wrapper like save_document/rollback_to_checkpoint/insert_shape, or
+        FreeCAD.openDocument() risks the same main-thread assert those guard
+        against. Previously unreachable: implemented in document_ops.py but
+        never registered in the dispatch table at all."""
+        with patch.object(server, '_call_on_gui_thread_async',
+                          return_value=json.dumps({"result": "Opened document: Test"})):
+            result = json.loads(
+                server._dispatch_view_control({"operation": "open_document"})
+            )
+            assert result["result"] == "Opened document: Test"
 
     def test_clip_plane_ops(self, server):
         for op in ("add_clip_plane", "remove_clip_plane"):
@@ -1532,16 +1547,17 @@ class TestExecuteToolInnerRouting:
         server.diagnostics_ops.restart_freecad.assert_called_once()
 
     def test_reload_modules_routing(self, server):
-        server._reload_handlers = MagicMock(
-            return_value=json.dumps({"result": "reloaded"})
+        """reload_modules must route through the GUI-thread wrapper, not call
+        _reload_handlers() directly from the socket thread (2026-07-27: doing
+        that raced the live Qt event loop and crashed FreeCAD)."""
+        server._call_on_gui_thread_reload = MagicMock(
+            return_value=json.dumps({"result": {"result": "reloaded"}})
         )
         server._execute_tool_inner("reload_modules", {})
-        server._reload_handlers.assert_called_once()
+        server._call_on_gui_thread_reload.assert_called_once()
 
     def test_run_inspector_routing(self, server):
-        with patch.object(server, '_call_on_gui_thread',
-                          return_value=json.dumps({"result": "ok"})):
-            server._execute_tool_inner("run_inspector", {})
+        server._execute_tool_inner("run_inspector", {})
 
     def test_sketch_operations_routing(self, server):
         server._dispatch_sketch = MagicMock(
@@ -2034,6 +2050,51 @@ class TestProcessCommandExtended:
             ss_mod.DEBUG_ENABLED = original_debug
             ss_mod._monitor = original_monitor
 
+    def test_capture_state_not_called_per_command_by_default(self, server):
+        """capture_state() walks every object's Shape and calls shape.isValid()
+        -- a full OCCT BRep check -- measured at up to 75s on a
+        heavy-geometry document (2026-07-29). It must NOT run on every
+        command by default; CAPTURE_STATE_PER_COMMAND (opt-in via
+        FREECAD_MCP_CAPTURE_STATE_PER_COMMAND=1) gates it."""
+        import freecad_mcp_handler as ss_mod
+        original_debug = ss_mod.DEBUG_ENABLED
+        original_capture_flag = ss_mod.CAPTURE_STATE_PER_COMMAND
+        original_capture_fn = ss_mod._capture_state
+        ss_mod.DEBUG_ENABLED = True
+        ss_mod.CAPTURE_STATE_PER_COMMAND = False
+        ss_mod._capture_state = MagicMock()
+
+        server._execute_tool = MagicMock(return_value='{"result": "ok"}')
+        try:
+            server._process_command(json.dumps({"tool": "test", "args": {}}))
+            ss_mod._capture_state.assert_not_called()
+        finally:
+            ss_mod.DEBUG_ENABLED = original_debug
+            ss_mod.CAPTURE_STATE_PER_COMMAND = original_capture_flag
+            ss_mod._capture_state = original_capture_fn
+
+    def test_capture_state_called_per_command_when_opted_in(self, server):
+        """The inverse of the above: explicitly opting in via
+        CAPTURE_STATE_PER_COMMAND=True must still call capture_state() on
+        every command, for sessions that genuinely need the pre-command
+        snapshot for live debugging."""
+        import freecad_mcp_handler as ss_mod
+        original_debug = ss_mod.DEBUG_ENABLED
+        original_capture_flag = ss_mod.CAPTURE_STATE_PER_COMMAND
+        original_capture_fn = ss_mod._capture_state
+        ss_mod.DEBUG_ENABLED = True
+        ss_mod.CAPTURE_STATE_PER_COMMAND = True
+        ss_mod._capture_state = MagicMock()
+
+        server._execute_tool = MagicMock(return_value='{"result": "ok"}')
+        try:
+            server._process_command(json.dumps({"tool": "test", "args": {}}))
+            ss_mod._capture_state.assert_called_once()
+        finally:
+            ss_mod.DEBUG_ENABLED = original_debug
+            ss_mod.CAPTURE_STATE_PER_COMMAND = original_capture_flag
+            ss_mod._capture_state = original_capture_fn
+
 
 # ---------------------------------------------------------------------------
 # start_server updates the health monitor's socket_path
@@ -2083,3 +2144,168 @@ class TestStartServerMonitorSocketPath:
 
         server.start_server()  # must not raise (the assertion is reaching this line)
         assert server.running is True
+
+
+# ---------------------------------------------------------------------------
+# GUI heartbeat + active-connection/queue-depth visibility
+# ---------------------------------------------------------------------------
+
+class TestGuiHeartbeatIntegration:
+    """A stale heartbeat means the Qt event loop isn't ticking at all --
+    distinct from (and checked before) the pre-existing _gui_thread_busy
+    guard, which only means "a sync task is currently running". If a
+    previous sync task never returned (FreeCAD died mid-task),
+    _gui_thread_busy stays stuck True forever and its message ("wait for
+    it to complete") would be actively wrong."""
+
+    def test_fresh_server_has_stale_heartbeat(self, server):
+        """A brand-new GuiHeartbeat has never been stamped -- is_stale()
+        must be True until _process_gui_tasks actually ticks."""
+        assert server._heartbeat.is_stale() is True
+
+    def test_stale_heartbeat_rejects_sync_call_immediately(self, server):
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        try:
+            result = json.loads(server._run_on_gui_thread(lambda: {"result": "x"}, timeout=30.0))
+            assert "unresponsive" in result["error"]
+        finally:
+            ss_mod.QtCore = None
+
+    def test_fresh_heartbeat_with_busy_guard_reports_busy_not_unresponsive(self, server):
+        """Once the heartbeat is fresh, the pre-existing busy-guard behavior
+        must be unchanged -- heartbeat-stale is a strict superset check
+        that runs first, not a replacement for the busy guard."""
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        try:
+            server._heartbeat.stamp()
+            server._gui_thread_busy = True
+            result = json.loads(server._run_on_gui_thread(lambda: {"result": "x"}, timeout=30.0))
+            assert "busy" in result["error"]
+            assert "unresponsive" not in result["error"]
+            assert result["active_connections"] == 0
+        finally:
+            ss_mod.QtCore = None
+            server._gui_thread_busy = False
+
+    def test_headless_mode_ignores_heartbeat(self, server):
+        """QtCore is None (headless/console): tasks run inline, no event
+        loop to have a heartbeat for -- must not spuriously reject."""
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = None
+        assert server._heartbeat.is_stale() is True  # never stamped
+        result = json.loads(server._run_on_gui_thread(lambda: {"result": "x"}))
+        assert "error" not in result or "unresponsive" not in result.get("error", "")
+        assert result.get("result") == "x"
+
+    def test_process_gui_tasks_stamps_heartbeat_on_empty_tick(self, server):
+        """The tick must stamp even when there's nothing queued -- that's
+        what proves the event loop itself is still alive, independent of
+        whether there happens to be work."""
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        try:
+            assert server._heartbeat.is_stale() is True
+            server._process_gui_tasks()
+            assert server._heartbeat.is_stale() is False
+        finally:
+            ss_mod.QtCore = None
+
+
+class TestAsyncSubmissionVisibility:
+
+    def test_execute_python_async_stale_heartbeat_returns_error_not_job(self, server):
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        try:
+            result = json.loads(server._execute_python_async({"code": "1+1"}))
+            assert "unresponsive" in result["error"]
+            assert "job_id" not in result
+        finally:
+            ss_mod.QtCore = None
+
+    def test_execute_python_async_fresh_heartbeat_includes_queue_depth(self, server):
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        try:
+            server._heartbeat.stamp()
+            result = json.loads(server._execute_python_async({"code": "1+1"}))
+            assert result["status"] == "submitted"
+            assert "job_id" in result
+            assert result["queue_depth"] == 0
+            assert result["active_connections"] == 0
+        finally:
+            ss_mod.QtCore = None
+
+    def test_call_on_gui_thread_async_stale_heartbeat_returns_error_not_job(self, server):
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        try:
+            result = json.loads(server._call_on_gui_thread_async(MagicMock(), {}, "some_op"))
+            assert "unresponsive" in result["error"]
+            assert "job_id" not in result
+        finally:
+            ss_mod.QtCore = None
+
+    def test_call_on_gui_thread_async_reports_nonzero_queue_depth(self, server):
+        """Prove queue_depth reflects real prior queue contents, not just a
+        hardcoded 0 -- put a dummy item on the queue before submitting."""
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        try:
+            server._heartbeat.stamp()
+            server._gui_task_queue.put((999, lambda: None))
+            result = json.loads(server._call_on_gui_thread_async(MagicMock(), {}, "some_op"))
+            assert result["queue_depth"] == 1
+        finally:
+            ss_mod.QtCore = None
+            # Drain so this test doesn't leak state into others via a shared queue.
+            try:
+                server._gui_task_queue.get_nowait()
+            except queue.Empty:
+                pass
+
+    def test_active_connections_reflected_in_submission_response(self, server):
+        server._active_connections = 3
+        server._heartbeat.stamp()
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        try:
+            result = json.loads(server._execute_python_async({"code": "1+1"}))
+            assert result["active_connections"] == 3
+        finally:
+            ss_mod.QtCore = None
+            server._active_connections = 0
+
+
+class TestActiveConnectionsCounter:
+
+    def test_handle_client_increments_then_decrements(self, server, monkeypatch):
+        import freecad_mcp_handler as ss_mod
+
+        seen_during = {}
+
+        def fake_receive(sock, timeout=30.0):
+            seen_during["active"] = server._active_connections
+            return None  # empty receive -- _handle_client returns early, nothing to dispatch
+
+        monkeypatch.setattr(ss_mod, "receive_message", fake_receive)
+
+        assert server._active_connections == 0
+        server._handle_client(MagicMock())
+        assert seen_during["active"] == 1
+        assert server._active_connections == 0
+
+    def test_handle_client_decrements_even_on_exception(self, server, monkeypatch):
+        """The counter must not leak upward forever if a client handler
+        raises -- finally-block decrement must run regardless."""
+        import freecad_mcp_handler as ss_mod
+
+        def raising_receive(sock, timeout=30.0):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(ss_mod, "receive_message", raising_receive)
+
+        server._handle_client(MagicMock())
+        assert server._active_connections == 0

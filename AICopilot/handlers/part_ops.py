@@ -17,13 +17,9 @@ class PartOpsHandler(BaseHandler):
             # (revolve already lowercases; extrude didn't).
             direction = str(args.get('direction', 'z')).lower()
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            sketch = self.get_object(profile_sketch, doc)
-            if not sketch:
-                return f"Sketch {profile_sketch} not found"
+            doc, sketch, err = self.resolve_object(profile_sketch, attr='Shape', noun='Sketch')
+            if err:
+                return err
 
             # Determine extrusion vector
             if direction == 'x':
@@ -35,25 +31,22 @@ class PartOpsHandler(BaseHandler):
             else:
                 return f"Invalid direction {direction!r}; use 'x', 'y', or 'z'"
 
-            if hasattr(sketch, 'Shape'):
-                shape = sketch.Shape
-                import Part
+            shape = sketch.Shape
+            import Part
 
-                if shape.Wires:
-                    face = Part.Face(shape.Wires[0])
-                    extruded = face.extrude(vec)
-                elif shape.Faces:
-                    extruded = shape.extrude(vec)
-                else:
-                    return f"Sketch {profile_sketch} has no valid wires or faces to extrude"
-
-                extrude_obj = doc.addObject("Part::Feature", f"{profile_sketch}_extruded")
-                extrude_obj.Shape = extruded
-                self.recompute(doc)
-
-                return f"Extruded {profile_sketch} by {height}mm in {direction} direction"
+            if shape.Wires:
+                face = Part.Face(shape.Wires[0])
+                extruded = face.extrude(vec)
+            elif shape.Faces:
+                extruded = shape.extrude(vec)
             else:
-                return f"Object {profile_sketch} is not a valid sketch"
+                return f"Sketch {profile_sketch} has no valid wires or faces to extrude"
+
+            extrude_obj = doc.addObject("Part::Feature", f"{profile_sketch}_extruded")
+            extrude_obj.Shape = extruded
+            self.recompute(doc)
+
+            return f"Extruded {profile_sketch} by {height}mm in {direction} direction"
 
         except Exception as e:
             return f"Error extruding profile: {e}"
@@ -65,13 +58,9 @@ class PartOpsHandler(BaseHandler):
             angle = args.get('angle', 360)
             axis = args.get('axis', 'z').lower()
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            sketch = self.get_object(profile_sketch, doc)
-            if not sketch:
-                return f"Sketch {profile_sketch} not found"
+            doc, sketch, err = self.resolve_object(profile_sketch, attr='Shape', noun='Sketch')
+            if err:
+                return err
 
             # Define revolution axis
             if axis == 'x':
@@ -81,29 +70,26 @@ class PartOpsHandler(BaseHandler):
             else:
                 axis_vec = FreeCAD.Vector(0, 0, 1)
 
-            if hasattr(sketch, 'Shape'):
-                shape = sketch.Shape
-                import Part
+            shape = sketch.Shape
+            import Part
 
-                pos = FreeCAD.Vector(0, 0, 0)
-                if hasattr(sketch, 'Placement'):
-                    pos = sketch.Placement.Base
+            pos = FreeCAD.Vector(0, 0, 0)
+            if hasattr(sketch, 'Placement'):
+                pos = sketch.Placement.Base
 
-                if shape.Wires:
-                    face = Part.Face(shape.Wires[0])
-                    revolved = face.revolve(pos, axis_vec, angle)
-                elif shape.Faces:
-                    revolved = shape.Faces[0].revolve(pos, axis_vec, angle)
-                else:
-                    return f"Sketch {profile_sketch} has no valid wires or faces to revolve"
-
-                revolve_obj = doc.addObject("Part::Feature", f"{profile_sketch}_revolved")
-                revolve_obj.Shape = revolved
-                self.recompute(doc)
-
-                return f"Revolved {profile_sketch} by {angle}° around {axis} axis"
+            if shape.Wires:
+                face = Part.Face(shape.Wires[0])
+                revolved = face.revolve(pos, axis_vec, angle)
+            elif shape.Faces:
+                revolved = shape.Faces[0].revolve(pos, axis_vec, angle)
             else:
-                return f"Object {profile_sketch} is not a valid sketch"
+                return f"Sketch {profile_sketch} has no valid wires or faces to revolve"
+
+            revolve_obj = doc.addObject("Part::Feature", f"{profile_sketch}_revolved")
+            revolve_obj.Shape = revolved
+            self.recompute(doc)
+
+            return f"Revolved {profile_sketch} by {angle}° around {axis} axis"
 
         except Exception as e:
             return f"Error revolving profile: {e}"
@@ -115,14 +101,9 @@ class PartOpsHandler(BaseHandler):
             plane = args.get('plane', 'YZ')
             name = args.get('name', '')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object {object_name} not found"
-
+            doc, obj, err = self.resolve_object(object_name)
+            if err:
+                return err
             if not hasattr(obj, 'Shape'):
                 return f"Object {object_name} is not a shape object"
 
@@ -164,13 +145,9 @@ class PartOpsHandler(BaseHandler):
             if scale_factor <= 0:
                 return f"scale_factor must be > 0 (got {scale_factor})"
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object {object_name} not found"
+            doc, obj, err = self.resolve_object(object_name)
+            if err:
+                return err
 
             # Check if this is a parametric object (Box, Cylinder, etc.)
             if hasattr(obj, 'Length') and hasattr(obj, 'Width') and hasattr(obj, 'Height'):
@@ -225,14 +202,9 @@ class PartOpsHandler(BaseHandler):
             plane = args.get('plane', 'XY')
             offset = args.get('offset', 0)
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object {object_name} not found"
-
+            doc, obj, err = self.resolve_object(object_name)
+            if err:
+                return err
             if not hasattr(obj, 'Shape'):
                 return f"Object {object_name} is not a shape object"
 
@@ -277,11 +249,10 @@ class PartOpsHandler(BaseHandler):
 
             sketch_objs = []
             for sketch_name in sketches:
-                sketch = self.get_object(sketch_name, doc)
-                if sketch:
-                    sketch_objs.append(sketch)
-                else:
-                    return f"Sketch not found: {sketch_name}"
+                _, sketch, err = self.resolve_object(sketch_name, doc, noun='Sketch')
+                if err:
+                    return err
+                sketch_objs.append(sketch)
 
             loft = doc.addObject("Part::Loft", name)
             loft.Sections = sketch_objs
@@ -311,13 +282,13 @@ class PartOpsHandler(BaseHandler):
             if not doc:
                 return "No active document"
 
-            profile = self.get_object(profile_sketch, doc)
-            if not profile:
-                return f"Profile sketch not found: {profile_sketch}"
+            _, profile, err = self.resolve_object(profile_sketch, doc, noun='Profile sketch')
+            if err:
+                return err
 
-            path = self.get_object(path_sketch, doc)
-            if not path:
-                return f"Path sketch not found: {path_sketch}"
+            _, path, err = self.resolve_object(path_sketch, doc, noun='Path sketch')
+            if err:
+                return err
 
             sweep = doc.addObject("Part::Sweep", name)
             sweep.Sections = [profile]
@@ -352,11 +323,10 @@ class PartOpsHandler(BaseHandler):
 
             shapes = []
             for obj_name in objects:
-                obj = self.get_object(obj_name, doc)
-                if obj and hasattr(obj, 'Shape'):
-                    shapes.append(obj.Shape)
-                else:
-                    return f"Object not found or has no shape: {obj_name}"
+                _, obj, err = self.resolve_object(obj_name, doc, attr='Shape')
+                if err:
+                    return err
+                shapes.append(obj.Shape)
 
             compound_shape = Part.makeCompound(shapes)
             compound_obj = doc.addObject("Part::Feature", name)
@@ -433,16 +403,9 @@ class PartOpsHandler(BaseHandler):
             object_name = args.get('object_name', '')
             run_bop_check = args.get('run_bop_check', False)
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
-
-            if not hasattr(obj, 'Shape'):
-                return f"Object {object_name} has no Shape property"
+            doc, obj, err = self.resolve_object(object_name, attr='Shape')
+            if err:
+                return err
 
             shape = obj.Shape
             results = []

@@ -23,25 +23,18 @@ jobs:
     name: "Minimal repro on ${{ inputs.tag }}"
 
     steps:
-      - name: Download FreeCAD AppImage
-        run: |
-          mkdir -p ~/freecad-appimage
-          cd ~/freecad-appimage
-          gh release download "${{ inputs.tag }}" \
-            --repo FreeCAD/FreeCAD \
-            --pattern '*Linux-x86_64.AppImage' \
-            --pattern '*Linux-x86_64.AppImage-SHA256.txt' \
-            --dir .
-          APPIMAGE=$(ls *Linux-x86_64.AppImage | head -1)
-          sha256sum -c "${APPIMAGE}-SHA256.txt"
-          chmod +x "$APPIMAGE"
-          "./$APPIMAGE" --appimage-extract
-          rm "$APPIMAGE"
-        env:
-          GH_TOKEN: ${{ github.token }}
+      # Needed so the local composite action below (a file in this repo) is
+      # present on the runner. This workflow never touches freecad-mcp's own
+      # code otherwise -- the repro script is written inline and run
+      # standalone, with wire-module left at its default 'false'.
+      - uses: actions/checkout@v4
 
-      - name: Install gdb
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq gdb
+      - name: Set up FreeCAD AppImage
+        uses: ./.github/actions/setup-freecad-appimage
+        with:
+          tag: ${{ inputs.tag }}
+          wire-module: 'false'
+          install-gdb: 'true'
 
       - name: Write minimal repro script
         run: |

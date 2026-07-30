@@ -39,7 +39,7 @@ def _patched(*a, **kw):
 FreeCAD.getUserMacroDir = _patched
 result = FreeCAD.getUserMacroDir()
 """
-    return send_command("execute_python", {"code": code}, timeout=15.0)
+    return send_command("execute_python_sync", {"code": code}, timeout=15.0)
 
 
 def _restore_macro_dir() -> dict:
@@ -50,7 +50,7 @@ if hasattr(FreeCAD, '_orig_getUserMacroDir'):
     del FreeCAD._orig_getUserMacroDir
 result = 'restored'
 """
-    return send_command("execute_python", {"code": code}, timeout=10.0)
+    return send_command("execute_python_sync", {"code": code}, timeout=10.0)
 
 
 def _macro(tool_args: dict) -> dict:
@@ -134,12 +134,12 @@ print('created', doc.Name)
             # Verify the document actually exists in the live instance.
             # execute_python wraps its return value as {"result": "<repr>"}
             # — no nested JSON to decode.
-            check = send_command("execute_python", {
+            check = send_command("execute_python_sync", {
                 "code": f"result = {doc_name!r} in [d.Name for d in FreeCAD.listDocuments().values()]"
             })
             assert str(check.get("result", "")) == "True", check
         finally:
-            send_command("execute_python", {
+            send_command("execute_python_sync", {
                 "code": f"""
 import FreeCAD
 if {doc_name!r} in [d.Name for d in FreeCAD.listDocuments().values()]:

@@ -30,7 +30,7 @@ def _spatial(args: dict, timeout: float = 15.0) -> str:
 
 
 def _exec(code: str, timeout: float = 10.0):
-    return send_command("execute_python", {"code": code}, timeout=timeout)
+    return send_command("execute_python_sync", {"code": code}, timeout=timeout)
 
 
 # ---------------------------------------------------------------------------

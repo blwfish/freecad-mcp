@@ -33,7 +33,7 @@ def clean_document():
     })
     yield doc_name
     try:
-        send_command("execute_python", {
+        send_command("execute_python_sync", {
             "code": f"FreeCAD.closeDocument('{doc_name}')"
         })
     except Exception:
@@ -58,7 +58,7 @@ def two_docs():
     yield src, dst
     for d in (src, dst):
         try:
-            send_command("execute_python", {
+            send_command("execute_python_sync", {
                 "code": f"FreeCAD.closeDocument('{d}')"
             })
         except Exception:
@@ -121,7 +121,7 @@ class TestCheckpointRollback:
         # Verify the document state — only Persistent remains.
         # Use print() to bypass the execute_python repr() wrap; the
         # trailing result=None clears any stale namespace value.
-        check = send_command("execute_python", {
+        check = send_command("execute_python_sync", {
             "code": (
                 "import json\n"
                 f"doc = FreeCAD.getDocument('{clean_document}')\n"
@@ -171,7 +171,7 @@ class TestInsertShape:
         # Verify the shape was actually copied into the destination doc.
         # Use print() to bypass the execute_python repr() wrap; the
         # trailing result=None clears any stale namespace value.
-        check = send_command("execute_python", {
+        check = send_command("execute_python_sync", {
             "code": (
                 "import json\n"
                 f"doc = FreeCAD.getDocument('{dst}')\n"

@@ -224,25 +224,9 @@ class VerificationOpsHandler(BaseHandler):
                                 f"Use [x,y,z] list or named axis like '+Z', '-X', '+Y'.")
                 })
 
-            doc = self.get_document()
-            if not doc:
-                return json.dumps({
-                    "ok": False, "details": {},
-                    "message": "No active document"
-                })
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return json.dumps({
-                    "ok": False, "details": {},
-                    "message": f"Object not found: {object_name}"
-                })
-
-            if not hasattr(obj, 'Shape'):
-                return json.dumps({
-                    "ok": False, "details": {},
-                    "message": f"Object {object_name} has no Shape property"
-                })
+            doc, obj, err = self.resolve_object(object_name, attr='Shape')
+            if err:
+                return json.dumps({"ok": False, "details": {}, "message": err})
 
             shape = obj.Shape
             faces = shape.Faces
@@ -383,25 +367,9 @@ class VerificationOpsHandler(BaseHandler):
                     "message": "Missing required argument: object_name"
                 })
 
-            doc = self.get_document()
-            if not doc:
-                return json.dumps({
-                    "ok": False, "details": {},
-                    "message": "No active document"
-                })
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return json.dumps({
-                    "ok": False, "details": {},
-                    "message": f"Object not found: {object_name}"
-                })
-
-            if not hasattr(obj, 'Shape'):
-                return json.dumps({
-                    "ok": False, "details": {},
-                    "message": f"Object {object_name} has no Shape property"
-                })
+            doc, obj, err = self.resolve_object(object_name, attr='Shape')
+            if err:
+                return json.dumps({"ok": False, "details": {}, "message": err})
 
             shape = obj.Shape
             is_valid = bool(shape.isValid())
@@ -491,25 +459,9 @@ class VerificationOpsHandler(BaseHandler):
                     "message": "Missing required argument: object_name"
                 })
 
-            doc = self.get_document()
-            if not doc:
-                return json.dumps({
-                    "ok": False, "details": {},
-                    "message": "No active document"
-                })
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return json.dumps({
-                    "ok": False, "details": {},
-                    "message": f"Object not found: {object_name}"
-                })
-
-            if not hasattr(obj, 'Shape'):
-                return json.dumps({
-                    "ok": False, "details": {},
-                    "message": f"Object {object_name} has no Shape property"
-                })
+            doc, obj, err = self.resolve_object(object_name, attr='Shape')
+            if err:
+                return json.dumps({"ok": False, "details": {}, "message": err})
 
             shape = obj.Shape
             actual_faces = len(shape.Faces)

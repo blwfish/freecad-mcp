@@ -165,6 +165,51 @@ class BaseHandler:
             )
         return results[0]
 
+    def resolve_object(self, object_name: str, doc: FreeCAD.Document = None,
+                        attr=None, noun: str = "Object"):
+        """Resolve doc + object in one call, replacing the ~10-line
+        get_document/get_object/None-check/hasattr-check preamble that was
+        hand-copied at 200+ call sites across every handler file.
+
+        Args:
+            object_name: Internal name or Label of the object to find.
+            doc: Document to search in (fetches the active document if
+                not given — pass one in if the caller already has it and
+                needs it again afterward for addObject/recompute).
+            attr: Optional attribute name (or tuple of names, checked with
+                OR semantics) the object must have, e.g. 'Shape' or
+                ('Shape', 'Mesh'). None skips this check entirely.
+            noun: The word used in the not-found/missing-attr message
+                (e.g. "Sketch", "Spreadsheet") — callers across this
+                codebase already use different nouns for the same shape
+                of error, and that distinction is preserved rather than
+                flattened to a single generic wording.
+
+        Returns:
+            (doc, obj, error) — error is None on success. On any failure,
+            obj (and/or doc) may be None; callers should return/wrap
+            `error` and not use obj further. get_object's ValueError (an
+            ambiguous Label) is NOT caught here — it propagates to the
+            caller's own enclosing try/except, exactly as it did before
+            this helper existed.
+        """
+        if doc is None:
+            doc = self.get_document()
+        if not doc:
+            return None, None, "No active document"
+
+        obj = self.get_object(object_name, doc)
+        if not obj:
+            return doc, None, f"{noun} not found: {object_name}"
+
+        if attr is not None:
+            attrs = (attr,) if isinstance(attr, str) else attr
+            if not any(hasattr(obj, a) for a in attrs):
+                attr_desc = attrs[0] if len(attrs) == 1 else " or ".join(attrs)
+                return doc, obj, f"{noun} {object_name} has no {attr_desc} property"
+
+        return doc, obj, None
+
     def recompute(self, doc: FreeCAD.Document = None):
         """Recompute the document.
 
@@ -296,6 +341,24 @@ class BaseHandler:
         for body in doc.Objects:
             if body.TypeId == "PartDesign::Body" and obj in body.Group:
                 return body
+        return None
+
+    def find_assembly(self, doc: FreeCAD.Document = None):
+        """Find an Assembly::AssemblyObject in the document.
+
+        Args:
+            doc: Document to search (uses active document if not specified)
+
+        Returns:
+            First Assembly::AssemblyObject found, or None
+        """
+        if doc is None:
+            doc = FreeCAD.ActiveDocument
+        if doc is None:
+            return None
+        for obj in doc.Objects:
+            if obj.TypeId == "Assembly::AssemblyObject":
+                return obj
         return None
 
     # -----------------------------------------------------------------

@@ -5,8 +5,19 @@
 #                   ~/.cache registry; GUI spawn + explicit freecad_binary;
 #                   list_freecad_instances enriched with active doc + window
 #                   title; startup banner shows handler version.
+# Version: 6.2.0 - GUI-thread heartbeat (fast unresponsive-vs-busy diagnosis
+#                   instead of a blind 30-120s timeout); active_connections +
+#                   queue_depth surfaced on busy rejections and async job
+#                   submission, so contention from another connected client
+#                   is visible instead of presenting as an unexplained delay.
+# Version: 7.0.0 - Assembly workbench support (containers, LCS, joints,
+#                   grounding, solve, status/offset/limits); resolve_object
+#                   extraction replacing ~200 sites of lookup boilerplate;
+#                   CAM SIGSEGV fix (guarded FreeCADGui imports); capture_state
+#                   gated off per-command by default; GIL/threading hardening
+#                   across document ops and quit cleanup.
 
-__version__ = "6.1.0"
+__version__ = "7.0.0"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
@@ -40,6 +51,7 @@ import traceback as tb_module
 from typing import Dict, Any, Optional
 
 from universal_selector import UniversalSelector
+from gui_heartbeat import GuiHeartbeat
 
 # Conditional GUI imports (not available in console mode)
 if FreeCAD.GuiUp:
@@ -69,6 +81,20 @@ WINDOWS_PORT = int(os.environ.get("FREECAD_MCP_PORT", "23456"))
 DEBUG_ENABLED = False
 _debugger = None
 _monitor = None
+
+# capture_state() walks every object's Shape and calls shape.isValid() -- a
+# full OCCT BRep topology check -- before every single command, regardless
+# of whether anything goes wrong. Measured cost: 0ms on a 1-object sketch,
+# 13s on a 315-object structural model, 38-75s (and GIL-contention-driven
+# process death) on a document with ~33K faces concentrated in a handful of
+# FeaturePython objects (BrickedWall_*/SlateTiles, 2026-07-29). It's
+# diagnostic-only -- not part of the actual tool response -- and the
+# separate health-check/crash-watcher loop already captures state
+# independently when a command actually fails. Opt in per-session with
+# FREECAD_MCP_CAPTURE_STATE_PER_COMMAND=1 for real debugging; default off so
+# large documents aren't taxed on every call for a snapshot most calls never
+# need.
+CAPTURE_STATE_PER_COMMAND = os.environ.get("FREECAD_MCP_CAPTURE_STATE_PER_COMMAND") == "1"
 
 
 def _log_operation(operation, parameters=None, result=None, error=None, duration=None):
@@ -155,33 +181,59 @@ except ImportError as e:
 # =============================================================================
 # Modular Handlers
 # =============================================================================
+# Single source of truth for {attr_name: HandlerClass} -- __init__ and
+# _reload_handlers each used to hand-maintain their own copy of this same
+# 25-entry mapping (plus their own copy of the flat `from handlers import
+# (...)` name list), so a handler added to one but not the other would
+# silently only work until the next hot-reload. Both now derive their
+# instantiation dict from this one dict via _build_handler_class_map,
+# which resolves against whatever `handlers` module object is current
+# (the module-level import at startup, or the freshly-reloaded package
+# object _reload_handlers builds).
+_HANDLER_CLASS_NAMES = {
+    'primitives': 'PrimitivesHandler',
+    'boolean_ops': 'BooleanOpsHandler',
+    'transforms': 'TransformsHandler',
+    'sketch_ops': 'SketchOpsHandler',
+    'partdesign_ops': 'PartDesignOpsHandler',
+    'part_ops': 'PartOpsHandler',
+    'cam_ops': 'CAMOpsHandler',
+    'cam_tools': 'CAMToolsHandler',
+    'cam_tool_controllers': 'CAMToolControllersHandler',
+    'draft_ops': 'DraftOpsHandler',
+    'measurement_ops': 'MeasurementOpsHandler',
+    'spreadsheet_ops': 'SpreadsheetOpsHandler',
+    'mesh_ops': 'MeshOpsHandler',
+    'spatial_ops': 'SpatialOpsHandler',
+    'inspector_ops': 'InspectorOpsHandler',
+    'macro_ops': 'MacroOpsHandler',
+    'introspection_ops': 'IntrospectionOpsHandler',
+    'sketch_builder_ops': 'SketchBuilderOpsHandler',
+    'verification_ops': 'VerificationOpsHandler',
+    'fixture_ops': 'FixtureOpsHandler',
+    'diagnostics_ops': 'DiagnosticsOpsHandler',
+    'execute_python_ops': 'ExecutePythonOpsHandler',
+    'assembly_ops': 'AssemblyOpsHandler',
+    # GUI-sensitive handlers get the task queues for thread safety
+    # (see _instantiate_handlers) -- listed last only to mirror the
+    # historical dict order; position carries no behavioral meaning.
+    'view_ops': 'ViewOpsHandler',
+    'document_ops': 'DocumentOpsHandler',
+}
+
+
+def _build_handler_class_map(handlers_module) -> Dict[str, type]:
+    """Resolve _HANDLER_CLASS_NAMES against a `handlers` module/package
+    object into {attr_name: class}. Called with the module-level import
+    at startup, or with the freshly-reloaded package object during
+    _reload_handlers -- either way, the {attr_name: class_name} mapping
+    itself is defined in exactly one place."""
+    return {attr: getattr(handlers_module, cls_name)
+            for attr, cls_name in _HANDLER_CLASS_NAMES.items()}
+
+
 try:
-    from handlers import (
-        PrimitivesHandler,
-        BooleanOpsHandler,
-        TransformsHandler,
-        SketchOpsHandler,
-        PartDesignOpsHandler,
-        PartOpsHandler,
-        CAMOpsHandler,
-        CAMToolsHandler,
-        CAMToolControllersHandler,
-        DraftOpsHandler,
-        ViewOpsHandler,
-        DocumentOpsHandler,
-        MeasurementOpsHandler,
-        SpreadsheetOpsHandler,
-        MeshOpsHandler,
-        SpatialOpsHandler,
-        InspectorOpsHandler,
-        MacroOpsHandler,
-        IntrospectionOpsHandler,
-        SketchBuilderOpsHandler,
-        VerificationOpsHandler,
-        FixtureOpsHandler,
-        DiagnosticsOpsHandler,
-        ExecutePythonOpsHandler,
-    )
+    import handlers as _handlers_module
     FreeCAD.Console.PrintMessage("Modular handlers loaded successfully\n")
 except ImportError as e:
     FreeCAD.Console.PrintError(f"Modular handlers required but not available: {e}\n")
@@ -304,6 +356,36 @@ class FreeCADSocketServer:
         self._gui_thread_busy = False
         self._stale_req_ids: set = set()
 
+        # Stamped every _process_gui_tasks tick (every ~100ms) as long as the
+        # Qt event loop is alive and pumping. Lets a request be rejected
+        # immediately with a clear "GUI thread unresponsive" error instead of
+        # silently queuing and only discovering the same thing after a full
+        # 30-120s timeout -- callers previously had no way to distinguish
+        # "genuinely busy" from "not responding at all" until the timeout hit.
+        self._heartbeat = GuiHeartbeat()
+
+        # {obj.Name: bool} snapshot of ActiveDocument's per-object
+        # Visibility, rebuilt on the Qt main thread every _process_gui_tasks
+        # tick (see _refresh_visibility_cache). obj.ViewObject is a
+        # Gui::ViewProviderDocumentObject wrapper -- FreeCAD's own
+        # requireMainThread() guard (Gui/Application.cpp) raises if it's
+        # touched off the main thread, which is exactly what document_ops
+        # handlers do (list_objects is dispatched from the socket thread as
+        # a "safe_op"). Reading this plain dict instead means list_objects
+        # never calls into FreeCADGui at all, at the cost of up to one tick
+        # (~100ms) of staleness.
+        self._visibility_cache: Dict[str, bool] = {}
+
+        # Active _handle_client invocations right now. Every tool call opens
+        # its own short-lived socket connection (there's no persistent
+        # per-client session at this layer), so this counts concurrent
+        # in-flight requests across however many bridge processes happen to
+        # be connected to this instance -- surfaced in busy/queued responses
+        # so contention from another connection is visible instead of just
+        # presenting as an unexplained delay.
+        self._active_connections = 0
+        self._active_connections_lock = threading.Lock()
+
         # Async job tracking: job_id -> {status, started, result, error, elapsed}
         self._async_jobs: Dict[str, Dict] = {}
 
@@ -311,38 +393,8 @@ class FreeCADSocketServer:
         # request_selection/complete_selection workflow, plus select/clear/get).
         self.selector = UniversalSelector()
 
-        # Interactive selection manager (fillet/chamfer/draft/shell/thickness
-        # request_selection/complete_selection workflow, plus select/clear/get).
-        self.selector = UniversalSelector()
-
         # Initialize handlers
-        self._instantiate_handlers({
-            'primitives': PrimitivesHandler,
-            'boolean_ops': BooleanOpsHandler,
-            'transforms': TransformsHandler,
-            'sketch_ops': SketchOpsHandler,
-            'partdesign_ops': PartDesignOpsHandler,
-            'part_ops': PartOpsHandler,
-            'cam_ops': CAMOpsHandler,
-            'cam_tools': CAMToolsHandler,
-            'cam_tool_controllers': CAMToolControllersHandler,
-            'draft_ops': DraftOpsHandler,
-            'measurement_ops': MeasurementOpsHandler,
-            'spreadsheet_ops': SpreadsheetOpsHandler,
-            'mesh_ops': MeshOpsHandler,
-            'spatial_ops': SpatialOpsHandler,
-            'inspector_ops': InspectorOpsHandler,
-            'macro_ops': MacroOpsHandler,
-            'introspection_ops': IntrospectionOpsHandler,
-            'sketch_builder_ops': SketchBuilderOpsHandler,
-            'verification_ops': VerificationOpsHandler,
-            'fixture_ops': FixtureOpsHandler,
-            'diagnostics_ops': DiagnosticsOpsHandler,
-            'execute_python_ops': ExecutePythonOpsHandler,
-            # GUI-sensitive handlers get the task queues for thread safety
-            'view_ops': ViewOpsHandler,
-            'document_ops': DocumentOpsHandler,
-        })
+        self._instantiate_handlers(_build_handler_class_map(_handlers_module))
 
         FreeCAD.Console.PrintMessage("Socket server initialized with modular handlers\n")
 
@@ -501,6 +553,29 @@ class FreeCADSocketServer:
     # GUI thread task processing
     # -----------------------------------------------------------------
 
+    def _refresh_visibility_cache(self):
+        """Snapshot ActiveDocument's per-object Visibility into a plain dict.
+
+        Runs on the Qt main thread (called from _process_gui_tasks' timer
+        tick) -- the only thread .ViewObject may be touched from. Replaces
+        the whole dict rather than mutating in place, so a concurrent
+        socket-thread read (document_ops.list_objects doing
+        self.server._visibility_cache.get(name)) never observes a
+        partially-rebuilt cache; plain dict reference reassignment is
+        atomic under the GIL.
+        """
+        doc = FreeCAD.ActiveDocument
+        if doc is None:
+            self._visibility_cache = {}
+            return
+        cache = {}
+        for obj in doc.Objects:
+            try:
+                cache[obj.Name] = bool(obj.ViewObject.Visibility)
+            except Exception:
+                pass
+        self._visibility_cache = cache
+
     def _process_gui_tasks(self):
         """Process queued tasks on the Qt main thread (called by QTimer).
 
@@ -508,10 +583,24 @@ class FreeCADSocketServer:
         _gui_response_queue) and async jobs (req_id is "async:<job_id>",
         result stored in _async_jobs dict).
         """
+        # Confirms the Qt event loop is alive and this tick actually ran --
+        # the core heartbeat signal. Also re-stamped after grabbing each
+        # individual queued task below, so a slow multi-item batch doesn't
+        # go stale between items. A single task slower than the heartbeat's
+        # stale_after (default 2s) can still make the heartbeat look stale to
+        # a *different*, concurrently-checking caller for that task's
+        # duration -- an accepted narrow edge case, not a full fix, since the
+        # alternative (a background keep-alive ping during task execution)
+        # is real added complexity for a rare case that's still strictly
+        # better than today's only option, a 30-120s blind timeout.
+        self._heartbeat.stamp()
+        self._refresh_visibility_cache()
+
         while not self._gui_task_queue.empty():
             req_id = None
             try:
                 req_id, task = self._gui_task_queue.get_nowait()
+                self._heartbeat.stamp()
 
                 # Async job path
                 if isinstance(req_id, str) and req_id.startswith("async:"):
@@ -574,6 +663,57 @@ class FreeCADSocketServer:
         if QtCore:
             QtCore.QTimer.singleShot(100, self._process_gui_tasks)
 
+    def _gui_unresponsive_error(self) -> Optional[str]:
+        """Return a JSON error string if the GUI thread's heartbeat is stale,
+        else None.
+
+        Used by the async submission paths (_call_on_gui_thread_async /
+        _execute_python_async) before they queue a job. Unlike the sync path,
+        _run_on_gui_thread_async itself has no return value to signal a
+        problem through -- if the event loop truly isn't ticking, a silently
+        queued async job just sits at status "running" forever with no
+        useful signal, so the check has to happen at submission time, before
+        the job entry is even created, not inside the fire-and-forget call.
+        Only meaningful in GUI mode; headless/console mode has no event loop
+        to have a heartbeat for, so this is skipped there.
+        """
+        if QtCore is None:
+            return None
+        if not self._heartbeat.is_stale():
+            return None
+        age = self._heartbeat.age()
+        age_str = "never" if age is None else f"{age:.1f}s ago"
+        return json.dumps({
+            "error": f"GUI thread appears unresponsive (last confirmed alive: {age_str}). "
+                     "FreeCAD may have crashed, be blocked in a modal dialog, or be "
+                     "backgrounded/asleep. Not submitting this job -- check FreeCAD "
+                     "directly rather than polling a job that will never complete."
+        })
+
+    def _submission_status(self, job_id: str, queue_depth: int) -> str:
+        """Build the immediate {"job_id", "status": "submitted", ...} response
+        for an async job, including queue_depth and active_connections so
+        contention from other queued work or other connected clients is
+        visible up front rather than presenting as an unexplained delay.
+        Shared by _call_on_gui_thread_async and _execute_python_async so the
+        two submission paths can't drift on what they report.
+
+        queue_depth is passed in rather than read from self._gui_task_queue
+        here, because by the time this runs the caller has already queued
+        this job's own task -- reading qsize() at this point would count the
+        job against itself. Callers capture qsize() immediately before
+        submitting, so queue_depth means "how many other things are ahead of
+        you", which is what a caller deciding whether to wait actually wants.
+        """
+        with self._active_connections_lock:
+            active = self._active_connections
+        return json.dumps({
+            "job_id": job_id,
+            "status": "submitted",
+            "queue_depth": queue_depth,
+            "active_connections": active,
+        })
+
     def _run_on_gui_thread(self, task_fn, timeout=30.0) -> str:
         """Run a callable on the Qt GUI thread and wait for the result.
 
@@ -599,16 +739,39 @@ class FreeCADSocketServer:
             except Exception as e:
                 return json.dumps({"error": f"Headless task error: {e}"})
 
+        # Heartbeat check: if the Qt event loop hasn't ticked recently, the
+        # GUI thread isn't just busy -- it's not responding at all (crashed,
+        # blocked in a modal dialog, backgrounded and throttled, etc). This
+        # is checked BEFORE the busy guard below on purpose: if a previous
+        # sync task never returned (e.g. FreeCAD died mid-task), _gui_thread_busy
+        # stays stuck True forever, and the busy-guard's message ("wait for it
+        # to complete") would be actively misleading -- it implies the task is
+        # still progressing when the heartbeat says the event loop stopped
+        # entirely. Fails fast instead of making the caller wait through the
+        # full timeout to learn the same thing.
+        if self._heartbeat.is_stale():
+            age = self._heartbeat.age()
+            age_str = "never" if age is None else f"{age:.1f}s ago"
+            return json.dumps({
+                "error": f"GUI thread appears unresponsive (last confirmed alive: {age_str}). "
+                         "FreeCAD may have crashed, be blocked in a modal dialog, or be "
+                         "backgrounded/asleep. Not queuing this request -- check FreeCAD "
+                         "directly rather than waiting for a timeout."
+            })
+
         # Busy guard: if the GUI thread is already blocked on a synchronous task,
         # refuse to queue more work.  The stuck task is still running; piling up
         # additional tasks causes cascade failures when it eventually returns.
         if self._gui_thread_busy:
+            with self._active_connections_lock:
+                active = self._active_connections
             FreeCAD.Console.PrintWarning(
                 "[MCP] Rejected request — GUI thread is still busy with a previous operation\n"
             )
             return json.dumps({
                 "error": "GUI thread is busy with a previous operation. "
-                         "Wait for it to complete or use execute_python_async."
+                         "Wait for it to complete or use execute_python_async.",
+                "active_connections": active,
             })
 
         self._request_counter += 1
@@ -645,12 +808,12 @@ class FreeCADSocketServer:
 
             # Matched -- process result. Structurally identical to the
             # headless branch above: a task dict with no "result" key (e.g.
-            # view_ops.set_view_gui_safe's {"success": True, "view": ...})
-            # previously matched a GUI-only `if "success" in result:` branch
-            # that indexed result["result"] unconditionally -> KeyError.
-            # Falling through to str(result) instead (as headless mode
-            # always did) is what set_view_gui_safe's own
-            # `"success" in str(result_str)` check actually depends on.
+            # {"success": True, "view": ...}, the shape the now-removed
+            # view_ops.set_view_gui_safe used to return) previously matched
+            # a GUI-only `if "success" in result:` branch that indexed
+            # result["result"] unconditionally -> KeyError. Falling through
+            # to str(result) instead (as headless mode always did) is the
+            # general contract any GUI task returning a bare dict depends on.
             if isinstance(result, dict):
                 if "error" in result:
                     return json.dumps({"error": result["error"]})
@@ -712,6 +875,10 @@ class FreeCADSocketServer:
         if not code:
             return json.dumps({"error": "No code provided"})
 
+        unresponsive = self._gui_unresponsive_error()
+        if unresponsive:
+            return unresponsive
+
         # Clean up old completed jobs before checking the limit
         self._cleanup_stale_async_jobs()
 
@@ -728,8 +895,9 @@ class FreeCADSocketServer:
             "tool": "execute_python_async",
         }
 
+        queue_depth = self._gui_task_queue.qsize()
         self._run_on_gui_thread_async(job_id, lambda: self.execute_python_ops.run_code(code))
-        return json.dumps({"job_id": job_id, "status": "submitted"})
+        return self._submission_status(job_id, queue_depth)
 
     def _poll_job(self, args: Dict[str, Any]) -> str:
         """Poll status and result of an async job.
@@ -901,7 +1069,18 @@ class FreeCADSocketServer:
                     FreeCAD.Console.PrintError(f"Server loop error: {e}\n")
 
     def _handle_client(self, client_socket):
-        """Handle a single client connection."""
+        """Handle a single client connection.
+
+        There's no persistent per-client session at this layer -- every tool
+        call is its own short-lived connection (receive one message, respond,
+        close) -- so active_connections counts concurrent in-flight requests
+        across however many bridge processes happen to be connected right
+        now, not identified individual clients. Surfaced in busy/queued
+        responses so contention from another connection is visible instead
+        of presenting as an unexplained delay.
+        """
+        with self._active_connections_lock:
+            self._active_connections += 1
         try:
             message_str = receive_message(client_socket)
             if message_str:
@@ -933,6 +1112,8 @@ class FreeCADSocketServer:
             except Exception:
                 pass
         finally:
+            with self._active_connections_lock:
+                self._active_connections -= 1
             try:
                 client_socket.close()
             except Exception:
@@ -968,7 +1149,8 @@ class FreeCADSocketServer:
                 return json.dumps({"error": "No tool specified"})
 
             if DEBUG_ENABLED:
-                _capture_state()
+                if CAPTURE_STATE_PER_COMMAND:
+                    _capture_state()
                 _log_operation(
                     operation="COMMAND_START",
                     parameters={"tool": tool_name, "args": args},
@@ -1107,6 +1289,7 @@ class FreeCADSocketServer:
             "api_introspection": self.introspection_ops,
             "geometric_verification": self.verification_ops,
             "fixture_operations": self.fixture_ops,
+            "assembly_operations": self.assembly_ops,
         }
 
         # run_inspector is a direct-dispatch tool (no 'operation' sub-field)
@@ -1121,7 +1304,18 @@ class FreeCADSocketServer:
             return self._dispatch_to_handler(generic_dispatch_map[tool_name], args, tool_name)
 
         # Special tools
-        if tool_name == "execute_python":
+        # execute_python_sync: the raw-socket synchronous entry, used only by
+        # direct-socket callers (the integration test suite's send_command
+        # helper) that want to block until the code finishes rather than
+        # poll a job. This is NOT what the MCP-facing "execute_python" tool
+        # calls -- that tool (freecad_mcp_server.py) always submits via
+        # execute_python_async and polls, specifically to avoid holding the
+        # GUI thread until the socket timeout on long-running code (see
+        # commit ecbe827, "Make execute_python use async+poll with unlimited
+        # timeout"). Two different names now, on purpose, to end the
+        # confusing state where the same string meant two different things
+        # depending which layer called it.
+        if tool_name == "execute_python_sync":
             return self.execute_python_ops.execute(args)
         if tool_name == "execute_python_async":
             return self._execute_python_async(args)
@@ -1140,7 +1334,7 @@ class FreeCADSocketServer:
         if tool_name == "restart_freecad":
             return self.diagnostics_ops.restart_freecad(args)
         if tool_name == "reload_modules":
-            return self._reload_handlers()
+            return self._call_on_gui_thread_reload()
         if tool_name == "get_instance_info":
             return self._get_instance_info()
         if tool_name == "continue_selection":
@@ -1237,16 +1431,6 @@ class FreeCADSocketServer:
             }
         return self._run_on_gui_thread(task, timeout=2.0)
 
-    def _call_on_gui_thread(self, method, args: Dict[str, Any], label: str, timeout: float = 120.0) -> str:
-        """Wrap a handler method call for GUI-safe execution."""
-        def task():
-            try:
-                result = method(args)
-                return {"success": True, "result": result}
-            except Exception as e:
-                return {"error": f"{label} error: {e}", "error_id": self.diagnostics_ops.store_traceback(tb_module.format_exc())}
-        return self._run_on_gui_thread(task, timeout=timeout)
-
     def _call_on_gui_thread_async(self, method, args: Dict[str, Any], label: str) -> str:
         """Submit a handler method call for async GUI execution; returns job_id immediately.
 
@@ -1254,6 +1438,10 @@ class FreeCADSocketServer:
         operations (boolean ops on complex geometry) that would otherwise hit
         the sync timeout and leave the GUI thread stuck.
         """
+        unresponsive = self._gui_unresponsive_error()
+        if unresponsive:
+            return unresponsive
+
         self._cleanup_stale_async_jobs()
         if len(self._async_jobs) >= MAX_ASYNC_JOBS:
             return json.dumps({"error": f"Too many async jobs ({len(self._async_jobs)}). "
@@ -1273,8 +1461,42 @@ class FreeCADSocketServer:
                 return {"success": True, "result": result}
             except Exception as e:
                 return {"error": f"{label} error: {e}", "error_id": self.diagnostics_ops.store_traceback(tb_module.format_exc())}
+        queue_depth = self._gui_task_queue.qsize()
         self._run_on_gui_thread_async(job_id, task)
-        return json.dumps({"job_id": job_id, "status": "submitted"})
+        return self._submission_status(job_id, queue_depth)
+
+    def _call_on_gui_thread_reload(self, timeout: float = 60.0) -> str:
+        """Run _reload_handlers() on the Qt GUI thread instead of the socket
+        thread that dispatches this call.
+
+        _reload_handlers() re-executes freecad_mcp_handler.py's own module
+        code (including its PySide/QtCore imports) and rebuilds handler
+        instances that hold live Qt-bound state (e.g. ViewOpsHandler's
+        _clip_planes Coin3D scene-graph nodes). Every other GUI-touching tool
+        in this dispatcher already runs through _run_on_gui_thread for
+        exactly this reason -- reload_modules used to call _reload_handlers()
+        directly from the socket thread instead, racing the live Qt event
+        loop. That combination crashed FreeCAD outright (SIGSEGV inside
+        Shiboken's binding manager during a QPushButton teardown) when
+        reproduced live on 2026-07-27, so this is a correctness fix, not a
+        style one.
+
+        _reload_handlers() already returns a complete JSON string (not a
+        plain result string like other handler methods), so unlike
+        _call_on_gui_thread_async this parses that JSON
+        back into a dict before handing it to _run_on_gui_thread -- otherwise
+        _run_on_gui_thread's own dict-to-JSON wrapping would double-encode it
+        as an escaped string.
+        """
+        def task():
+            try:
+                parsed = json.loads(self._reload_handlers())
+            except Exception as e:
+                return {"error": f"reload_modules error: {e}"}
+            if "error" in parsed:
+                return {"error": parsed["error"]}
+            return {"result": parsed}
+        return self._run_on_gui_thread(task, timeout=timeout)
 
     def _dispatch_to_handler(self, handler, args: Dict[str, Any], tool_name: str) -> str:
         """Generic dispatch: look up args['operation'] against handler._ALLOWED_OPERATIONS."""
@@ -1406,7 +1628,7 @@ class FreeCADSocketServer:
         """Route view control operations (mixes view_ops and document_ops).
 
         Operations that touch the GUI (screenshots, view changes, selection,
-        hide/show, undo/redo) are routed through _call_on_gui_thread to
+        hide/show, undo/redo) are routed through _call_on_gui_thread_async to
         prevent crashes from calling Qt/Coin3D from the socket thread.
 
         Screenshot gets a longer timeout (60s) because saveImage() on
@@ -1450,6 +1672,11 @@ class FreeCADSocketServer:
             # save()/saveAs() emit modified/title signals the GUI observes; on
             # macOS a save from the socket thread trips the main-thread assert.
             "save_document":          self.document_ops.save_document,
+            # openDocument() creates ViewProviders and touches Qt-observed
+            # tree-view state just like create_document/save_document above,
+            # but (unlike create_document) has no internal GUI-thread
+            # self-dispatch of its own -- must go through this wrapper.
+            "open_document":          self.document_ops.open_document,
         }
 
         # --- Operations safe to call from any thread ---
@@ -1505,70 +1732,23 @@ class FreeCADSocketServer:
             import handlers.base as _base
             _reload('handlers.base', _base)
 
-            # Reload each handler module
-            handler_modules = [
-                'handlers.primitives',
-                'handlers.boolean_ops',
-                'handlers.transforms',
-                'handlers.sketch_ops',
-                'handlers.partdesign_ops',
-                'handlers.part_ops',
-                'handlers.cam_ops',
-                'handlers.cam_tools',
-                'handlers.cam_tool_controllers',
-                'handlers.draft_ops',
-                'handlers.view_ops',
-                'handlers.document_ops',
-                'handlers.measurement_ops',
-                'handlers.spreadsheet_ops',
-                'handlers.mesh_ops',
-                'handlers.spatial_ops',
-                'handlers.inspector_ops',
-                'handlers.macro_ops',
-                'handlers.introspection_ops',
-                'handlers.sketch_builder_ops',
-                'handlers.verification_ops',
-                'handlers.fixture_ops',
-                'handlers.diagnostics_ops',
-                'handlers.execute_python_ops',
-            ]
+            # Reload each handler module. Derived from the same
+            # _HANDLER_CLASS_NAMES dict __init__ uses -- attr_name maps
+            # 1:1 onto its module's dotted path (handlers.<attr_name>).
+            handler_modules = [f'handlers.{attr}' for attr in _HANDLER_CLASS_NAMES]
             for mod_name in handler_modules:
                 mod = sys.modules.get(mod_name)
                 if mod:
                     _reload(mod_name, mod)
 
-            # Reload the package __init__ so `from handlers import X` picks
-            # up the reloaded classes
+            # Reload the package __init__ so lookups against it resolve to
+            # the freshly-reloaded classes, then rebuild the {attr_name:
+            # class} map against that fresh package object -- same
+            # _build_handler_class_map used at startup, just fed a
+            # different (freshly-reloaded) `handlers` module object.
             import handlers as _handlers_pkg
-            _reload('handlers', _handlers_pkg)
-
-            # Re-import fresh classes
-            from handlers import (
-                PrimitivesHandler,
-                BooleanOpsHandler,
-                TransformsHandler,
-                SketchOpsHandler,
-                PartDesignOpsHandler,
-                PartOpsHandler,
-                CAMOpsHandler,
-                CAMToolsHandler,
-                CAMToolControllersHandler,
-                DraftOpsHandler,
-                ViewOpsHandler,
-                DocumentOpsHandler,
-                MeasurementOpsHandler,
-                SpreadsheetOpsHandler,
-                MeshOpsHandler,
-                SpatialOpsHandler,
-                InspectorOpsHandler,
-                MacroOpsHandler,
-                IntrospectionOpsHandler,
-                SketchBuilderOpsHandler,
-                VerificationOpsHandler,
-                FixtureOpsHandler,
-                DiagnosticsOpsHandler,
-                ExecutePythonOpsHandler,
-            )
+            _handlers_pkg = _reload('handlers', _handlers_pkg)
+            fresh_handler_classes = _build_handler_class_map(_handlers_pkg)
 
             # _checkpoints (DocumentOpsHandler), _clip_planes (ViewOpsHandler),
             # the traceback ring buffer (DiagnosticsOpsHandler), and the
@@ -1597,32 +1777,7 @@ class FreeCADSocketServer:
             old_python_ns = getattr(self, 'execute_python_ops', None) and getattr(self.execute_python_ops, '_python_namespace', None)
 
             # Re-create handler instances
-            self._instantiate_handlers({
-                'primitives': PrimitivesHandler,
-                'boolean_ops': BooleanOpsHandler,
-                'transforms': TransformsHandler,
-                'sketch_ops': SketchOpsHandler,
-                'partdesign_ops': PartDesignOpsHandler,
-                'part_ops': PartOpsHandler,
-                'cam_ops': CAMOpsHandler,
-                'cam_tools': CAMToolsHandler,
-                'cam_tool_controllers': CAMToolControllersHandler,
-                'draft_ops': DraftOpsHandler,
-                'measurement_ops': MeasurementOpsHandler,
-                'spreadsheet_ops': SpreadsheetOpsHandler,
-                'mesh_ops': MeshOpsHandler,
-                'spatial_ops': SpatialOpsHandler,
-                'inspector_ops': InspectorOpsHandler,
-                'macro_ops': MacroOpsHandler,
-                'introspection_ops': IntrospectionOpsHandler,
-                'sketch_builder_ops': SketchBuilderOpsHandler,
-                'verification_ops': VerificationOpsHandler,
-                'fixture_ops': FixtureOpsHandler,
-                'diagnostics_ops': DiagnosticsOpsHandler,
-                'execute_python_ops': ExecutePythonOpsHandler,
-                'view_ops': ViewOpsHandler,
-                'document_ops': DocumentOpsHandler,
-            })
+            self._instantiate_handlers(fresh_handler_classes)
             if old_checkpoints:
                 self.document_ops._checkpoints = old_checkpoints
             if old_clip_planes:
@@ -1648,7 +1803,7 @@ class FreeCADSocketServer:
                 '_dispatch_sketch',
                 '_dispatch_part_operations',
                 '_dispatch_to_handler',
-                '_call_on_gui_thread',
+                '_call_on_gui_thread_reload',
                 '_reload_handlers',   # rebind self so future reloads use latest code
                 '_instantiate_handlers',
             ]

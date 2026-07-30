@@ -232,3 +232,56 @@ class TestScanTypeProperties:
         (tmp_path / "notes.txt").write_text('doc.addObject("Part::Box", "Box")')
         table = scan_type_properties(handlers_dir=str(tmp_path))
         assert table == {}
+
+
+# ---------------------------------------------------------------------------
+# Draft.make_*() factory-function recognition (full-review 2026-07-24
+# finding #16, closed 2026-07-25 with live-verified TypeIds -- see
+# _DRAFT_FACTORY_TYPES's docstring for the confirmed mapping).
+# ---------------------------------------------------------------------------
+
+class TestDraftFactoryRecognition:
+    def test_make_clone_recorded_as_part_featurepython(self, tmp_path):
+        table = _scan_source(tmp_path, """
+            def clone(obj, doc):
+                clone = Draft.make_clone(obj)
+                clone.Placement.Base = FreeCAD.Vector(1, 2, 3)
+        """)
+        assert table == {"Part::FeaturePython": {"Placement"}}
+
+    def test_make_text_recorded_as_app_featurepython(self, tmp_path):
+        table = _scan_source(tmp_path, """
+            def text(lines, doc):
+                t = Draft.make_text(lines)
+                t.Label = "Hello"
+        """)
+        assert table == {"App::FeaturePython": {"Label"}}
+
+    def test_make_ortho_array_recorded(self, tmp_path):
+        table = _scan_source(tmp_path, """
+            def array(obj, doc):
+                array = Draft.make_ortho_array(obj, n_x=2)
+                array.Fuse = True
+        """)
+        assert table == {"Part::FeaturePython": {"Fuse"}}
+
+    def test_non_draft_module_same_method_name_not_matched(self, tmp_path):
+        """Only calls on a bare `Draft.` name are recognized -- a same-named
+        method on some other object (e.g. a local helper also called
+        make_clone) must not be misattributed to Draft's factory types."""
+        table = _scan_source(tmp_path, """
+            def clone(obj, doc):
+                clone = SomeOtherModule.make_clone(obj)
+                clone.Whatever = 1
+        """)
+        assert table == {}
+
+    def test_unrecognized_draft_function_dropped_not_guessed(self, tmp_path):
+        """A real Draft.* call the scanner has no confirmed mapping for is
+        dropped, same as any other unresolvable call -- not guessed at."""
+        table = _scan_source(tmp_path, """
+            def something(obj, doc):
+                thing = Draft.make_something_unmapped(obj)
+                thing.Prop = 1
+        """)
+        assert table == {}

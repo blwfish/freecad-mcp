@@ -600,6 +600,7 @@ class SketchOpsHandler(BaseHandler):
             g2 = args.get('geo_id2', 0)
             p2 = args.get('pos_id2', 0)
             value = args.get('value', None)
+            expression = args.get('expression', None)
 
             # Build constraint based on type. Normalize case against the canonical
             # vocabulary (single source of truth) so 'horizontal' / 'DISTANCEX'
@@ -611,6 +612,10 @@ class SketchOpsHandler(BaseHandler):
                 'Symmetric', 'Radius', 'Diameter', 'Distance', 'DistanceX',
                 'DistanceY', 'Angle')}
             ct = _CANON.get(str(constraint_type).lower(), constraint_type)
+
+            _DIMENSIONAL = ('Radius', 'Diameter', 'Distance', 'DistanceX', 'DistanceY', 'Angle')
+            if expression is not None and ct not in _DIMENSIONAL:
+                return f"expression is only supported for dimensional constraint types, got {ct}"
 
             # --- Single-geometry, no value ---
             if ct in ('Horizontal', 'Vertical', 'Block'):
@@ -640,34 +645,36 @@ class SketchOpsHandler(BaseHandler):
 
             # --- Dimensional: single geometry + value ---
             elif ct in ('Radius', 'Diameter'):
-                if value is None:
-                    return f"{ct} constraint requires a value"
-                c = Sketcher.Constraint(ct, g1, value)
+                if value is None and expression is None:
+                    return f"{ct} constraint requires a value or expression"
+                c = Sketcher.Constraint(ct, g1, value if value is not None else 0.0)
 
             # --- Dimensional: distance between two points ---
             elif ct == 'Distance':
-                if value is None:
-                    return "Distance constraint requires a value"
+                if value is None and expression is None:
+                    return "Distance constraint requires a value or expression"
+                seed = value if value is not None else 0.0
                 if args.get('geo_id2') is not None:
-                    c = Sketcher.Constraint('Distance', g1, p1, g2, p2, value)
+                    c = Sketcher.Constraint('Distance', g1, p1, g2, p2, seed)
                 else:
                     # Distance of a line segment (geo_id1 = line)
-                    c = Sketcher.Constraint('Distance', g1, value)
+                    c = Sketcher.Constraint('Distance', g1, seed)
 
             # --- Dimensional: horizontal/vertical distance ---
             elif ct in ('DistanceX', 'DistanceY'):
-                if value is None:
-                    return f"{ct} constraint requires a value"
+                if value is None and expression is None:
+                    return f"{ct} constraint requires a value or expression"
+                seed = value if value is not None else 0.0
                 if args.get('geo_id2') is not None:
-                    c = Sketcher.Constraint(ct, g1, p1, g2, p2, value)
+                    c = Sketcher.Constraint(ct, g1, p1, g2, p2, seed)
                 else:
-                    c = Sketcher.Constraint(ct, g1, p1, value)
+                    c = Sketcher.Constraint(ct, g1, p1, seed)
 
             # --- Angle ---
             elif ct == 'Angle':
-                if value is None:
-                    return "Angle constraint requires a value (degrees)"
-                angle_rad = math.radians(value)
+                if value is None and expression is None:
+                    return "Angle constraint requires a value (degrees) or expression"
+                angle_rad = math.radians(value) if value is not None else 0.0
                 if args.get('geo_id2') is not None:
                     c = Sketcher.Constraint('Angle', g1, g2, angle_rad)
                 else:
@@ -678,14 +685,26 @@ class SketchOpsHandler(BaseHandler):
                 return f"Unknown constraint type: {constraint_type}"
 
             idx = sketch.addConstraint(c)
+
+            expr_msg = ""
+            if expression is not None:
+                # Expressions only evaluate on recompute, not immediately on
+                # setExpression() -- the seed value above is a placeholder
+                # until self.recompute(doc) below resolves it.
+                sketch.setExpression(f'Constraints[{idx}]', expression)
+                expr_msg = f", expression={expression!r}"
+
             self.recompute(doc)
 
-            # Report degrees of freedom
-            dof = sketch.solve()
-            dof_msg = f", DoF={dof}" if dof >= 0 else ", over-constrained"
+            # sketch.DoF / sketch.FullyConstrained reflect the sketch's actual
+            # constrained state. solve()'s return code is a solver-success
+            # code (0 = solved without conflict), not a DoF count, so it's
+            # kept only as a forcing call here, never as the reported number.
+            sketch.solve()
+            dof_msg = f", DoF={sketch.DoF}, FullyConstrained={sketch.FullyConstrained}"
 
             return (f"Added {constraint_type} constraint to {sketch_name}, "
-                    f"index={idx}{dof_msg}")
+                    f"index={idx}{dof_msg}{expr_msg}")
 
         except Exception as e:
             return f"Error adding constraint: {e}"
@@ -753,12 +772,13 @@ class SketchOpsHandler(BaseHandler):
                     info["name"] = c.Name
                 constraints.append(info)
 
-            dof = sketch.solve()
+            sketch.solve()
             result = {
                 "sketch": sketch_name,
                 "constraint_count": sketch.ConstraintCount,
                 "geometry_count": sketch.GeometryCount,
-                "degrees_of_freedom": dof,
+                "degrees_of_freedom": sketch.DoF,
+                "fully_constrained": sketch.FullyConstrained,
                 "constraints": constraints,
             }
             return json.dumps(result)

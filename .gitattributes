@@ -1,0 +1,6 @@
+# Git LFS configuration for FreeCAD test fixtures
+# FreeCAD model files - always use LFS
+*.FCStd  filter=lfs diff=lfs merge=lfs -text
+*.fcstd  filter=lfs diff=lfs merge=lfs -text
+
+# Note: *.FCBak, *.FCStd1 are not tracked at all -- see .gitignore

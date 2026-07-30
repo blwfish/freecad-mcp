@@ -1,6 +1,7 @@
 # PartDesign operation handlers for FreeCAD MCP
 
 import json
+import math
 import FreeCAD
 import Part
 from typing import Dict, Any
@@ -431,7 +432,27 @@ class PartDesignOpsHandler(BaseHandler):
             return f"Error creating auto chamfer: {e}"
 
     def hole_wizard(self, args: Dict[str, Any]) -> str:
-        """Create standard holes (simple, counterbore, countersink)."""
+        """Create standard holes (simple, counterbore, countersink).
+
+        Body-aware like mirror_feature/linear_pattern/polar_pattern/
+        create_helix: when face_index is given and the object is in a
+        Body, creates a genuine PartDesign::Hole instead of the raw CSG
+        cylinder-and-boolean-cut approach. PartDesign::Hole's Profile
+        must be a sketch attached to a planar face -- there's no way to
+        support the old "just x,y in space, no face needed" convenience
+        without a face reference, so face_index (1-based, same
+        convention as datum_from_face's face_index) is required to opt
+        into this path; omit it (or target a non-Body object) and
+        hole_wizard behaves exactly as it always has.
+
+        The generated sketch's local (x, y) origin is recentered to the
+        selected face's own centroid (confirmed live: FlatFace
+        attachment's native local origin is the underlying surface's own
+        parametric origin, which for a real solid is essentially
+        arbitrary and NOT the visible face's center) -- so x=0, y=0 means
+        "hole at the center of the selected face", matching
+        datum_from_face's "positioned at the face centroid" convention.
+        """
         try:
             object_name = args.get('object_name', '')
             hole_type = args.get('hole_type', 'simple')
@@ -441,6 +462,7 @@ class PartDesignOpsHandler(BaseHandler):
             y = args.get('y', 0)
             cb_diameter = args.get('cb_diameter', 12)
             cb_depth = args.get('cb_depth', 3)
+            face_index = args.get('face_index')
 
             doc = self.get_document()
             if not doc:
@@ -450,6 +472,85 @@ class PartDesignOpsHandler(BaseHandler):
             if not base_obj:
                 return f"Object not found: {object_name}"
 
+            body = self.find_body_for_object(base_obj, doc) if face_index is not None else None
+
+            if body:
+                hole_cut_types = {'simple': 'None', 'counterbore': 'Counterbore', 'countersink': 'Countersink'}
+                cut_type = hole_cut_types.get(hole_type.lower())
+                if cut_type is None:
+                    return f"Invalid hole_type '{hole_type}': must be 'simple', 'counterbore', or 'countersink'"
+
+                if not hasattr(base_obj, 'Shape'):
+                    return f"Object has no Shape: {object_name}"
+                faces = base_obj.Shape.Faces
+                face_index = int(face_index)
+                if face_index < 1 or face_index > len(faces):
+                    return f"Face index {face_index} out of range (object has {len(faces)} faces)"
+                face = faces[face_index - 1]
+                face_ref = f"Face{face_index}"
+
+                hole_sketch = body.newObject("Sketcher::SketchObject", f"{object_name}_HoleSketch")
+                hole_sketch.AttachmentSupport = [(base_obj, face_ref)]
+                hole_sketch.MapMode = 'FlatFace'
+                self.recompute(doc)
+
+                # Recenter local (0,0) to the face's own centroid --
+                # FlatFace's native local origin is the underlying
+                # surface's own parametric origin, not the visible face's
+                # center (confirmed live: for a face at global z=10, the
+                # native local origin mapped to global (0,0,10), not the
+                # face's actual centroid).
+                centroid = face.CenterOfMass
+                local_offset = hole_sketch.Placement.Rotation.inverted().multVec(
+                    centroid - hole_sketch.Placement.Base
+                )
+                hole_sketch.AttachmentOffset = FreeCAD.Placement(local_offset, FreeCAD.Rotation())
+                self.recompute(doc)
+
+                hole_sketch.addGeometry(Part.Circle(FreeCAD.Vector(x, y, 0), FreeCAD.Vector(0, 0, 1), diameter / 2))
+                self.recompute(doc)
+
+                hole = body.newObject("PartDesign::Hole", f"{object_name}_Hole")
+                hole.Profile = hole_sketch
+                hole.Diameter = diameter
+                hole.DepthType = "Dimension"
+                hole.Depth = depth
+                # 'Angled' (a realistic drill-bit point) is FreeCAD's own
+                # default, but the CSG path this Body-aware branch mirrors
+                # always cut a flat-bottomed cylinder -- match that
+                # geometry instead of silently changing hole shape.
+                hole.DrillPoint = 'Flat'
+                hole.HoleCutType = cut_type
+
+                if cut_type == 'Counterbore':
+                    hole.HoleCutDiameter = cb_diameter
+                    hole.HoleCutDepth = cb_depth
+                elif cut_type == 'Countersink':
+                    # PartDesign::Hole parameterizes a countersink by
+                    # diameter + included angle, not diameter + depth like
+                    # the old CSG cone did -- derive the equivalent angle
+                    # from the same cb_diameter/diameter/cb_depth inputs
+                    # so callers don't need new parameters. Verified live:
+                    # cb_diameter=12, diameter=6, cb_depth=3 -> 90 degrees,
+                    # a standard/sane countersink angle.
+                    hole.HoleCutDiameter = cb_diameter
+                    hole.HoleCutCountersinkAngle = 2 * math.degrees(
+                        math.atan2((cb_diameter - diameter) / 2, cb_depth)
+                    )
+
+                self.recompute(doc)
+
+                err = self._check_feature_state(hole, "Hole")
+                if err:
+                    return err
+
+                return (
+                    f"Created {hole_type} hole: {diameter}mm diameter at ({x}, {y}) "
+                    f"on {face_ref} of {object_name} (PartDesign::Hole in {body.Name})"
+                )
+
+            # No Body (or no face_index given) — standalone CSG cylinder
+            # cut approach (unchanged).
             # Create hole cylinder
             hole = doc.addObject("Part::Cylinder", "Hole")
             hole.Radius = diameter / 2
@@ -504,7 +605,23 @@ class PartDesignOpsHandler(BaseHandler):
             return f"Error creating hole: {e}"
 
     def linear_pattern(self, args: Dict[str, Any]) -> str:
-        """Create linear pattern of features."""
+        """Create linear pattern of features.
+
+        Body-aware like mirror_feature/create_helix: creates a genuine
+        PartDesign::LinearPattern (chains onto the Body's feature tree)
+        when the feature is in a Body, falling back to the standalone
+        doc.copyObject approach otherwise (unchanged from before).
+        Confirmed live via a real FreeCAD instance that
+        PartDesign::LinearPattern requires a Body-resident Originals
+        member -- pointing it at a plain, non-Body object throws
+        BRepCheck_Analyzer::Init() - NULL shape -- so the standalone path
+        stays as the only route for non-Body features. Unlike
+        revolution/groove/create_helix, there's no degenerate-axis
+        restriction here: Direction references the Body's global Origin
+        axes (X_Axis/Y_Axis/Z_Axis), not the feature's own local axes, so
+        all three of x/y/z remain valid (matching the old standalone
+        path's own unrestricted x/y/z).
+        """
         try:
             feature_name = args.get('feature_name', '')
             direction = args.get('direction', 'x')
@@ -523,6 +640,46 @@ class PartDesignOpsHandler(BaseHandler):
             if count < 1:
                 return f"count must be >= 1 (got {count})"
 
+            body = self.find_body_for_object(feature, doc)
+
+            if body:
+                axis_name = direction.upper() + "_Axis"
+                if axis_name not in ("X_Axis", "Y_Axis", "Z_Axis"):
+                    return f"Invalid direction '{direction}': must be 'x', 'y', or 'z'"
+                axis_obj = next(
+                    (f for f in body.Origin.OriginFeatures if f.Name == axis_name), None
+                )
+                if axis_obj is None:
+                    return f"Body {body.Name}'s Origin has no {axis_name} feature"
+
+                linpat = body.newObject("PartDesign::LinearPattern", name)
+                linpat.Originals = [feature]
+                linpat.Direction = (axis_obj, [''])
+                # Length is the total span from the first to the last
+                # occurrence (confirmed live: spacing=10, count=4 ->
+                # Length=30 produces occurrences exactly 10mm apart) --
+                # not the old per-step "spacing" value directly.
+                linpat.Length = spacing * (count - 1)
+                linpat.Occurrences = count
+
+                # PartDesign pattern/transform features don't auto-update
+                # Body.Tip the way Pad/Pocket/Hole/AdditiveHelix do
+                # (confirmed live in the mirror_feature/create_helix work)
+                # -- must set it explicitly.
+                body.Tip = linpat
+                self.recompute(doc)
+
+                err = self._check_feature_state(linpat, "Linear pattern")
+                if err:
+                    return err
+
+                return (
+                    f"Created linear pattern: {count} instances of {feature_name} "
+                    f"in {direction} direction with {spacing}mm spacing "
+                    f"(PartDesign::LinearPattern in {body.Name})"
+                )
+
+            # No Body — standalone doc.copyObject approach (unchanged).
             if direction.lower() == 'x':
                 direction_vector = FreeCAD.Vector(spacing, 0, 0)
             elif direction.lower() == 'y':
@@ -561,7 +718,19 @@ class PartDesignOpsHandler(BaseHandler):
             return f"Error creating linear pattern: {e}"
 
     def polar_pattern(self, args: Dict[str, Any]) -> str:
-        """Create circular/polar pattern of features."""
+        """Create circular/polar pattern of features.
+
+        Body-aware like linear_pattern/mirror_feature/create_helix:
+        creates a genuine PartDesign::PolarPattern (chains onto the
+        Body's feature tree) when the feature is in a Body, falling back
+        to the standalone doc.copyObject approach otherwise (unchanged
+        from before). Confirmed live via a real FreeCAD instance that
+        PartDesign::PolarPattern requires a Body-resident Originals
+        member, same as its LinearPattern/Mirrored siblings. Axis
+        references the Body's global Origin axes (X_Axis/Y_Axis/Z_Axis),
+        so all three of x/y/z remain valid -- there's no degenerate-axis
+        restriction here, unlike revolution/groove/create_helix.
+        """
         try:
             feature_name = args.get('feature_name', '')
             axis = args.get('axis', 'z')
@@ -579,6 +748,43 @@ class PartDesignOpsHandler(BaseHandler):
 
             if count < 1:
                 return f"count must be >= 1 (got {count})"
+
+            body = self.find_body_for_object(feature, doc)
+
+            if body:
+                axis_name = axis.upper() + "_Axis"
+                if axis_name not in ("X_Axis", "Y_Axis", "Z_Axis"):
+                    return f"Invalid axis '{axis}': must be 'x', 'y', or 'z'"
+                axis_obj = next(
+                    (f for f in body.Origin.OriginFeatures if f.Name == axis_name), None
+                )
+                if axis_obj is None:
+                    return f"Body {body.Name}'s Origin has no {axis_name} feature"
+
+                polpat = body.newObject("PartDesign::PolarPattern", name)
+                polpat.Originals = [feature]
+                polpat.Axis = (axis_obj, [''])
+                polpat.Angle = angle
+                polpat.Occurrences = count
+
+                # PartDesign pattern/transform features don't auto-update
+                # Body.Tip the way Pad/Pocket/Hole/AdditiveHelix do
+                # (confirmed live in the mirror_feature/linear_pattern
+                # work) -- must set it explicitly.
+                body.Tip = polpat
+                self.recompute(doc)
+
+                err = self._check_feature_state(polpat, "Polar pattern")
+                if err:
+                    return err
+
+                return (
+                    f"Created polar pattern: {count} instances of {feature_name} "
+                    f"around {axis.upper()}-axis, {angle}° total "
+                    f"(PartDesign::PolarPattern in {body.Name})"
+                )
+
+            # No Body — standalone doc.copyObject approach (unchanged).
             angle_step = angle / count
 
             axis_vector = FreeCAD.Vector(0, 0, 1)
@@ -613,7 +819,18 @@ class PartDesignOpsHandler(BaseHandler):
             return f"Error creating polar pattern: {e}"
 
     def mirror_feature(self, args: Dict[str, Any]) -> str:
-        """Mirror features across a plane."""
+        """Mirror features across a plane.
+
+        Body-aware like create_helix/revolution/groove: creates a genuine
+        PartDesign::Mirrored (chains onto the Body's feature tree) when
+        the feature is in a Body, falling back to standalone
+        Part::Mirroring otherwise (unchanged from before). Confirmed live
+        via a real FreeCAD instance that PartDesign::Mirrored requires a
+        Body-resident Originals member -- pointing it at a plain,
+        non-Body object throws BRepCheck_Analyzer::Init() - NULL shape --
+        so the standalone path stays as the only route for non-Body
+        features, exactly as it was.
+        """
         try:
             feature_name = args.get('feature_name', '')
             plane = args.get('plane', 'YZ')
@@ -627,6 +844,43 @@ class PartDesignOpsHandler(BaseHandler):
             if not feature:
                 return f"Feature not found: {feature_name}"
 
+            body = self.find_body_for_object(feature, doc)
+
+            if body:
+                plane_name = plane.upper() + "_Plane"
+                origin_planes = {"XY_Plane", "XZ_Plane", "YZ_Plane"}
+                if plane_name not in origin_planes:
+                    return f"Invalid plane '{plane}': must be 'XY', 'XZ', or 'YZ'"
+                plane_obj = next(
+                    (f for f in body.Origin.OriginFeatures if f.Name == plane_name), None
+                )
+                if plane_obj is None:
+                    return f"Body {body.Name}'s Origin has no {plane_name} feature"
+
+                mirror = body.newObject("PartDesign::Mirrored", name)
+                mirror.Originals = [feature]
+                mirror.MirrorPlane = (plane_obj, [''])
+
+                # PartDesign pattern/transform features (Mirrored,
+                # LinearPattern, PolarPattern) don't auto-update Body.Tip
+                # the way Pad/Pocket/Hole/AdditiveHelix do -- confirmed
+                # live: Body.Shape stays the pre-mirror shape until Tip is
+                # set explicitly. Without this, the mirror exists in the
+                # document but the Body's own visible/reported shape
+                # silently doesn't include it.
+                body.Tip = mirror
+                self.recompute(doc)
+
+                err = self._check_feature_state(mirror, "Mirror")
+                if err:
+                    return err
+
+                return (
+                    f"Created mirror: {mirror.Name} of {feature_name} across "
+                    f"{plane} plane (PartDesign::Mirrored in {body.Name})"
+                )
+
+            # No Body — standalone Part::Mirroring (unchanged).
             plane_normals = {'XY': (0, 0, 1), 'XZ': (0, 1, 0), 'YZ': (1, 0, 0)}
             normal = plane_normals.get(plane.upper())
             if normal is None:
@@ -1336,7 +1590,22 @@ class PartDesignOpsHandler(BaseHandler):
             return f"Error creating thickness with selection: {e}"
 
     def create_helix(self, args: Dict[str, Any]) -> str:
-        """Create helical features (threads, springs)."""
+        """Create helical features (threads, springs).
+
+        Body-aware like revolution()/groove(): creates a genuine
+        PartDesign::AdditiveHelix (chains onto the Body's feature tree,
+        gains LeftHanded/Reversed/Midplane) when the sketch is in a Body,
+        falling back to the standalone Part::Sweep-along-a-computed-path
+        approach otherwise (unchanged from before -- still the only route
+        for a sketch with no Body).
+
+        Previously this always took the standalone path regardless of
+        Body membership, on the belief that no parametric FreeCAD type
+        supports LeftHanded. That's true of Part::Helix (the primitive
+        curve type the standalone path still uses below) but NOT of
+        PartDesign::AdditiveHelix -- confirmed via a live FreeCAD instance
+        that it has a real LeftHanded property and produces a valid shape.
+        """
         try:
             sketch_name = args.get('sketch_name', '')
             axis = args.get('axis', 'z')
@@ -1347,7 +1616,8 @@ class PartDesignOpsHandler(BaseHandler):
             # so height ignored it and the success message lied. If turns is given,
             # it drives the height (height = pitch * turns); otherwise derive turns
             # from height so the reported value is real.
-            if turns is not None:
+            turns_given = turns is not None
+            if turns_given:
                 height = pitch * turns
             else:
                 if height is None:
@@ -1364,6 +1634,62 @@ class PartDesignOpsHandler(BaseHandler):
             if not sketch:
                 return f"Sketch not found: {sketch_name}"
 
+            body = self.find_body_for_object(sketch, doc)
+
+            if body:
+                # Same in-plane-axis mapping as revolution()/groove(): a
+                # helix's ReferenceAxis must lie in the sketch's own plane
+                # -- geometrically a helix is a revolution with
+                # progressive translation added along that same axis.
+                # N_Axis (the sketch's own normal) is degenerate for the
+                # identical reason it is for revolution/groove: winding a
+                # planar profile around its own plane's normal sweeps zero
+                # volume, for any sketch.
+                axis_refs = {'x': 'H_Axis', 'y': 'V_Axis'}
+                ref_axis = axis_refs.get(axis.lower())
+                if ref_axis is None:
+                    if axis.lower() == 'z':
+                        return (
+                            "Invalid axis 'z': the sketch's own normal "
+                            "(N_Axis) cannot be used as a helix axis — "
+                            "winding a planar profile around its own "
+                            "plane's normal always sweeps zero volume, for "
+                            "any sketch. Use 'x' (H_Axis) or 'y' (V_Axis), "
+                            "which lie in the sketch's plane."
+                        )
+                    return f"Invalid axis '{axis}': must be 'x' or 'y'"
+
+                helix = body.newObject("PartDesign::AdditiveHelix", name)
+                helix.Profile = sketch
+                helix.ReferenceAxis = (sketch, [ref_axis])
+                # Mode must be set before Pitch/Turns/Height -- confirmed
+                # live that AdditiveHelix only treats the Mode-selected
+                # pair as live input; the third value is a read-only
+                # derived output, and setting Turns/Height while Mode
+                # still pointed at the other pair silently no-ops.
+                if turns_given:
+                    helix.Mode = 'pitch-turns-angle'
+                    helix.Pitch = pitch
+                    helix.Turns = turns
+                else:
+                    helix.Mode = 'pitch-height-angle'
+                    helix.Pitch = pitch
+                    helix.Height = height
+                helix.LeftHanded = left_handed
+
+                self.recompute(doc)
+
+                err = self._check_feature_state(helix, "Helix", sketch=sketch)
+                if err:
+                    return err
+
+                return (
+                    f"Created helix: {helix.Name} from {sketch_name} around "
+                    f"{axis.upper()}-axis, pitch={pitch}mm, height={height}mm, "
+                    f"turns={turns} (PartDesign::AdditiveHelix in {body.Name})"
+                )
+
+            # No Body — standalone Part::Sweep-along-computed-path (unchanged).
             # Part::Helix (the parametric document-object type) has no
             # LeftHanded property at all - setting it raised AttributeError
             # unconditionally on every call ('PrimitivePy' object has no

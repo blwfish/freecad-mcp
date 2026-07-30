@@ -145,13 +145,24 @@ class DocumentOpsHandler(BaseHandler):
                         obj_info["property_count"] = len(obj.PropertiesList)
                     except Exception:
                         obj_info["property_count"] = None
-                    # Visibility (ViewObject is None in headless mode), recompute
-                    # State (carries 'Invalid'/'Touched' flags), and the dependency
-                    # graph (InList/OutList — the deletion-safety edges). Each is
-                    # guarded and set to null when unavailable rather than omitted.
-                    try:
-                        obj_info["visible"] = bool(obj.ViewObject.Visibility)
-                    except Exception:
+                    # Visibility comes from the server's _visibility_cache, a
+                    # plain dict snapshotted on the Qt main thread (see
+                    # FreeCADSocketServer._refresh_visibility_cache) -- NOT
+                    # from obj.ViewObject directly. list_objects is dispatched
+                    # from the socket thread as a "safe_op" (no GUI-thread
+                    # marshaling), and obj.ViewObject touches
+                    # Gui::ViewProviderDocumentObject, which FreeCAD's own
+                    # requireMainThread() guard rejects off the main thread.
+                    # Missing from the cache (headless mode, no server
+                    # reference, or object created since the last ~100ms
+                    # tick) all collapse to the same None fallback as before.
+                    # recompute State (carries 'Invalid'/'Touched' flags) and
+                    # the dependency graph (InList/OutList — the
+                    # deletion-safety edges) remain direct App-layer reads,
+                    # each guarded and set to null when unavailable.
+                    if self.server is not None:
+                        obj_info["visible"] = self.server._visibility_cache.get(obj.Name)
+                    else:
                         obj_info["visible"] = None
                     try:
                         obj_info["state"] = list(obj.State)
@@ -241,149 +252,6 @@ class DocumentOpsHandler(BaseHandler):
             return json.dumps(result)
         except Exception as e:
             return json.dumps({"error": f"Error getting properties: {e}"})
-
-    def select_object(self, args: Dict[str, Any]) -> str:
-        """Select an object."""
-        try:
-            object_name = args.get('object_name', '')
-            doc_name = args.get('doc_name', '')
-
-            if not doc_name:
-                doc = FreeCAD.ActiveDocument
-                doc_name = doc.Name if doc else ""
-
-            if not doc_name:
-                return "No document specified or active"
-
-            FreeCADGui.Selection.addSelection(doc_name, object_name)
-            return f"Selected object: {object_name}"
-        except Exception as e:
-            return f"Error selecting object: {e}"
-
-    def clear_selection(self, args: Dict[str, Any]) -> str:
-        """Clear all selections."""
-        try:
-            FreeCADGui.Selection.clearSelection()
-            return "Selection cleared"
-        except Exception as e:
-            return f"Error clearing selection: {e}"
-
-    def get_selection(self, args: Dict[str, Any]) -> str:
-        """Get current selection."""
-        try:
-            selected = FreeCADGui.Selection.getSelectionEx()
-            selection_info = []
-
-            for sel in selected:
-                selection_info.append({
-                    "document": sel.DocumentName,
-                    "object": sel.ObjectName,
-                    "sub_elements": sel.SubElementNames
-                })
-
-            return json.dumps(selection_info)
-        except Exception as e:
-            return f"Error getting selection: {e}"
-
-    def hide_object(self, args: Dict[str, Any]) -> str:
-        """Hide an object."""
-        try:
-            object_name = args.get('object_name', '')
-            doc = FreeCAD.ActiveDocument
-
-            if not doc:
-                return "No active document"
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
-
-            obj.ViewObject.Visibility = False
-            return f"Hidden object: {object_name}"
-        except Exception as e:
-            return f"Error hiding object: {e}"
-
-    def show_object(self, args: Dict[str, Any]) -> str:
-        """Show an object."""
-        try:
-            object_name = args.get('object_name', '')
-            doc = FreeCAD.ActiveDocument
-
-            if not doc:
-                return "No active document"
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
-
-            obj.ViewObject.Visibility = True
-            return f"Shown object: {object_name}"
-        except Exception as e:
-            return f"Error showing object: {e}"
-
-    def delete_object(self, args: Dict[str, Any]) -> str:
-        """Delete an object."""
-        try:
-            object_name = args.get('object_name', '')
-            doc = FreeCAD.ActiveDocument
-
-            if not doc:
-                return "No active document"
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
-
-            # removeObject needs the internal Name, not a Label — object_name
-            # may be either (get_object resolves both), so use obj.Name here
-            # rather than re-passing the caller's possibly-Label string.
-            doc.removeObject(obj.Name)
-            doc.recompute()
-            return f"Deleted object: {object_name}"
-        except Exception as e:
-            return f"Error deleting object: {e}"
-
-    def undo(self, args: Dict[str, Any]) -> str:
-        """Undo last operation."""
-        try:
-            doc = FreeCAD.ActiveDocument
-            if not doc:
-                return "No active document"
-
-            FreeCADGui.runCommand("Std_Undo")
-            return "Undo completed"
-        except Exception as e:
-            return f"Error undoing: {e}"
-
-    def redo(self, args: Dict[str, Any]) -> str:
-        """Redo last undone operation."""
-        try:
-            doc = FreeCAD.ActiveDocument
-            if not doc:
-                return "No active document"
-
-            FreeCADGui.runCommand("Std_Redo")
-            return "Redo completed"
-        except Exception as e:
-            return f"Error redoing: {e}"
-
-    def activate_workbench(self, args: Dict[str, Any]) -> str:
-        """Activate specified workbench."""
-        try:
-            workbench_name = args.get('workbench_name', '')
-            FreeCADGui.activateWorkbench(workbench_name)
-            return f"Activated workbench: {workbench_name}"
-        except Exception as e:
-            return f"Error activating workbench: {e}"
-
-    def run_command(self, args: Dict[str, Any]) -> str:
-        """Run a FreeCAD GUI command."""
-        try:
-            command = args.get('command', '')
-            FreeCADGui.runCommand(command)
-            return f"Executed command: {command}"
-        except Exception as e:
-            return f"Error running command: {e}"
 
     def create_group(self, args: Dict[str, Any]) -> str:
         """Create a document group for organizing objects."""

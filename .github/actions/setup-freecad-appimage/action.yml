@@ -1,0 +1,104 @@
+name: 'Set up FreeCAD AppImage'
+description: >-
+  Downloads (optionally cached), extracts, and wires up a FreeCAD AppImage
+  for freecad-mcp CI. Single source of truth for the download/extract logic
+  previously copy-pasted across integration-tests.yml, bisect-cam-crash.yml,
+  and minimal-repro-expat-crash.yml.
+
+inputs:
+  tag:
+    description: 'FreeCAD release tag to download (e.g. "1.1.1" or "weekly-2026.07.15")'
+    required: true
+  appimage:
+    description: >-
+      Exact AppImage filename for a stable release with a known name. Leave
+      empty (the default) to glob for '*Linux-x86_64.AppImage' and verify
+      against its published SHA256 — the weekly-build case, where the exact
+      filename isn't known ahead of time.
+    required: false
+    default: ''
+  use-cache:
+    description: >-
+      Cache the downloaded AppImage across runs, keyed on tag. Only sensible
+      for workflows that repeatedly hit the same small set of tags (routine
+      CI); one-off workflow_dispatch diagnostics with an arbitrary tag input
+      should leave this false.
+    required: false
+    default: 'false'
+  wire-module:
+    description: >-
+      Symlink this repo's AICopilot/ into the AppImage's Mod/ directory and
+      export FREECAD_MCP_FREECAD_BIN/FREECAD_MCP_MODULE_DIR env vars for
+      subsequent steps. Requires the repo to already be checked out. Disable
+      for diagnostics that run FreeCAD standalone with no freecad-mcp module
+      in the loop.
+    required: false
+    default: 'true'
+  install-gdb:
+    description: 'Install gdb (needed for crash-trap / gdb-batch workflows).'
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Cache FreeCAD AppImage
+      if: inputs.use-cache == 'true'
+      id: cache-freecad
+      uses: actions/cache@v4
+      with:
+        path: ~/freecad-appimage
+        key: freecad-${{ inputs.tag }}-x86_64
+
+    - name: Download FreeCAD AppImage
+      if: steps.cache-freecad.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        mkdir -p ~/freecad-appimage
+        cd ~/freecad-appimage
+
+        if [ -n "$APPIMAGE_NAME" ]; then
+          # Stable release — exact filename known
+          gh release download "$TAG" \
+            --repo FreeCAD/FreeCAD \
+            --pattern "$APPIMAGE_NAME" \
+            --dir .
+          APPIMAGE="$APPIMAGE_NAME"
+        else
+          # Weekly build — glob + checksum
+          gh release download "$TAG" \
+            --repo FreeCAD/FreeCAD \
+            --pattern '*Linux-x86_64.AppImage' \
+            --pattern '*Linux-x86_64.AppImage-SHA256.txt' \
+            --dir .
+          APPIMAGE=$(ls *Linux-x86_64.AppImage | head -1)
+          sha256sum -c "${APPIMAGE}-SHA256.txt"
+        fi
+
+        chmod +x "$APPIMAGE"
+        "./$APPIMAGE" --appimage-extract
+        rm "$APPIMAGE"
+      env:
+        TAG: ${{ inputs.tag }}
+        APPIMAGE_NAME: ${{ inputs.appimage }}
+        GH_TOKEN: ${{ github.token }}
+
+    - name: Set up FreeCAD environment
+      if: inputs.wire-module == 'true'
+      shell: bash
+      run: |
+        SQUASHFS="$HOME/freecad-appimage/squashfs-root"
+
+        printf '#!/bin/bash\nexec "%s/AppRun" freecadcmd "$@"\n' "$SQUASHFS" \
+          > ~/freecad-appimage/freecadcmd-wrapper.sh
+        chmod +x ~/freecad-appimage/freecadcmd-wrapper.sh
+
+        ln -sfn "${{ github.workspace }}/AICopilot" "$SQUASHFS/usr/Mod/AICopilot"
+
+        echo "FREECAD_MCP_FREECAD_BIN=$HOME/freecad-appimage/freecadcmd-wrapper.sh" >> "$GITHUB_ENV"
+        echo "FREECAD_MCP_MODULE_DIR=${{ github.workspace }}/AICopilot" >> "$GITHUB_ENV"
+
+    - name: Install gdb
+      if: inputs.install-gdb == 'true'
+      shell: bash
+      run: sudo apt-get update -qq && sudo apt-get install -y -qq gdb

@@ -95,7 +95,7 @@ else:
     }}))
 result = None
 """
-    raw = send_command("execute_python", {"code": code})
+    raw = send_command("execute_python_sync", {"code": code})
     # If the bridge surfaced an error (object not found, doc not open, etc.)
     # the raw response is {"error": "..."}; raise so the test sees the real
     # cause rather than a downstream KeyError on props['volume'].
@@ -135,7 +135,7 @@ def get_object_count(doc_name: str, type_filter: Optional[str] = None) -> int:
         )
     else:
         code = f"print(len(FreeCAD.getDocument('{doc_name}').Objects))"
-    raw = send_command("execute_python", {"code": code})
+    raw = send_command("execute_python_sync", {"code": code})
     text = _result_text(raw).strip()
     if text.startswith("Result: "):
         text = text[len("Result: "):]

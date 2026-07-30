@@ -21,13 +21,9 @@ class DraftOpsHandler(BaseHandler):
             y = args.get('y', 0)
             z = args.get('z', 0)
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
+            doc, obj, err = self.resolve_object(object_name)
+            if err:
+                return err
 
             import Draft
 
@@ -55,13 +51,9 @@ class DraftOpsHandler(BaseHandler):
             interval_y = args.get('interval_y', 100)
             interval_z = args.get('interval_z', 100)
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
+            doc, obj, err = self.resolve_object(object_name)
+            if err:
+                return err
 
             import Draft
 
@@ -97,13 +89,9 @@ class DraftOpsHandler(BaseHandler):
             center_z = args.get('center_z', 0)
             axis = args.get('axis', 'z')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
+            doc, obj, err = self.resolve_object(object_name)
+            if err:
+                return err
 
             # make_polar_array's axis= parameter is a FreeCAD.Vector, not a
             # string — confirmed against Draft/draftmake/make_polararray.py.
@@ -163,17 +151,13 @@ class DraftOpsHandler(BaseHandler):
             count = args.get('count', 4)
             align = args.get('align', True)
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
+            doc, obj, err = self.resolve_object(object_name)
+            if err:
+                return err
 
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
-
-            path_obj = self.get_object(path_name, doc)
-            if not path_obj:
-                return f"Path object not found: {path_name}"
+            _, path_obj, err = self.resolve_object(path_name, doc, noun='Path object')
+            if err:
+                return err
 
             import Draft
 
@@ -292,17 +276,13 @@ class DraftOpsHandler(BaseHandler):
             object_name = args.get('object_name', '')
             point_object = args.get('point_object', '')
 
-            doc = self.get_document()
-            if not doc:
-                return "No active document"
+            doc, obj, err = self.resolve_object(object_name)
+            if err:
+                return err
 
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return f"Object not found: {object_name}"
-
-            points_obj = self.get_object(point_object, doc)
-            if not points_obj:
-                return f"Point object not found: {point_object}"
+            _, points_obj, err = self.resolve_object(point_object, doc, noun='Point object')
+            if err:
+                return err
 
             import Draft
 

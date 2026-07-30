@@ -357,24 +357,9 @@ class FixtureOpsHandler(BaseHandler):
                     )
                 })
 
-            doc = self.get_document()
-            if not doc:
-                return json.dumps({
-                    "ok": False, "details": {},
-                    "message": "No active FreeCAD document"
-                })
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return json.dumps({
-                    "ok": False, "details": {},
-                    "message": f"Object not found: {object_name}"
-                })
-            if not hasattr(obj, 'Shape'):
-                return json.dumps({
-                    "ok": False, "details": {},
-                    "message": f"Object {object_name!r} has no Shape attribute"
-                })
+            doc, obj, err = self.resolve_object(object_name, attr='Shape')
+            if err:
+                return json.dumps({"ok": False, "details": {}, "message": err})
 
             shape = obj.Shape
             fdir = _fixture_dir(fixture_name)
@@ -577,24 +562,9 @@ class FixtureOpsHandler(BaseHandler):
                 })
 
             # Resolve object
-            doc = self.get_document()
-            if not doc:
-                return json.dumps({
-                    "ok": False, "details": {},
-                    "message": "No active FreeCAD document"
-                })
-
-            obj = self.get_object(object_name, doc)
-            if not obj:
-                return json.dumps({
-                    "ok": False, "details": {},
-                    "message": f"Object not found: {object_name}"
-                })
-            if not hasattr(obj, 'Shape'):
-                return json.dumps({
-                    "ok": False, "details": {},
-                    "message": f"Object {object_name!r} has no Shape attribute"
-                })
+            doc, obj, err = self.resolve_object(object_name, attr='Shape')
+            if err:
+                return json.dumps({"ok": False, "details": {}, "message": err})
 
             actual_topo = _extract_topology(obj.Shape)
 

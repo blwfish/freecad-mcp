@@ -28,6 +28,13 @@ def doc_handler():
 
     from handlers.document_ops import DocumentOpsHandler
     server = MagicMock()
+    # Real dict, not a MagicMock attribute: list_objects does
+    # self.server._visibility_cache.get(name), and a MagicMock's .get()
+    # would return another (non-JSON-serializable) MagicMock instead of
+    # None -- matching production's real dict shape (see
+    # FreeCADSocketServer._visibility_cache) keeps that path exercised
+    # the same way here as it runs for real.
+    server._visibility_cache = {}
     handler = DocumentOpsHandler(
         server=server,
         gui_task_queue=None,
@@ -383,124 +390,52 @@ class TestListObjectsDegeneratePagination:
         for key in ("visible", "state", "in_list", "out_list"):
             assert key in obj, f"missing {key} in list_objects entry"
 
+    def test_visible_reads_from_server_cache_not_view_object(self, doc_handler, mock_freecad):
+        """visible must come from server._visibility_cache, never from
+        obj.ViewObject directly -- list_objects runs on the socket thread,
+        and obj.ViewObject touches Gui::ViewProviderDocumentObject, which
+        FreeCAD's requireMainThread() guard (Gui/Application.cpp) rejects
+        off the main thread. Giving obj.ViewObject a MagicMock that would
+        raise if ever touched -- as the real Gui-thread guard does --
+        proves the code path never reaches it."""
+        doc = self._make_doc(mock_freecad, n_objects=2)
+        for obj in doc.Objects:
+            type(obj).ViewObject = PropertyMock(
+                side_effect=AssertionError(f"{obj.Name}.ViewObject touched off the main thread")
+            )
+        doc_handler.server._visibility_cache = {"Obj0000": True, "Obj0001": False}
+        result = json.loads(doc_handler.list_objects({}))
+        visible_by_name = {o["name"]: o["visible"] for o in result["objects"]}
+        assert visible_by_name == {"Obj0000": True, "Obj0001": False}
 
-# ---------------------------------------------------------------------------
-# hide_object / show_object / delete_object
-# ---------------------------------------------------------------------------
+    def test_visible_none_when_object_missing_from_cache(self, doc_handler, mock_freecad):
+        """An object absent from the cache (not yet snapshotted by the ~100ms
+        GUI-thread tick, e.g. just created) must fall back to None rather
+        than raise or silently omit the key."""
+        self._make_doc(mock_freecad, n_objects=1)
+        doc_handler.server._visibility_cache = {}
+        result = json.loads(doc_handler.list_objects({}))
+        assert result["objects"][0]["visible"] is None
 
-class TestObjectVisibility:
-    def test_hide(self, doc_handler, mock_doc):
-        result = doc_handler.hide_object({"object_name": "Box"})
-        assert "Hidden" in result
+    def test_visible_none_when_no_server(self, mock_freecad):
+        """Without a server reference (e.g. a standalone/test handler),
+        visible must fall back to None rather than raise on the missing
+        _visibility_cache attribute."""
+        for mod in ("handlers.base", "handlers.document_ops"):
+            if mod in sys.modules:
+                del sys.modules[mod]
+        from handlers.document_ops import DocumentOpsHandler
 
-    def test_hide_not_found(self, doc_handler, mock_doc):
-        result = doc_handler.hide_object({"object_name": "Nonexistent"})
-        assert "not found" in result.lower()
-
-    def test_hide_no_doc(self, doc_handler, mock_freecad):
-        mock_freecad.ActiveDocument = None
-        result = doc_handler.hide_object({"object_name": "Box"})
-        assert "No active document" in result
-
-    def test_show(self, doc_handler, mock_doc):
-        result = doc_handler.show_object({"object_name": "Box"})
-        assert "Shown" in result
-
-    def test_show_not_found(self, doc_handler, mock_doc):
-        result = doc_handler.show_object({"object_name": "Nonexistent"})
-        assert "not found" in result.lower()
-
-    def test_show_no_doc(self, doc_handler, mock_freecad):
-        mock_freecad.ActiveDocument = None
-        result = doc_handler.show_object({"object_name": "Box"})
-        assert "No active document" in result
-
-    def test_hide_resolves_by_label(self, doc_handler, mock_doc):
-        """hide_object previously bypassed get_object() via raw
-        doc.getObject, which matches internal Name only — a caller-supplied
-        Label ("MyCylinder", Name="Cylinder001") always came back
-        "not found" even though every other handler resolves labels fine."""
-        result = doc_handler.hide_object({"object_name": "MyCylinder"})
-        assert "Hidden" in result
-
-
-class TestDeleteObject:
-    def test_delete(self, doc_handler, mock_doc):
-        result = doc_handler.delete_object({"object_name": "Box"})
-        assert "Deleted" in result
-        mock_doc.removeObject.assert_called_once_with("Box")
-
-    def test_delete_not_found(self, doc_handler, mock_doc):
-        result = doc_handler.delete_object({"object_name": "Nope"})
-        assert "not found" in result.lower()
-
-    def test_delete_no_doc(self, doc_handler, mock_freecad):
-        mock_freecad.ActiveDocument = None
-        result = doc_handler.delete_object({"object_name": "Box"})
-        assert "No active document" in result
-
-    def test_delete_by_label_removes_the_internal_name_not_the_label(self, doc_handler, mock_doc):
-        """removeObject() needs the internal Name — passing a resolved
-        Label straight through (rather than obj.Name) would fail against a
-        real FreeCAD document even though get_object() found the object."""
-        result = doc_handler.delete_object({"object_name": "MyCylinder"})
-        assert "Deleted" in result
-        mock_doc.removeObject.assert_called_once_with("Cylinder001")
-
-
-# ---------------------------------------------------------------------------
-# undo / redo
-# ---------------------------------------------------------------------------
-
-class TestUndoRedo:
-    def test_undo(self, doc_handler, mock_doc):
-        # document_ops.FreeCADGui is only bound by the real import when
-        # FreeCAD.GuiUp is true (see the module's guarded import -- an
-        # unconditional import loaded Coin3D regardless of GuiUp and could
-        # SIGSEGV on later FreeCAD weekly builds, KNOWN_ISSUES.md "CAM Tool
-        # Creation"). Patch the module attribute directly so this test
-        # exercises the "GUI is available" path without depending on
-        # sys.modules["FreeCADGui"] already being what the guard picked.
-        import handlers.document_ops as document_ops
-        fcgui = document_ops.FreeCADGui = MagicMock()
-        result = doc_handler.undo({})
-        assert "Undo" in result
-        fcgui.runCommand.assert_called_with("Std_Undo")
-
-    def test_undo_no_doc(self, doc_handler, mock_freecad):
-        mock_freecad.ActiveDocument = None
-        result = doc_handler.undo({})
-        assert "No active document" in result
-
-    def test_redo(self, doc_handler, mock_doc):
-        import handlers.document_ops as document_ops
-        fcgui = document_ops.FreeCADGui = MagicMock()
-        result = doc_handler.redo({})
-        assert "Redo" in result
-        fcgui.runCommand.assert_called_with("Std_Redo")
-
-    def test_redo_no_doc(self, doc_handler, mock_freecad):
-        mock_freecad.ActiveDocument = None
-        result = doc_handler.redo({})
-        assert "No active document" in result
-
-
-# ---------------------------------------------------------------------------
-# activate_workbench / run_command
-# ---------------------------------------------------------------------------
-
-class TestWorkbenchAndCommand:
-    def test_activate_workbench(self, doc_handler):
-        import handlers.document_ops as document_ops
-        document_ops.FreeCADGui = MagicMock()
-        result = doc_handler.activate_workbench({"workbench_name": "PartWorkbench"})
-        assert "PartWorkbench" in result
-
-    def test_run_command(self, doc_handler):
-        import handlers.document_ops as document_ops
-        document_ops.FreeCADGui = MagicMock()
-        result = doc_handler.run_command({"command": "Std_ViewFitAll"})
-        assert "Std_ViewFitAll" in result
+        handler = DocumentOpsHandler(server=None)
+        doc = MagicMock()
+        obj = MagicMock()
+        obj.Name = "Solo"
+        obj.Label = "Solo"
+        obj.TypeId = "Part::Feature"
+        doc.Objects = [obj]
+        mock_freecad.ActiveDocument = doc
+        result = json.loads(handler.list_objects({}))
+        assert result["objects"][0]["visible"] is None
 
 
 # ---------------------------------------------------------------------------

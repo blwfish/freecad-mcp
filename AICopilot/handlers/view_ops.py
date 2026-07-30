@@ -1,9 +1,7 @@
 # View operation handlers for FreeCAD MCP
 
 import json
-import queue
 import platform
-import time
 import FreeCAD
 from typing import Dict, Any
 from .base import BaseHandler
@@ -89,7 +87,15 @@ class ViewOpsHandler(BaseHandler):
     """Handler for view control operations."""
 
     def __init__(self, server=None, gui_task_queue=None, gui_response_queue=None, log_operation=None, capture_state=None):
-        """Initialize with optional GUI queues for thread-safe operations."""
+        """Initialize with optional GUI queues for thread-safe operations.
+
+        Nothing in this class reads gui_task_queue/gui_response_queue since
+        set_view_gui_safe (their only consumer here) was removed as dead
+        code -- kept as constructor params anyway because
+        _instantiate_handlers passes them positionally to every
+        `_gui_sensitive` handler (view_ops and document_ops share this
+        constructor shape; document_ops.create_document still uses them).
+        """
         super().__init__(server, log_operation, capture_state)
         self.gui_task_queue = gui_task_queue
         self.gui_response_queue = gui_response_queue
@@ -128,78 +134,6 @@ class ViewOpsHandler(BaseHandler):
 
         except Exception as e:
             return f"Error setting view: {e}"
-
-    def set_view_gui_safe(self, args: Dict[str, Any]) -> str:
-        """Set view orientation using GUI-safe thread queue.
-
-        Legacy method — kept for backwards compatibility.  The preferred
-        path is for the dispatch layer to route set_view() through
-        _call_on_gui_thread directly.
-        """
-        try:
-            if not FreeCADGui.ActiveDocument:
-                return "No active document for view change"
-
-            view_type = args.get('view_type', 'isometric').lower()
-
-            def view_task():
-                try:
-                    views = {
-                        'top': 'Std_ViewTop',
-                        'bottom': 'Std_ViewBottom',
-                        'front': 'Std_ViewFront',
-                        'rear': 'Std_ViewRear',
-                        'back': 'Std_ViewRear',
-                        'left': 'Std_ViewLeft',
-                        'right': 'Std_ViewRight',
-                        'isometric': 'Std_ViewIsometric',
-                        'iso': 'Std_ViewIsometric',
-                        'axonometric': 'Std_ViewAxonometric',
-                        'axo': 'Std_ViewAxonometric'
-                    }
-
-                    if view_type in views:
-                        FreeCADGui.runCommand(views[view_type], 0)
-                        return {"success": True, "view": view_type}
-                    else:
-                        return {"error": f"Unknown view type: {view_type}"}
-
-                except Exception as e:
-                    return {"error": f"View task failed: {e}"}
-
-            # Use server's tagged GUI thread dispatch (prevents stale response bugs)
-            if self.server and hasattr(self.server, '_run_on_gui_thread'):
-                import json
-                result_json = self.server._run_on_gui_thread(view_task, timeout=5.0)
-                parsed = json.loads(result_json)
-                if "error" in parsed:
-                    return f"Error setting view: {parsed['error']}"
-                result_str = parsed.get("result", "")
-                if "success" in str(result_str):
-                    return f"View set to {view_type}"
-                return result_str
-            elif self.gui_task_queue and self.gui_response_queue:
-                # Legacy fallback with tagged tuple
-                self.gui_task_queue.put((0, view_task))
-                start_time = time.time()
-                while time.time() - start_time < 5:
-                    try:
-                        _id, result = self.gui_response_queue.get_nowait()
-                        if isinstance(result, dict):
-                            if "error" in result:
-                                return f"Error setting view: {result['error']}"
-                            elif "success" in result:
-                                return f"View set to {result['view']}"
-                        break
-                    except queue.Empty:
-                        time.sleep(0.1)
-                        continue
-                return "View change timeout - GUI thread may be busy"
-            else:
-                return self.set_view(args)
-
-        except Exception as e:
-            return f"Error in view setup: {e}"
 
     def fit_all(self, args: Dict[str, Any]) -> str:
         """Fit all objects in the view.
@@ -487,6 +421,10 @@ class ViewOpsHandler(BaseHandler):
             # removeObject needs the internal Name; object_name may be a
             # Label that get_object resolved, so use the resolved obj.Name.
             doc.removeObject(obj.Name)
+            # Recompute so any feature that referenced the deleted object
+            # (a dependent Boolean, a Sketch, a Body) doesn't sit on stale
+            # computed state until the next unrelated recompute triggers it.
+            self.recompute(doc)
             return f"Object '{object_name}' deleted"
         except Exception as e:
             return f"Error deleting object: {e}"
