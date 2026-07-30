@@ -12,6 +12,7 @@ must agree on:
 
 __version__ = "1.0.0"
 
+import glob
 import json
 import os
 import socket
@@ -163,12 +164,50 @@ def scan_discovery(prune_stale: bool = True) -> list[dict]:
         if is_socket_alive(sock_path):
             live.append(data)
         elif prune_stale:
-            # Socket is definitively dead — safe to remove.
+            # Socket is definitively dead — safe to remove both the
+            # discovery record and the orphaned socket file itself. The
+            # socket file matters too: nothing else will ever revisit it,
+            # since every future instance picks a fresh random UUID path.
             try:
                 os.unlink(path)
             except OSError:
                 pass
+            try:
+                os.remove(sock_path)
+            except OSError:
+                pass
     return live
+
+
+def sweep_stale_sockets(directory: str = "/tmp") -> int:
+    """Remove orphaned instance socket files with no listener.
+
+    Complements scan_discovery's pruning above: that only ever removes a
+    dead entry's discovery JSON, never the socket file itself, and only
+    for sockets that had a discovery record in the first place. A socket
+    from an instance that crashed, was force-killed, or exited before the
+    GUI quit-cleanup hook existed/worked (see AICopilot/InitGui.py's
+    _connect_quit_cleanup) is never revisited once orphaned — every future
+    instance picks a fresh random UUID path, so nothing else will ever
+    probe that exact path again. Call this once at startup (GUI and
+    headless) to sweep those up.
+
+    Only matches this project's own `freecad_mcp_<uuid>.sock` naming
+    (default_socket_path) — never the legacy single-instance
+    `freecad_mcp.sock` path, which doesn't fit the glob and is out of
+    scope here regardless.
+
+    Returns the number of files removed.
+    """
+    removed = 0
+    for path in glob.glob(os.path.join(directory, "freecad_mcp_*.sock")):
+        if not is_socket_alive(path):
+            try:
+                os.remove(path)
+                removed += 1
+            except OSError:
+                pass
+    return removed
 
 
 def _log_unknown_schema(path: str, data: dict) -> None:
