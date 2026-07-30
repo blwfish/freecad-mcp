@@ -2,8 +2,10 @@
 
 import json
 import os
+import shutil
 import socket
 import sys
+import tempfile
 import uuid
 from unittest.mock import patch
 import pytest
@@ -223,6 +225,92 @@ class TestScanDiscovery:
         assert len(result) == 1
 
 
+class TestSweepStaleSockets:
+    """sweep_stale_sockets is the startup-time complement to scan_discovery's
+    prune step: it catches orphaned socket files even when no discovery
+    record ever existed for them (e.g. a crashed spawn_freecad_instance
+    launch), by globbing the naming pattern directly instead of relying on
+    the discovery registry."""
+
+    def test_empty_directory_returns_zero(self, tmp_path):
+        assert instance_registry.sweep_stale_sockets(str(tmp_path)) == 0
+
+    def test_removes_dead_socket_file(self, tmp_path):
+        dead = tmp_path / "freecad_mcp_deadbeef0001.sock"
+        dead.write_text("")
+        removed = instance_registry.sweep_stale_sockets(str(tmp_path))
+        assert removed == 1
+        assert not dead.exists()
+
+    @pytest.fixture
+    def short_dir(self):
+        """A short /tmp-rooted scratch directory (not pytest's tmp_path,
+        which nests too deep) -- AF_UNIX bind paths are capped at ~104
+        bytes on macOS, so real bind() calls in this class need a short
+        directory of their own rather than the real /tmp (to avoid any
+        interaction with real orphaned sockets that might legitimately be
+        sitting there) or pytest's deeply-nested tmp_path."""
+        d = tempfile.mkdtemp(dir="/tmp")
+        try:
+            yield d
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_leaves_alive_socket_alone(self, short_dir):
+        sock_path = os.path.join(short_dir, "freecad_mcp_alive0001.sock")
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(sock_path)
+        srv.listen(1)
+        try:
+            removed = instance_registry.sweep_stale_sockets(short_dir)
+            assert removed == 0
+            assert os.path.exists(sock_path)
+        finally:
+            srv.close()
+
+    def test_mixed_alive_and_dead_only_removes_dead(self, short_dir):
+        dead1 = os.path.join(short_dir, "freecad_mcp_dead0001.sock")
+        dead2 = os.path.join(short_dir, "freecad_mcp_dead0002.sock")
+        for p in (dead1, dead2):
+            with open(p, "w"):
+                pass
+        alive_path = os.path.join(short_dir, "freecad_mcp_alive0002.sock")
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(alive_path)
+        srv.listen(1)
+        try:
+            removed = instance_registry.sweep_stale_sockets(short_dir)
+            assert removed == 2
+            assert not os.path.exists(dead1)
+            assert not os.path.exists(dead2)
+            assert os.path.exists(alive_path)
+        finally:
+            srv.close()
+
+    def test_ignores_legacy_single_instance_socket_name(self, tmp_path):
+        """The legacy /tmp/freecad_mcp.sock (no uuid segment) doesn't match
+        the freecad_mcp_*.sock glob and must be left untouched even though
+        it would fail an is_socket_alive check too -- out of scope here."""
+        legacy = tmp_path / "freecad_mcp.sock"
+        legacy.write_text("")
+        removed = instance_registry.sweep_stale_sockets(str(tmp_path))
+        assert removed == 0
+        assert legacy.exists()
+
+    def test_ignores_unrelated_files(self, tmp_path):
+        (tmp_path / "freecad_mcp_debug.log").write_text("")
+        (tmp_path / "unrelated.sock").write_text("")
+        removed = instance_registry.sweep_stale_sockets(str(tmp_path))
+        assert removed == 0
+
+    def test_defaults_to_tmp_directory(self):
+        """No directory argument must default to /tmp, matching
+        default_socket_path's hardcoded /tmp/ prefix."""
+        import inspect
+        sig = inspect.signature(instance_registry.sweep_stale_sockets)
+        assert sig.parameters["directory"].default == "/tmp"
+
+
 # ---------------------------------------------------------------------------
 # Forward-compatibility / malformed-but-parseable JSON
 #
@@ -306,3 +394,42 @@ class TestScanDiscoveryMalformedRecords:
         result = instance_registry.scan_discovery(prune_stale=True)
         assert result == []
         assert not os.path.exists(path)
+
+    def test_prune_also_removes_the_orphaned_socket_file(self, isolated_dir, tmp_path):
+        """Pruning a stale record used to remove only the discovery JSON,
+        leaving the socket file itself behind forever -- every future
+        instance picks a fresh random UUID path, so nothing else would
+        ever revisit that exact file. The prune step must now also
+        os.remove() the socket file it just proved is dead."""
+        instance_registry.ensure_dir()
+        stale_sock = str(tmp_path / "orphan.sock")
+        with open(stale_sock, "w") as f:
+            f.write("")
+        u = "orphan000001"
+        instance_registry.write_discovery(u, stale_sock, gui=False, label="orphan")
+        assert os.path.exists(stale_sock)
+        result = instance_registry.scan_discovery(prune_stale=True)
+        assert result == []
+        assert not os.path.exists(stale_sock)  # socket file itself is gone
+
+    def test_prune_disabled_keeps_the_socket_file_too(self, isolated_dir, tmp_path):
+        """Symmetric to the JSON-record case: prune_stale=False must leave
+        the socket file alone as well, not just the discovery JSON."""
+        instance_registry.ensure_dir()
+        stale_sock = str(tmp_path / "keep.sock")
+        with open(stale_sock, "w") as f:
+            f.write("")
+        u = "keepsock0001"
+        instance_registry.write_discovery(u, stale_sock, gui=False, label="keep")
+        instance_registry.scan_discovery(prune_stale=False)
+        assert os.path.exists(stale_sock)
+
+    def test_prune_tolerates_socket_file_already_gone(self, isolated_dir):
+        """The dead socket_path may not exist as a file at all (the
+        nonexistent-path case already covered by test_prunes_stale_entries)
+        -- os.remove on a missing path must not raise and abort the scan."""
+        u = "nofile000001"
+        instance_registry.write_discovery(u, "/tmp/definitely_not_there_either.sock",
+                                           gui=False, label="nofile")
+        result = instance_registry.scan_discovery(prune_stale=True)
+        assert result == []

@@ -136,6 +136,18 @@ def main():
     except Exception as e:
         FreeCAD.Console.PrintWarning(f"[Headless MCP] Discovery file not written: {e}\n")
 
+    # Sweep orphaned socket files from past crashes/force-quits —
+    # best-effort, never fatal to startup.
+    try:
+        import instance_registry
+        removed = instance_registry.sweep_stale_sockets()
+        if removed:
+            FreeCAD.Console.PrintMessage(
+                f"[Headless MCP] Swept {removed} orphaned instance socket file(s)\n"
+            )
+    except Exception as e:
+        FreeCAD.Console.PrintWarning(f"[Headless MCP] Stale socket sweep failed: {e}\n")
+
     FreeCAD.Console.PrintMessage(
         f"[Headless MCP] Ready. Listening on {server.socket_path} "
         f"(uuid={server.instance_uuid})\n"
