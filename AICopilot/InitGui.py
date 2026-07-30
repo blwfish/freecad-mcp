@@ -122,6 +122,17 @@ else:
             except Exception as e:
                 FreeCAD.Console.PrintWarning(f"Discovery file not written: {e}\n")
 
+            # Sweep orphaned socket files from past crashes/force-quits —
+            # best-effort, never fatal to startup.
+            try:
+                removed = instance_registry.sweep_stale_sockets()
+                if removed:
+                    FreeCAD.Console.PrintMessage(
+                        f"Swept {removed} orphaned instance socket file(s)\n"
+                    )
+            except Exception as e:
+                FreeCAD.Console.PrintWarning(f"Stale socket sweep failed: {e}\n")
+
             self.is_running = True
             FreeCAD.__ai_global_service = self
             FreeCAD.Console.PrintMessage("AI Copilot Service running - available from all workbenches\n")
