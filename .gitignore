@@ -67,3 +67,8 @@ temp/
 CLAUDE.md
 .claude/
 .claude.json
+
+# FreeCAD backup/lock files -- never tracked, only *.FCStd is
+*.FCBak
+*.FCStd1
+

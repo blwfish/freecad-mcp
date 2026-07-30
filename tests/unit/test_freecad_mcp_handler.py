@@ -618,7 +618,7 @@ class TestDispatchViewControl:
         gui_ops = ["screenshot", "set_view", "fit_all", "zoom_in", "zoom_out",
                    "select_object", "clear_selection", "get_selection",
                    "hide_object", "show_object", "delete_object",
-                   "undo", "redo", "activate_workbench"]
+                   "undo", "redo", "activate_workbench", "open_document"]
         safe_ops = ["create_document", "save_document", "list_objects"]
 
         # GUI ops: mock _call_on_gui_thread_async to avoid blocking.
@@ -1330,6 +1330,20 @@ class TestDispatchViewControlExtended:
                 server._dispatch_view_control({"operation": "insert_shape"})
             )
             assert result["result"] == "inserted"
+
+    def test_open_document_is_gui_op(self, server):
+        """open_document has no internal GUI-thread self-dispatch of its own
+        (unlike create_document) -- it must route through the outer async
+        wrapper like save_document/rollback_to_checkpoint/insert_shape, or
+        FreeCAD.openDocument() risks the same main-thread assert those guard
+        against. Previously unreachable: implemented in document_ops.py but
+        never registered in the dispatch table at all."""
+        with patch.object(server, '_call_on_gui_thread_async',
+                          return_value=json.dumps({"result": "Opened document: Test"})):
+            result = json.loads(
+                server._dispatch_view_control({"operation": "open_document"})
+            )
+            assert result["result"] == "Opened document: Test"
 
     def test_clip_plane_ops(self, server):
         for op in ("add_clip_plane", "remove_clip_plane"):

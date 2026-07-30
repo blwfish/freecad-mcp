@@ -17,11 +17,13 @@ jobs:
           - slot: "1.1-stable"
             tag: "1.1.1"
             appimage: "FreeCAD_1.1.1-Linux-x86_64-py311.AppImage"
-            pytest_args: "-m 'not cam'"
+            # real_document is excluded here too (not just dev-weekly) --
+            # it belongs to the separate PR-only job below, on every push.
+            pytest_args: "-m 'not cam and not real_document'"
           - slot: "dev-weekly"
             tag: "weekly-2026.07.15"
             appimage: ""  # resolved by glob below
-            pytest_args: ""
+            pytest_args: "-m 'not real_document'"
 
     name: "FreeCAD ${{ matrix.slot }}"
 
@@ -83,3 +85,38 @@ jobs:
         # test or file, like bisect-cam-crash.yml /
         # minimal-repro-expat-crash.yml) for focused investigation, not
         # wrapped around the full suite.
+
+  real-document-regression:
+    # real_document tests pull in an 8MB LFS fixture and exercise a
+    # multi-hundred-solid real document -- heavier than the routine suite
+    # above, so they run on PR only, not on every push to main/dev. One
+    # FreeCAD build is enough here: the property under test (ordinary
+    # commands stay fast when CAPTURE_STATE_PER_COMMAND is off) isn't
+    # version-specific the way CAM/Path features are.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install pytest pytest-timeout
+
+      - name: Set up FreeCAD AppImage
+        uses: ./.github/actions/setup-freecad-appimage
+        with:
+          tag: "weekly-2026.07.15"
+          appimage: ""
+          use-cache: 'true'
+          install-gdb: 'true'
+
+      - name: Run real-document regression tests
+        run: python -m pytest tests/integration/ -v -rs --timeout=120 -m real_document
+        timeout-minutes: 5

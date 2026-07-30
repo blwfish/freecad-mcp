@@ -1666,6 +1666,11 @@ class FreeCADSocketServer:
             # save()/saveAs() emit modified/title signals the GUI observes; on
             # macOS a save from the socket thread trips the main-thread assert.
             "save_document":          self.document_ops.save_document,
+            # openDocument() creates ViewProviders and touches Qt-observed
+            # tree-view state just like create_document/save_document above,
+            # but (unlike create_document) has no internal GUI-thread
+            # self-dispatch of its own -- must go through this wrapper.
+            "open_document":          self.document_ops.open_document,
         }
 
         # --- Operations safe to call from any thread ---
