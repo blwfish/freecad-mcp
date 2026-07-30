@@ -10,8 +10,14 @@
 #                   queue_depth surfaced on busy rejections and async job
 #                   submission, so contention from another connected client
 #                   is visible instead of presenting as an unexplained delay.
+# Version: 7.0.0 - Assembly workbench support (containers, LCS, joints,
+#                   grounding, solve, status/offset/limits); resolve_object
+#                   extraction replacing ~200 sites of lookup boilerplate;
+#                   CAM SIGSEGV fix (guarded FreeCADGui imports); capture_state
+#                   gated off per-command by default; GIL/threading hardening
+#                   across document ops and quit cleanup.
 
-__version__ = "6.2.0"
+__version__ = "7.0.0"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
