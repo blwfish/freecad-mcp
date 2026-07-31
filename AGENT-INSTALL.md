@@ -141,6 +141,8 @@ This queries FreeCAD for scene contents. If it returns without error, the full p
 
 ## Updating
 
+`check_freecad_connection`'s response includes an `update_available` field (`{"current": ..., "latest": ..., "url": ...}`) whenever a newer release exists on GitHub — checked at most once per day, cached, never blocking the connection check itself. If you see that field, tell the user a new version is out and offer to run the update below (see [SECURITY.md](SECURITY.md#update-check-network-access) for what the check does and doesn't send).
+
 Pull the latest changes, then re-copy the workbench and bridge files (Steps 2-3 above):
 
 ```bash

@@ -11,6 +11,8 @@ import sys
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import mcp.server.stdio
@@ -108,6 +110,20 @@ class TestToolsList:
 
 
 class TestCallToolKnown:
+    @pytest.fixture(autouse=True)
+    def _no_network_version_check(self):
+        """check_freecad_connection calls check_for_update(), which can hit
+        the network. Stub it to a fast no-op for every test in this class
+        so the suite never depends on network access or mutates the real
+        ~/.cache/freecad-mcp/ state on the machine running tests. Tests
+        that specifically exercise update_available override this
+        per-test via their own `with patch(...)`.
+        """
+        async def _noop():
+            return None
+        with patch.object(freecad_mcp_server, "check_for_update", _noop):
+            yield
+
     def test_returns_content_list(self):
         content = _call_tool("check_freecad_connection")
         assert isinstance(content, list) and len(content) > 0
@@ -127,6 +143,24 @@ class TestCallToolKnown:
         assert "freecad_socket_exists" in parsed
         assert "socket_path" in parsed
         assert "status" in parsed
+
+    def test_update_available_absent_when_no_update(self):
+        # The class-level autouse fixture already stubs check_for_update to
+        # return None -- this pins that "no update" means the key is
+        # missing entirely, not present-and-null.
+        parsed = json.loads(_call_tool("check_freecad_connection")[0].text)
+        assert "update_available" not in parsed
+
+    def test_update_available_present_with_exact_shape_when_update_found(self):
+        async def _fake_update():
+            return {"current": "7.0.0", "latest": "7.1.0", "url": "https://example.invalid/releases/tag/v7.1.0"}
+        with patch.object(freecad_mcp_server, "check_for_update", _fake_update):
+            parsed = json.loads(_call_tool("check_freecad_connection")[0].text)
+        assert parsed.get("update_available") == {
+            "current": "7.0.0",
+            "latest": "7.1.0",
+            "url": "https://example.invalid/releases/tag/v7.1.0",
+        }
 
 
 # ---------------------------------------------------------------------------
