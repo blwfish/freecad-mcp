@@ -146,6 +146,8 @@ See [AGENT-INSTALL.md](AGENT-INSTALL.md) for full technical details, architectur
 
 This tool grants your AI agent full access to FreeCAD's Python environment, including the filesystem and OS — this is by design. It also means the agent reads document content (object labels, macro source, spreadsheet values) directly into its reasoning context, so **treat FreeCAD files from untrusted sources the same way you'd treat untrusted code**. See [SECURITY.md](SECURITY.md) for the full security model, practical mitigations, and how to report vulnerabilities.
 
+The MCP also checks GitHub once a day for a newer release — a plain pull against GitHub's public API, cached, and logged locally to `~/.cache/freecad-mcp/version_check.log` so it's auditable. See [SECURITY.md](SECURITY.md#update-check-network-access) for details.
+
 ## Issues
 
 If you hit a bug, [open an issue](https://github.com/blwfish/freecad-mcp/issues/new?template=bug_report.md) — silent failures don't help anyone. Agents won't tell you when something's wrong; they'll just fail the task. See [CONTRIBUTING.md](CONTRIBUTING.md) for what makes a useful report.

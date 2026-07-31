@@ -7,12 +7,14 @@ Smart dispatchers aligned with FreeCAD workbench structure for optimal Claude Co
 import asyncio
 import json
 import os
+import re
 import sys
 import socket
 import platform
 import subprocess
 import shutil
 import time
+import urllib.request
 import uuid
 from typing import Any
 from mcp_events import event_context, emit_event
@@ -23,6 +25,157 @@ from mcp_events import event_context, emit_event
 # =============================================================================
 
 DISCOVERY_DIR = os.path.expanduser("~/.cache/freecad-mcp/instances")
+
+
+# =============================================================================
+# Update check — pull only (we never listen for a push), cached, throttled,
+# and auditable: every live check (not cache hits) is appended to
+# VERSION_LOG_PATH so a user can verify exactly what was requested and when,
+# without having to trust this source file. Hits GitHub's public releases
+# API directly -- deliberately not a bespoke telemetry endpoint, so the
+# traffic itself is independently documented and inspectable (mitmproxy,
+# Little Snitch, etc.), not just "trust our code."
+# =============================================================================
+
+VERSION_CACHE_PATH = os.path.expanduser("~/.cache/freecad-mcp/version_check.json")
+VERSION_LOG_PATH = os.path.expanduser("~/.cache/freecad-mcp/version_check.log")
+VERSION_CHECK_TTL_SECONDS = 24 * 60 * 60
+VERSION_CHECK_TIMEOUT_SECONDS = 3
+RELEASES_API_URL = "https://api.github.com/repos/blwfish/freecad-mcp/releases/latest"
+
+
+def _current_version() -> str | None:
+    """Read the project version out of pyproject.toml -- the single source
+    of truth already kept current by the existing release automation.
+    Returns None (never raises) if the file is missing or has no parseable
+    version line; callers must treat that as "can't check, skip silently."
+    """
+    try:
+        pyproject_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "pyproject.toml"
+        )
+        with open(pyproject_path, "r", encoding="utf-8") as f:
+            for line in f:
+                m = re.match(r'^\s*version\s*=\s*"([^"]+)"', line)
+                if m:
+                    return m.group(1)
+    except OSError:
+        pass
+    return None
+
+
+def _parse_version(v: str) -> tuple[int, ...] | None:
+    """Parse a dotted version string ("v7.1.0" or "7.1.0") into a tuple of
+    ints. Returns None for anything with a non-numeric component (e.g. a
+    pre-release suffix like "7.1.0-rc1") -- those are "can't compare", not
+    "equal" or "behind", so callers must skip rather than guess.
+    """
+    parts = v.strip().lstrip("vV").split(".")
+    try:
+        return tuple(int(p) for p in parts)
+    except ValueError:
+        return None
+
+
+def _log_version_check(line: str) -> None:
+    """Append one line to the local audit log. Best-effort: a logging
+    failure must never be the reason an update check fails."""
+    try:
+        os.makedirs(os.path.dirname(VERSION_LOG_PATH), exist_ok=True)
+        with open(VERSION_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(line.rstrip("\n") + "\n")
+    except OSError:
+        pass
+
+
+def _read_version_cache() -> dict | None:
+    try:
+        with open(VERSION_CACHE_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def _write_version_cache(data: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(VERSION_CACHE_PATH), exist_ok=True)
+        with open(VERSION_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except OSError:
+        pass
+
+
+def _fetch_latest_release() -> dict:
+    """Blocking network call — always run this via asyncio.to_thread, never
+    directly on the event loop. Returns {"tag": str, "url": str} on success
+    or {"error": str} on any failure. Never raises: a network problem here
+    must degrade to "no update info this time," not break the caller.
+    """
+    ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    req = urllib.request.Request(
+        RELEASES_API_URL,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "freecad-mcp-update-check",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=VERSION_CHECK_TIMEOUT_SECONDS) as resp:
+            status = resp.status
+            body = json.loads(resp.read().decode("utf-8"))
+        tag = body.get("tag_name")
+        url = body.get("html_url", "")
+        _log_version_check(f"{ts} GET {RELEASES_API_URL} -> {status} tag={tag}")
+        if not tag:
+            return {"error": "response missing tag_name"}
+        return {"tag": tag, "url": url}
+    except Exception as e:
+        _log_version_check(
+            f"{ts} GET {RELEASES_API_URL} -> error: {type(e).__name__}: {e}"
+        )
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
+async def check_for_update() -> dict | None:
+    """Returns {"current": ..., "latest": ..., "url": ...} if the latest
+    GitHub release is genuinely newer than the running version, else None
+    -- covers "up to date," "running ahead of the last release" (e.g. dev
+    branch), "check failed," and "versions not comparable" identically, on
+    purpose: none of those are actionable for the caller.
+
+    A live check runs at most once per VERSION_CHECK_TTL_SECONDS regardless
+    of whether it succeeds, so a flaky or unreachable network never causes
+    repeated GitHub calls -- the failure itself is cached too.
+    """
+    current = _current_version()
+    if current is None:
+        return None
+    current_tuple = _parse_version(current)
+    if current_tuple is None:
+        return None
+
+    cache = _read_version_cache()
+    now = time.time()
+    if cache and (now - cache.get("checked_at", 0)) < VERSION_CHECK_TTL_SECONDS:
+        result = cache.get("result", {})
+    else:
+        result = await asyncio.to_thread(_fetch_latest_release)
+        _write_version_cache({"checked_at": now, "result": result})
+
+    tag = result.get("tag")
+    if not tag:
+        return None
+    latest_tuple = _parse_version(tag)
+    if latest_tuple is None:
+        return None
+
+    width = max(len(current_tuple), len(latest_tuple))
+    padded_current = current_tuple + (0,) * (width - len(current_tuple))
+    padded_latest = latest_tuple + (0,) * (width - len(latest_tuple))
+    if padded_latest <= padded_current:
+        return None
+
+    return {"current": current, "latest": tag.lstrip("vV"), "url": result.get("url", "")}
 
 
 def _socket_alive(sock_path: str, timeout: float = 0.5) -> bool:
@@ -2199,6 +2352,12 @@ async def main():
                          else (resolve_err or "FreeCAD not running. Start FreeCAD or call spawn_freecad_instance."),
                 "instances": _ctx.list_all(),
             }
+            # Cached/throttled -- see check_for_update() docstring. Only
+            # added when there's genuinely something newer; silent
+            # otherwise (up to date, offline, or check not due yet).
+            update = await check_for_update()
+            if update:
+                status["update_available"] = update
             return [types.TextContent(
                 type="text",
                 text=json.dumps(status)
