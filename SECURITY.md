@@ -6,6 +6,14 @@ freecad-mcp is a local development tool. By design, it grants your AI agent full
 
 **This tool is intended for single-user local use only.** Do not expose it to untrusted networks or users.
 
+## Update Check (Network Access)
+
+`check_freecad_connection` — the first call every session makes — also checks whether a newer release is available. This is the *only* network access the bridge makes on its own initiative, as opposed to `execute_python`, which can do arbitrary network I/O if the agent is asked to.
+
+- **Pull, not push.** A plain `GET` to GitHub's public releases API (`api.github.com/repos/blwfish/freecad-mcp/releases/latest`) — not a custom telemetry endpoint. Nothing is sent beyond the HTTP request itself: no identifying data, no usage metrics.
+- **Cached and throttled.** At most one live check per 24 hours. A flaky or unreachable network degrades silently — no update info is shown, and the connection check itself is never blocked or slowed by it.
+- **Auditable.** Every live check (not cache hits) is appended to `~/.cache/freecad-mcp/version_check.log` — timestamp, URL, and result — so you can verify exactly what was requested and when, without having to trust this document or the source.
+
 ## Indirect Prompt Injection
 
 When an AI agent works with FreeCAD, it reads document content — object labels, macro source code, spreadsheet values, error messages — and that content flows directly into the agent's reasoning context. This creates a structural risk: a crafted FreeCAD file could contain text designed to influence the agent's subsequent actions.
