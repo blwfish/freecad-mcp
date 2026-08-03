@@ -20,7 +20,7 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "mcp>=1.28.1",
+    "mcp>=2.0.0",
     "mcp-events>=0.1.0",
 ]
 
