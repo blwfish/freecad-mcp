@@ -25,6 +25,7 @@ Run with: python3 -m pytest tests/integration/test_capture_state_performance.py 
 """
 
 import os
+import shutil
 import time
 
 import pytest
@@ -52,19 +53,30 @@ MIN_EXPECTED_OBJECT_COUNT = 15
 
 
 @pytest.fixture
-def equipment_hut_document():
+def equipment_hut_document(tmp_path):
     """Open the real complex fixture document; close it afterward.
 
     Uses the open_document view_control operation (wired into the
     dispatch table alongside create_document/save_document -- previously
     implemented in document_ops.py but never registered, so unreachable
     via any MCP call before this fixture existed).
+
+    Opens a scratch copy, not the git-tracked fixture directly: FreeCAD
+    rewrites the .FCStd file on open (schema-migration/recompute writeback)
+    even when nothing here ever calls save() -- confirmed 2026-08-05 by
+    checksumming the file before/after a bare open+close with no
+    list_objects/get_object_properties calls in between. Opening the
+    tracked file in place left it perpetually "modified" in git after every
+    test run.
     """
     assert os.path.isfile(FIXTURE_PATH), f"Fixture missing: {FIXTURE_PATH}"
 
+    scratch_path = str(tmp_path / "equipment-hut.FCStd")
+    shutil.copyfile(FIXTURE_PATH, scratch_path)
+
     result = send_command("view_control", {
         "operation": "open_document",
-        "filename": FIXTURE_PATH,
+        "filename": scratch_path,
     }, timeout=30.0)
     result_str = str(result)
     assert "error" not in result_str.lower() or "Opened document" in result_str, \
