@@ -14,11 +14,16 @@ import types
 import threading
 import time
 import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, create_autospec, patch, PropertyMock
 
 # Add AICopilot to path for imports
 AICOPILOT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot")
 sys.path.insert(0, AICOPILOT_DIR)
+
+# Grab the real module now, before the mock_handlers fixture (below) replaces
+# sys.modules["freecad_health"] with an import-blocking stub for the duration
+# of each test that uses it.
+import freecad_health
 
 
 # ---------------------------------------------------------------------------
@@ -2032,12 +2037,20 @@ class TestProcessCommandExtended:
             ss_mod.DEBUG_ENABLED = original
 
     def test_exception_with_debug_logging(self, server):
-        """When DEBUG_ENABLED and an exception occurs, should log and return error."""
+        """When DEBUG_ENABLED and an exception occurs, should log and return error.
+
+        Uses create_autospec (not a bare MagicMock) so this test enforces
+        log_crash's real signature -- a bare MagicMock silently accepts any
+        kwarg, which is exactly how a prior version of this call site
+        (health_status=..., error_context=...) shipped with a nonexistent
+        'error_context' kwarg: every real invocation raised TypeError,
+        silently swallowed by the surrounding `except Exception: pass`, so
+        no crash was ever actually logged and no test caught it."""
         import freecad_mcp_handler as ss_mod
         original_debug = ss_mod.DEBUG_ENABLED
         original_monitor = ss_mod._monitor
         ss_mod.DEBUG_ENABLED = True
-        ss_mod._monitor = MagicMock()
+        ss_mod._monitor = create_autospec(freecad_health.FreeCADHealthMonitor, instance=True)
 
         server._execute_tool = MagicMock(side_effect=RuntimeError("kaboom"))
         try:
@@ -2046,6 +2059,8 @@ class TestProcessCommandExtended:
             )
             assert "kaboom" in result["error"]
             ss_mod._monitor.log_crash.assert_called_once()
+            _, kwargs = ss_mod._monitor.log_crash.call_args
+            assert "traceback" in kwargs["additional_info"]
         finally:
             ss_mod.DEBUG_ENABLED = original_debug
             ss_mod._monitor = original_monitor
@@ -2096,6 +2111,23 @@ class TestProcessCommandExtended:
             ss_mod._capture_state = original_capture_fn
 
 
+# ---------------------------------------------------------------------------
+# init_monitor() crash_log_dir wiring
+#
+# The module computes _crash_dir = ~/.freecad-mcp/crashes and creates it, but
+# the init_monitor() call originally didn't pass it through -- so the real
+# monitor always fell back to FreeCADHealthMonitor's hardcoded default
+# ("/tmp/freecad_mcp_crashes", a shared path with no per-install isolation).
+# 2026-08-05: this is why a crash JSON written by one process (a test run)
+# landed in the same directory a live production instance also wrote to.
+#
+# Not covered by a test in this file: this test module's mock_handlers
+# fixture deliberately replaces sys.modules["freecad_health"] with an
+# import-blocking stub so freecad_mcp_handler takes its ImportError fallback
+# path (_monitor = None, DEBUG_ENABLED = False) -- by design, to avoid
+# mocking the real health-monitor internals. That means the module-level
+# `_monitor = init_monitor(crash_log_dir=_crash_dir)` call is never actually
+# exercised under this harness; verified by direct code reading instead.
 # ---------------------------------------------------------------------------
 # start_server updates the health monitor's socket_path
 #

@@ -385,6 +385,20 @@ class TestCaptureObjectState:
 
         assert info["properties"]["Radius"] == 5.0
 
+    def test_unresolved_mock_value_property_excluded(self):
+        """hasattr(val, 'Value') alone matches any object with a .Value
+        attribute, including a MagicMock whose .Value auto-generates another
+        MagicMock (not a real scalar) -- 2026-08-05, this class of object
+        made it all the way into a real crash JSON, breaking json.dump with
+        'Object of type MagicMock is not JSON serializable'. The resolved
+        .Value must itself be a plain int/float before being captured."""
+        obj = self._make_object(properties_list=["Weird"])
+        obj.Weird = MagicMock()  # .Value on this is an unconfigured MagicMock
+
+        info = freecad_debug.FreeCADDebugger._capture_object_state(obj)
+
+        assert "properties" not in info or "Weird" not in info.get("properties", {})
+
     def test_shape_and_placement_and_state_excluded_from_properties_dict(self):
         """These are captured in their own dedicated sections above — must
         not also appear duplicated inside "properties"."""
@@ -832,7 +846,7 @@ class TestEdgeCases:
             read_only_dir.chmod(0o755)
 
     def test_version_attribute(self):
-        assert freecad_debug.__version__ == "1.1.0"
+        assert freecad_debug.__version__ == "1.1.1"
 
     def test_construction_refuses_symlinked_log_dir(self, tmp_path):
         """M14: log_dir defaults to a fixed, predictable /tmp path.

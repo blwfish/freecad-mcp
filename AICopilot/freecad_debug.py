@@ -25,7 +25,7 @@ Version: 1.1.0 (Optimized)
 """
 
 # Version declaration
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 # Try to register with version system if available
 try:
@@ -363,10 +363,17 @@ class FreeCADDebugger:
                 if isinstance(val, (int, float, str, bool)) or val is None:
                     props[prop_name] = val
                 elif hasattr(val, "Value"):  # FreeCAD Quantity (Length, Angle, ...)
+                    # hasattr(val, "Value") alone doesn't prove val is a real
+                    # Quantity -- anything with a .Value attribute matches,
+                    # including a MagicMock (whose .Value is another
+                    # MagicMock). Validate the resolved value is actually a
+                    # plain scalar before trusting it; only capture that.
                     try:
-                        props[prop_name] = val.Value
+                        resolved = val.Value
                     except Exception:
-                        pass
+                        continue
+                    if isinstance(resolved, (int, float)):
+                        props[prop_name] = resolved
             if props:
                 info["properties"] = props
         except Exception:
