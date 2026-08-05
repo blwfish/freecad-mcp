@@ -58,6 +58,14 @@ def _find_freecadcmd() -> str | None:
         "/Applications/FreeCAD 1.0.app/Contents/MacOS/FreeCADCmd",
         "/Applications/FreeCAD 1.1.app/Contents/MacOS/FreeCADCmd",
         "/Applications/FreeCAD 1.2.app/Contents/MacOS/FreeCADCmd",
+        # Weekly / renumbered (26.x) builds ship under these bundle names
+        "/Applications/FreeCAD weekly-builds.app/Contents/MacOS/FreeCADCmd",
+        "/Applications/FreeCAD 26.app/Contents/MacOS/FreeCADCmd",
+        # Local build (FC-clone) -- kept in sync with freecad_mcp_server.py's
+        # own _find_freecadcmd(); this repo's dev environment builds FreeCAD
+        # here rather than installing an /Applications bundle.
+        os.path.expanduser("~/Documents/FC-clone/build/release/bin/FreeCADCmd"),
+        "/Volumes/Files/claude/FC-clone/build/release/bin/FreeCADCmd",
     ]
     for p in mac_candidates:
         if os.path.isfile(p):
