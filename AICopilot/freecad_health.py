@@ -20,7 +20,7 @@ Version: 1.0.1 (Optimized)
 """
 
 # Version declaration
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 # Try to register with version system if available
 try:
@@ -295,7 +295,12 @@ class FreeCADHealthMonitor:
         crash_file = self.crash_log_dir / f"crash_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         try:
             with open(crash_file, 'w') as f:
-                json.dump(crash_info, f, indent=2)
+                # default=str: an unexpected/non-serializable field (a stray
+                # object reference, a future FreeCAD type not yet handled by
+                # capture_freecad_state) must degrade to its str() rather
+                # than losing the entire crash record -- this file is often
+                # the only artifact of a crash that just happened.
+                json.dump(crash_info, f, indent=2, default=str)
         except Exception as e:
             self.logger.error(f"Failed to write crash log {crash_file}: {e}")
         
