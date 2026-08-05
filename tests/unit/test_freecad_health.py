@@ -461,6 +461,25 @@ class TestLogCrash:
         assert data["consecutive_failures"] == 7
         assert data["restart_attempts"] == 2
 
+    def test_non_serializable_field_does_not_lose_the_crash_report(self, tmp_path):
+        """2026-08-05: a MagicMock leaking into freecad_state made json.dump
+        raise mid-write, leaving a truncated/invalid JSON file and no error
+        surfaced anywhere but the debug log -- the crash record was lost
+        right when it mattered most. json.dump must degrade the offending
+        field via default=str instead of losing the whole file."""
+        m = make_monitor(tmp_path)
+        m.debugger.capture_freecad_state = MagicMock(
+            return_value={"weird": object()}
+        )
+
+        m.log_crash({"a": 1})
+
+        crash_files = list((tmp_path / "crashes").glob("crash_*.json"))
+        assert len(crash_files) == 1
+        data = json.loads(crash_files[0].read_text())
+        assert data["health_status"] == {"a": 1}
+        assert "weird" in data["freecad_state"]
+
 
 # ---------------------------------------------------------------------------
 # cleanup_socket

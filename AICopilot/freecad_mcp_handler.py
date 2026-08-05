@@ -127,7 +127,7 @@ try:
         enable_file=True,
         lean_logging=False,
     )
-    _monitor = init_monitor()
+    _monitor = init_monitor(crash_log_dir=_crash_dir)
 
     _log_operation = _log_op_impl
     _capture_state = _capture_state_impl
@@ -1193,7 +1193,7 @@ class FreeCADSocketServer:
                     try:
                         _monitor.log_crash(
                             health_status={"tool": tool_name, "error": str(e)},
-                            error_context=tb_module.format_exc(),
+                            additional_info={"traceback": tb_module.format_exc()},
                         )
                     except Exception:
                         pass
