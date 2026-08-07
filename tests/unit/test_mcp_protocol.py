@@ -51,21 +51,19 @@ _SERVER: Server = _build_server()
 
 def _list_tools() -> list[types.Tool]:
     async def _call():
-        req = types.ListToolsRequest(method="tools/list", params=None)
-        result = await _SERVER.request_handlers[types.ListToolsRequest](req)
-        return result.root.tools
+        entry = _SERVER.get_request_handler("tools/list")
+        result = await entry.handler(None, None)
+        return result.tools
 
     return asyncio.run(_call())
 
 
 def _call_tool(name: str, arguments: dict | None = None) -> list[types.TextContent]:
     async def _call():
-        req = types.CallToolRequest(
-            method="tools/call",
-            params=types.CallToolRequestParams(name=name, arguments=arguments),
-        )
-        result = await _SERVER.request_handlers[types.CallToolRequest](req)
-        return result.root.content
+        entry = _SERVER.get_request_handler("tools/call")
+        params = types.CallToolRequestParams(name=name, arguments=arguments)
+        result = await entry.handler(None, params)
+        return result.content
 
     return asyncio.run(_call())
 
@@ -89,7 +87,7 @@ class TestToolsList:
 
     def test_every_tool_has_object_schema(self):
         for tool in _list_tools():
-            schema = tool.inputSchema
+            schema = tool.input_schema
             assert isinstance(schema, dict)
             assert schema.get("type") == "object"
 
@@ -99,7 +97,7 @@ class TestToolsList:
 
     def test_schema_properties_is_dict_when_present(self):
         for tool in _list_tools():
-            props = tool.inputSchema.get("properties")
+            props = tool.input_schema.get("properties")
             if props is not None:
                 assert isinstance(props, dict)
 
@@ -221,13 +219,11 @@ class TestExecutePythonNonJsonResponse:
         loop = asyncio.new_event_loop()
         try:
             async def _call():
-                req = types.CallToolRequest(
-                    method="tools/call",
-                    params=types.CallToolRequestParams(
-                        name="execute_python", arguments={"code": "1 + 1"}),
-                )
-                result = await _SERVER.request_handlers[types.CallToolRequest](req)
-                return result.root.content
+                entry = _SERVER.get_request_handler("tools/call")
+                params = types.CallToolRequestParams(
+                    name="execute_python", arguments={"code": "1 + 1"})
+                result = await entry.handler(None, params)
+                return result.content
 
             with patch.object(freecad_mcp_server._ctx, "resolve_target",
                                return_value=("/tmp/fake.sock", None)), \
