@@ -2182,9 +2182,6 @@ async def main():
     }
     _generic_dispatch_tools = {t.name for t in _smart_dispatcher_tools} - _BESPOKE_DISPATCH_TOOLS
 
-    # Create server with freecad naming
-    server = Server("freecad")
-
     @debug_decorator(track_state=False, track_performance=True)
     async def send_to_freecad(tool_name: str, args: dict) -> str:
         """Send command to FreeCAD via socket (cross-platform)"""
@@ -2330,12 +2327,10 @@ async def main():
         except Exception as e:
             return json.dumps({"error": f"Selection workflow error: {e}"})
     
-    @server.list_tools()
     async def handle_list_tools() -> list[types.Tool]:
         """List available Phase 1 smart dispatcher tools"""
         return _base_tools + _smart_dispatcher_tools
 
-    @server.call_tool()
     async def handle_call_tool(
         name: str, arguments: dict[str, Any] | None
     ) -> list[types.TextContent]:
@@ -2946,6 +2941,25 @@ async def main():
                 type="text",
                 text=f"Unknown tool: {name}"
             )]
+
+    # mcp 2.0's low-level Server dropped the @server.list_tools()/@server.call_tool()
+    # decorators in favor of on_list_tools=/on_call_tool= constructor kwargs whose
+    # handlers take (ctx, params) and return a Result object rather than a bare
+    # list. These adapters keep handle_list_tools/handle_call_tool on the pre-2.0
+    # shape (untouched, including all downstream tests) and translate at the
+    # boundary instead of touching every one of the ~40 return sites above.
+    async def _on_list_tools(ctx, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+        return types.ListToolsResult(tools=await handle_list_tools())
+
+    async def _on_call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolResult:
+        content = await handle_call_tool(params.name, params.arguments)
+        return types.CallToolResult(content=content)
+
+    server = Server(
+        "freecad",
+        on_list_tools=_on_list_tools,
+        on_call_tool=_on_call_tool,
+    )
 
     # Optional: Start health monitoring if debugging enabled
     async def health_check_loop():
