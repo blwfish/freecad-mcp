@@ -21,7 +21,7 @@ jobs:
             # it belongs to the separate PR-only job below, on every push.
             pytest_args: "-m 'not cam and not real_document'"
           - slot: "dev-weekly"
-            tag: "weekly-2026.07.15"
+            tag: "weekly-2026.08.05"
             appimage: ""  # resolved by glob below
             pytest_args: "-m 'not real_document'"
 
@@ -112,7 +112,7 @@ jobs:
       - name: Set up FreeCAD AppImage
         uses: ./.github/actions/setup-freecad-appimage
         with:
-          tag: "weekly-2026.07.15"
+          tag: "weekly-2026.08.05"
           appimage: ""
           use-cache: 'true'
           install-gdb: 'true'
