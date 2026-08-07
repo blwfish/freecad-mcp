@@ -1662,6 +1662,9 @@ class FreeCADSocketServer:
             "delete_object":      self.view_ops.delete_object,
             "undo":               self.view_ops.undo,
             "redo":               self.view_ops.redo,
+            # Recompute touches Qt-observed view/tree state, same reasoning
+            # as delete_object/insert_shape above.
+            "recompute":          self.view_ops.recompute_object,
             "activate_workbench": self.view_ops.activate_workbench,
             "get_report_view":    self.view_ops.get_report_view,
             "add_clip_plane":     self.view_ops.add_clip_plane,
