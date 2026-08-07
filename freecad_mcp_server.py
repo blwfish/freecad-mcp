@@ -1084,6 +1084,8 @@ async def main():
                             "hide_object", "show_object", "delete_object",
                             # History operations
                             "undo", "redo",
+                            # Recompute (document, or a single object with object_name)
+                            "recompute",
                             # Workbench control
                             "activate_workbench",
                             # Diagnostics
@@ -1107,7 +1109,8 @@ async def main():
                     "document_name": {"type": "string", "description": "Document name", "default": "Unnamed"},
                     "filename": {"type": "string", "description": "File path to save"},
                     # Object parameters
-                    "object_name": {"type": "string", "description": "Object name for operations"},
+                    "object_name": {"type": "string", "description": "Object name for operations (recompute: omit to recompute the whole document instead of one object)"},
+                    "force": {"type": "boolean", "description": "recompute: touch() the object first so it recomputes even if not already marked dirty (default true, only meaningful with object_name)", "default": True},
                     # Workbench parameters
                     "workbench_name": {"type": "string", "description": "Workbench name to activate"},
                     # get_report_view parameters
@@ -1464,7 +1467,7 @@ async def main():
         ),
         types.Tool(
             name="spatial_query",
-            description="Analyze spatial relationships between objects: interference/collision detection, clearance measurement, containment checks, face-to-face analysis, batch interference, alignment verification",
+            description="Analyze spatial relationships between objects: interference/collision detection, clearance measurement, containment check, point-in-solid test, face-to-face analysis, batch interference, alignment verification",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1473,11 +1476,12 @@ async def main():
                         "description": "Spatial query to perform",
                         "enum": [
                             "interference_check", "clearance", "containment",
+                            "contains_point",
                             "face_relationship", "batch_interference",
                             "alignment_check"
                         ]
                     },
-                    "object1": {"type": "string", "description": "First object name"},
+                    "object1": {"type": "string", "description": "First object name (contains_point: the object to test)"},
                     "object2": {"type": "string", "description": "Second object name"},
                     "objects": {
                         "type": "array",
@@ -1487,6 +1491,14 @@ async def main():
                     "face1": {"type": "string", "description": "Face on object1 (e.g. 'Face6') for face_relationship"},
                     "face2": {"type": "string", "description": "Face on object2 (e.g. 'Face3') for face_relationship"},
                     "axis": {"type": "string", "description": "Axis for alignment_check: X, Y, or Z (default Z)", "enum": ["X", "Y", "Z"]},
+                    "point": {
+                        "type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3,
+                        "description": "contains_point: [x, y, z] in mm to test against object1"
+                    },
+                    "tolerance": {
+                        "type": "number",
+                        "description": "contains_point: linear tolerance in mm (default 1e-7, OCCT's own confusion tolerance)"
+                    },
                 },
                 "required": ["operation"]
             },
