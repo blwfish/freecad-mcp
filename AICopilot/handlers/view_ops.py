@@ -429,6 +429,64 @@ class ViewOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error deleting object: {e}"
 
+    def recompute_object(self, args: Dict[str, Any]) -> str:
+        """Recompute the active document, or a single object within it, with timing.
+
+        Named recompute_object (not recompute) to avoid shadowing
+        BaseHandler.recompute(doc=None) -- inherited into this same class
+        and called internally as self.recompute(doc) by delete_object below
+        and dozens of other handlers across this codebase. A same-named
+        override here with this method's (args: dict) signature would break
+        every one of those call sites the moment they hit this class's MRO.
+
+        Args:
+            object_name: If given, recompute just this object (touch() +
+                obj.recompute(True), matching what obj.recompute(True) does
+                directly in a script) rather than the whole document. Falls
+                back to a full doc.recompute() when omitted.
+            force: Only meaningful with object_name. When True (default),
+                touch()es the object first so it recomputes even if FreeCAD
+                doesn't consider it dirty -- the common case when re-running
+                the same recompute after changing a property that a prior
+                run already picked up once. When False, only recomputes if
+                FreeCAD already considers it touched.
+
+        Same GUI-thread caveat as execute_python_async applies: this runs
+        as one blocking call on FreeCAD's Qt main thread, so a recompute
+        expected to take more than ~20-30s carries the same
+        main-thread-unresponsive risk documented in
+        SPEC-heavy-op-subprocess-offload.md (freecad-mcp repo root) -- this
+        operation does not fix that, it only saves reaching for
+        execute_python/execute_python_async for the common, fast case.
+        """
+        import time as _time
+        try:
+            doc = self.get_document()
+            if not doc:
+                return "Error: No active document"
+
+            object_name = args.get('object_name', '')
+            force = bool(args.get('force', True))
+
+            t0 = _time.time()
+            if object_name:
+                obj = self.get_object(object_name, doc)
+                if not obj:
+                    return f"Error: Object '{object_name}' not found"
+                if force:
+                    obj.touch()
+                obj.recompute(True)
+                elapsed = _time.time() - t0
+                state = list(obj.State) if hasattr(obj, 'State') else []
+                return (f"Recomputed '{object_name}' in {elapsed:.2f}s "
+                        f"(State: {state or 'unknown'})")
+            else:
+                doc.recompute()
+                elapsed = _time.time() - t0
+                return f"Recomputed document '{doc.Name}' in {elapsed:.2f}s"
+        except Exception as e:
+            return f"Error in recompute: {e}"
+
     def undo(self, args: Dict[str, Any]) -> str:
         """Undo the last operation."""
         try:

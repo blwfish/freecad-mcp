@@ -33,7 +33,7 @@ class SpatialOpsHandler(BaseHandler):
 
     _ALLOWED_OPERATIONS = frozenset({
         "interference_check", "clearance", "containment", "face_relationship",
-        "batch_interference", "alignment_check",
+        "batch_interference", "alignment_check", "contains_point",
     })
 
     # ------------------------------------------------------------------
@@ -254,6 +254,64 @@ class SpatialOpsHandler(BaseHandler):
 
         except Exception as e:
             return f"Error in containment: {e}"
+
+    def contains_point(self, args: Dict[str, Any]) -> str:
+        """Check whether a single 3D point lies inside an object's solid.
+
+        Distinct from containment() above, which tests whether one whole
+        object's geometry sits inside another's — this tests one specific
+        XYZ point against one object, e.g. to verify a generator placed
+        material (or correctly left a gap) at an exact location, without
+        constructing a probe solid just to ask the question via
+        interference_check.
+        """
+        try:
+            obj_name = args.get('object1', '') or args.get('object_name', '') or args.get('obj1', '')
+            if not obj_name:
+                return "Error: object1 (or object_name) is required"
+
+            point = args.get('point')
+            if not point or len(point) != 3:
+                return "Error: point is required as [x, y, z] (mm)"
+            try:
+                pt = FreeCAD.Vector(float(point[0]), float(point[1]), float(point[2]))
+            except (TypeError, ValueError) as e:
+                return f"Error: point must be three numbers [x, y, z] — {e}"
+
+            tolerance = float(args.get('tolerance', _OCCT_LIN_TOL))
+
+            doc = self.get_document()
+            if not doc:
+                return "Error: No active document"
+            obj = self.get_object(obj_name, doc)
+            if not obj:
+                return f"Error: Object not found: {obj_name}"
+            if not hasattr(obj, 'Shape'):
+                return f"Error: {obj_name} has no Shape"
+            shape = obj.Shape
+
+            # isInside's third arg controls whether points exactly ON the
+            # boundary count as inside (True) or outside (False) — surfacing
+            # both readings rather than picking one, since callers checking
+            # "did the reserved zone actually get skipped" and callers
+            # checking "is this comfortably inside the solid" want opposite
+            # defaults and neither should have to guess which this returned.
+            inside_strict = shape.isInside(pt, tolerance, False)
+            inside_or_on_boundary = shape.isInside(pt, tolerance, True)
+
+            lines = [
+                f"Point containment: {self._fmt_vec(pt, 4)} vs {obj_name}",
+                f"  Inside (excluding boundary): {inside_strict}",
+                f"  Inside or on boundary: {inside_or_on_boundary}",
+                f"  Tolerance: {tolerance:.2e} mm",
+            ]
+            if inside_strict != inside_or_on_boundary:
+                lines.append("  NOTE: point lies exactly on the boundary within tolerance "
+                             "— the two readings above disagree because of that.")
+            return "\n".join(lines)
+
+        except Exception as e:
+            return f"Error in contains_point: {e}"
 
     def face_relationship(self, args: Dict[str, Any]) -> str:
         """Analyze relationship between two specific faces on two objects.
