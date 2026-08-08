@@ -16,8 +16,14 @@
 #                   CAM SIGSEGV fix (guarded FreeCADGui imports); capture_state
 #                   gated off per-command by default; GIL/threading hardening
 #                   across document ops and quit cleanup.
+# Version: 7.1.0 - Reliability hardening: SIGPIPE ignored so long recomputes
+#                   stop terminating FreeCAD; orphaned socket files swept on
+#                   startup; MagicMock-shaped crash-log values fixed. Migrated
+#                   to mcp 2.0's constructor-based handler registration. Added
+#                   recompute/contains_point bridge operations and a cached,
+#                   auditable GitHub release update check.
 
-__version__ = "7.0.0"
+__version__ = "7.1.0"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
