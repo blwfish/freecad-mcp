@@ -627,6 +627,47 @@ def _find_headless_script() -> str | None:
     return None
 
 
+def _get_freecad_window_bounds(timeout: float = 5) -> tuple[int, int, int, int] | None:
+    """Return (x, y, w, h) of FreeCAD's frontmost window in screen coordinates
+    (as `screencapture -R` expects), via System Events, or None if FreeCAD
+    isn't running, its window can't be found, or Accessibility automation
+    isn't permitted for this process.
+
+    Used so the bridge-process screenshot shortcut (Darwin `view_control`
+    screenshot handling below) captures FreeCAD's viewport specifically,
+    instead of whatever happens to be frontmost on the physical screen.
+
+    The process name System Events sees depends on how FreeCAD was launched:
+    the official .app bundle's launcher registers as "FreeCAD", but running
+    the inner Contents/Resources/bin/freecad binary directly (e.g. outside
+    LaunchServices) registers as "freecad" instead -- try both.
+    """
+    for proc_name in ("FreeCAD", "freecad"):
+        script = (
+            f'tell application "System Events" to tell process "{proc_name}" '
+            'to get {position, size} of front window'
+        )
+        try:
+            proc = subprocess.run(
+                ["osascript", "-e", script],
+                timeout=timeout,
+                capture_output=True,
+                text=True,
+            )
+            if proc.returncode != 0:
+                continue
+            parts = [int(p.strip()) for p in proc.stdout.strip().split(",")]
+            if len(parts) != 4:
+                continue
+            x, y, w, h = parts
+            if w <= 0 or h <= 0:
+                continue
+            return x, y, w, h
+        except Exception:
+            continue
+    return None
+
+
 def _read_launch_log_tail(path: str, max_bytes: int = 4000) -> str:
     """Best-effort tail of a spawned FreeCAD process's captured stdout/stderr.
 
@@ -2520,24 +2561,61 @@ async def main():
         # macOS screenshot: run screencapture in the bridge process (which inherits
         # Screen Recording permission from the terminal), never touching FreeCAD's
         # GUI thread or requiring FreeCAD to have its own TCC permission.
+        #
+        # Cropped to FreeCAD's own window (via -R, using bounds from System
+        # Events) rather than the whole screen -- a plain `-x` full-screen
+        # capture returns whatever's frontmost, which is very often *not*
+        # FreeCAD (the caller's IDE/terminal, in the typical agent workflow),
+        # ignores the caller's requested width/height entirely, and is a
+        # privacy concern (captures the whole desktop, not just the
+        # viewport). Falls back to full-screen if the window lookup fails
+        # (e.g. FreeCAD not running, or Accessibility permission not
+        # granted), so screenshot still works, just less precisely targeted.
         elif (name == "view_control"
               and (arguments or {}).get("operation") == "screenshot"
               and platform.system() == "Darwin"):
             import tempfile, base64 as _b64
+            args = arguments or {}
+            req_width = args.get("width", 800)
+            req_height = args.get("height", 600)
             tmp_path = None
             try:
                 with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
                     tmp_path = f.name
-                proc = subprocess.run(
-                    ["screencapture", "-x", tmp_path],
-                    timeout=10, capture_output=True,
-                )
+
+                bounds = _get_freecad_window_bounds()
+                cmd = ["screencapture", "-x"]
+                note = None
+                if bounds:
+                    x, y, w, h = bounds
+                    cmd += ["-R", f"{x},{y},{w},{h}"]
+                else:
+                    note = ("Could not locate FreeCAD's window (via System Events); "
+                             "captured the full screen instead. If unexpected, check "
+                             "Accessibility permission for the bridge's terminal/app in "
+                             "System Settings -> Privacy & Security -> Accessibility.")
+                cmd.append(tmp_path)
+
+                proc = subprocess.run(cmd, timeout=10, capture_output=True)
                 if proc.returncode == 0 and os.path.getsize(tmp_path) > 0:
+                    # Resize toward the requested dimensions -- both to honor
+                    # width/height (previously silently ignored) and to keep
+                    # the payload well clear of any transport size limit.
+                    # sips is a stock macOS tool; failure here just leaves
+                    # the capture at its native size rather than losing it.
+                    subprocess.run(
+                        ["sips", "-z", str(req_height), str(req_width), tmp_path],
+                        timeout=10, capture_output=True,
+                    )
                     with open(tmp_path, "rb") as f:
                         image_data = _b64.b64encode(f.read()).decode("utf-8")
-                    return [types.ImageContent(
+                    content: list = []
+                    if note:
+                        content.append(types.TextContent(type="text", text=json.dumps({"note": note})))
+                    content.append(types.ImageContent(
                         type="image", data=image_data, mimeType="image/png"
-                    )]
+                    ))
+                    return content
                 err = proc.stderr.decode(errors="replace")[:200]
                 return [types.TextContent(type="text", text=json.dumps({
                     "error": f"screencapture failed (rc={proc.returncode}): {err}"
