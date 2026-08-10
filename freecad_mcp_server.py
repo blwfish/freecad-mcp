@@ -487,6 +487,24 @@ class _BridgeCtx:
 _ctx = _BridgeCtx()
 
 
+def _current_target_is_headless() -> bool:
+    """True if the currently-resolved FreeCAD target is headless, or can't
+    be resolved at all (no live instance, or an ambiguous multi-instance
+    state). Used to gate the Darwin screenshot shortcut below so it only
+    ever fires for a real GUI instance -- never blindly for a headless
+    target (no window exists to capture) or when no instance is confirmed
+    live, both of which it would otherwise screenshot the desktop for
+    regardless, unrelated to what was actually asked for.
+    """
+    sock_path, _err = _ctx.resolve_target()
+    if not sock_path:
+        return True
+    for entry in _ctx.list_all():
+        if entry.get("socket_path") == sock_path:
+            return bool(entry.get("headless"))
+    return True
+
+
 # =============================================================================
 # FreeCADCmd / headless_server.py discovery helpers
 # =============================================================================
@@ -2571,9 +2589,17 @@ async def main():
         # viewport). Falls back to full-screen if the window lookup fails
         # (e.g. FreeCAD not running, or Accessibility permission not
         # granted), so screenshot still works, just less precisely targeted.
+        #
+        # Gated on the targeted instance actually being a GUI one: a headless
+        # instance has no window at all, so this shortcut steps aside for it
+        # and falls through to the generic dispatch below, which routes to
+        # FreeCAD's own take_screenshot() -- its existing GuiUp guard reports
+        # "headless mode" correctly, without this shortcut blindly
+        # screenshotting the desktop regardless of what was actually running.
         elif (name == "view_control"
               and (arguments or {}).get("operation") == "screenshot"
-              and platform.system() == "Darwin"):
+              and platform.system() == "Darwin"
+              and not _current_target_is_headless()):
             import tempfile, base64 as _b64
             args = arguments or {}
             req_width = args.get("width", 800)
