@@ -23,27 +23,6 @@ _FACE_THRESH_HIGH  = 80_000   # above this: cap at 640x480
 _FACE_THRESH_HUGE  = 200_000  # above this: cap at 400x300
 
 
-def _read_png_dimensions(path):
-    """Read a PNG's actual width/height from its IHDR chunk, without a
-    Pillow dependency. Returns None if the file isn't a well-formed PNG.
-
-    Needed because macOS `screencapture -x` (no -R region flag) captures
-    the entire screen at its native resolution — never the caller's
-    requested width/height — so echoing the request back as if it were
-    the capture's real dimensions was simply wrong metadata.
-    """
-    import struct
-    try:
-        with open(path, "rb") as f:
-            header = f.read(24)
-        if len(header) < 24 or header[:8] != b'\x89PNG\r\n\x1a\n':
-            return None
-        width, height = struct.unpack('>II', header[16:24])
-        return width, height
-    except Exception:
-        return None
-
-
 def _estimate_scene_faces() -> int:
     """Count total visible faces across all visible objects in the active document."""
     doc = FreeCAD.ActiveDocument
@@ -236,17 +215,21 @@ class ViewOpsHandler(BaseHandler):
 
         MUST run on the GUI thread (dispatch layer handles this).
 
-        On macOS, uses the system `screencapture` command as the primary method.
-        This avoids the saveImage() deadlock where CoinGL needs the Qt event loop
-        to pump the OpenGL render, but saveImage() IS on the GUI thread, so the
-        event loop can't run — causing a permanent hang that crashes FreeCAD.
+        On macOS, the actual capture happens in the bridge process
+        (freecad_mcp_server.py's Darwin-specific `view_control` screenshot
+        shortcut), not here -- it crops to FreeCAD's window and never touches
+        this (GUI-adjacent) thread or requires FreeCAD's own Screen Recording
+        permission. The Darwin branch below is a tripwire, not a fallback: if
+        it's ever reached for a GUI instance, that shortcut was bypassed.
 
-        Falls back to saveImage() on non-macOS platforms or if screencapture fails.
+        Uses saveImage() on non-macOS platforms (and, via the guards below,
+        correctly refuses on any headless instance regardless of platform,
+        which is the one case where this handler is legitimately reached
+        without the bridge-side shortcut having run first).
         """
         import tempfile
         import os
         import base64
-        import subprocess
 
         req_width = args.get("width", 800)
         req_height = args.get("height", 600)
@@ -281,49 +264,24 @@ class ViewOpsHandler(BaseHandler):
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
                 tmp_path = f.name
 
-            # ── macOS: screencapture (subprocess, runs on socket thread) ─────────
+            # ── macOS tripwire — do NOT fall through to saveImage() below ────────
+            # saveImage() deadlocks the GUI thread on macOS (it needs the Qt
+            # event loop to pump the OpenGL render, but we ARE the GUI thread).
+            # The bridge-side shortcut is instance-aware and only steps aside
+            # for headless targets (already handled above, before this point),
+            # so a GUI macOS instance reaching here means that shortcut didn't
+            # run -- a bridge bug, a non-standard MCP client, or take_screenshot()
+            # called directly (e.g. via execute_python). Fail loudly rather than
+            # silently regressing into the deadlock.
             if platform.system() == "Darwin":
-                # -x  = suppress shutter sound
-                # no -w/-i = capture entire screen (FreeCAD visible on screen)
-                proc = subprocess.run(
-                    ["screencapture", "-x", tmp_path],
-                    timeout=10,
-                    capture_output=True,
-                )
-                stderr_text = proc.stderr.decode(errors="replace") if proc.stderr else ""
-                if proc.returncode == 0 and os.path.getsize(tmp_path) > 0:
-                    with open(tmp_path, "rb") as f:
-                        image_data = base64.b64encode(f.read()).decode("utf-8")
-                    # screencapture -x (no -R region flag) captures the
-                    # entire screen at its native resolution, never the
-                    # caller's requested width/height — echoing the
-                    # request back as if it were the capture's real
-                    # dimensions was simply wrong metadata. Fall back to
-                    # the request only if the PNG header can't be parsed
-                    # (should not happen for a real screencapture output,
-                    # but must not crash a successful capture over it).
-                    actual_dims = _read_png_dimensions(tmp_path)
-                    actual_width, actual_height = actual_dims if actual_dims else (req_width, req_height)
-                    return json.dumps({
-                        "success": True,
-                        "image_data": image_data,
-                        "mime_type": "image/png",
-                        "width": actual_width,
-                        "height": actual_height,
-                        "method": "screencapture",
-                    })
-                # screencapture failed — do NOT fall through to saveImage on macOS.
-                # saveImage() deadlocks the GUI thread (it needs the Qt event loop to
-                # pump the OpenGL render, but we ARE the GUI thread).
-                # Most likely cause: FreeCAD lacks Screen Recording permission.
-                # Grant it in: System Settings → Privacy & Security → Screen Recording
                 return json.dumps({
                     "success": False,
                     "error": (
-                        f"screencapture failed (rc={proc.returncode}). "
-                        "FreeCAD likely needs Screen Recording permission: "
-                        "System Settings → Privacy & Security → Screen Recording → enable FreeCAD. "
-                        f"stderr: {stderr_text[:300]}"
+                        "macOS screenshots are handled by the MCP bridge process "
+                        "(freecad_mcp_server.py), not FreeCAD itself. Reaching this "
+                        "code path for a GUI instance means that shortcut was "
+                        "bypassed -- call the view_control screenshot operation "
+                        "normally rather than invoking take_screenshot() directly."
                     ),
                 })
 
