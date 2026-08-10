@@ -222,6 +222,33 @@ class TestFindFreecadCmd:
         # May still find a Mac app bundle; just ensure it doesn't crash
         assert result is None or os.path.isfile(result)
 
+    def test_finds_official_bundle_resources_bin_layout(self, bridge, monkeypatch, tmp_path):
+        """Official macOS builds put the real binary under Contents/Resources/bin/
+        (lowercase 'freecadcmd'); Contents/MacOS/ there is just a launcher stub.
+        Regression test for issue #58."""
+        monkeypatch.delenv("FREECAD_MCP_FREECAD_BIN", raising=False)
+        bundle = tmp_path / "FreeCAD.app"
+        real_bin = bundle / "Contents" / "Resources" / "bin" / "freecadcmd"
+        real_bin.parent.mkdir(parents=True)
+        real_bin.touch()
+        (bundle / "Contents" / "MacOS" / "FreeCAD").parent.mkdir(parents=True)
+        (bundle / "Contents" / "MacOS" / "FreeCAD").touch()  # launcher stub, not FreeCADCmd
+
+        with patch("shutil.which", return_value=None), \
+             patch.object(bridge.glob, "glob", return_value=[str(bundle)]):
+            result = bridge._find_freecadcmd()
+        assert result == str(real_bin)
+
+    def test_globs_versioned_app_bundle_names(self, bridge, monkeypatch, tmp_path):
+        """Bundle names vary by version ('FreeCAD 1.1.app', 'FreeCAD 26.app', ...);
+        the candidate list should come from a glob, not a fixed enumeration."""
+        monkeypatch.delenv("FREECAD_MCP_FREECAD_BIN", raising=False)
+        with patch("shutil.which", return_value=None), \
+             patch.object(bridge.glob, "glob") as glob_mock:
+            glob_mock.return_value = []
+            bridge._find_freecadcmd()
+        glob_mock.assert_any_call("/Applications/FreeCAD*.app")
+
 
 # ===========================================================================
 # _find_freecad_gui
@@ -277,6 +304,36 @@ class TestFindHeadlessScript:
         assert result is not None
         assert result.endswith("headless_server.py")
         assert os.path.isfile(result)
+
+    def test_darwin_globs_versioned_user_mod_dir(self, bridge, monkeypatch, tmp_path):
+        """FreeCAD's per-user Mod dir is version-stamped (v1-1, v1-2, v26-3, ...)
+        and is exactly what AGENT-INSTALL.md has the caller resolve via
+        FreeCAD.getUserAppDataDir(). Regression test for issue #58."""
+        monkeypatch.delenv("FREECAD_MCP_MODULE_DIR", raising=False)
+        mod_script = tmp_path / "v1-2" / "Mod" / "AICopilot" / "headless_server.py"
+        mod_script.parent.mkdir(parents=True)
+        mod_script.touch()
+
+        monkeypatch.setattr(bridge.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(bridge.glob, "glob", lambda pattern: [str(mod_script)])
+        # Force every higher-priority candidate (dev sibling, ~/.freecad-mcp) to miss
+        # so we can prove the new Mod-dir glob candidate is actually reachable.
+        monkeypatch.setattr("os.path.isfile", lambda p: p == str(mod_script))
+
+        result = bridge._find_headless_script()
+        assert result == str(mod_script)
+
+    def test_darwin_globs_user_mod_dir_pattern(self, bridge, monkeypatch):
+        """The glob pattern itself should target ~/Library/Application Support/
+        FreeCAD/*/Mod/AICopilot, not a fixed set of hardcoded version strings."""
+        monkeypatch.delenv("FREECAD_MCP_MODULE_DIR", raising=False)
+        monkeypatch.setattr(bridge.platform, "system", lambda: "Darwin")
+        with patch.object(bridge.glob, "glob", return_value=[]) as glob_mock:
+            bridge._find_headless_script()
+        expected = os.path.expanduser(
+            "~/Library/Application Support/FreeCAD/*/Mod/AICopilot/headless_server.py"
+        )
+        glob_mock.assert_any_call(expected)
 
 
 # ===========================================================================

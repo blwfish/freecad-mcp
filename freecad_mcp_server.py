@@ -5,6 +5,7 @@ Smart dispatchers aligned with FreeCAD workbench structure for optimal Claude Co
 """
 
 import asyncio
+import glob
 import json
 import os
 import re
@@ -496,7 +497,7 @@ def _find_freecadcmd() -> str | None:
     Search order:
       1. FREECAD_MCP_FREECAD_BIN env var (explicit override)
       2. shutil.which for common binary names
-      3. macOS app bundle locations
+      3. macOS app bundle locations (globbed, any "FreeCAD*.app")
       4. Linux/common system paths
     """
     override = os.environ.get("FREECAD_MCP_FREECAD_BIN")
@@ -508,14 +509,16 @@ def _find_freecadcmd() -> str | None:
         if path:
             return path
 
-    mac_candidates = [
-        "/Applications/FreeCAD.app/Contents/MacOS/FreeCADCmd",
-        "/Applications/FreeCAD 1.0.app/Contents/MacOS/FreeCADCmd",
-        "/Applications/FreeCAD 1.1.app/Contents/MacOS/FreeCADCmd",
-        "/Applications/FreeCAD 1.2.app/Contents/MacOS/FreeCADCmd",
-        # Weekly / renumbered (26.x) builds ship under these bundle names
-        "/Applications/FreeCAD weekly-builds.app/Contents/MacOS/FreeCADCmd",
-        "/Applications/FreeCAD 26.app/Contents/MacOS/FreeCADCmd",
+    # Official builds put the real binaries under Contents/Resources/bin/
+    # (lowercase); Contents/MacOS/ there is just a launcher stub. Some
+    # alternate/older layouts do put a console binary at Contents/MacOS/
+    # directly, so probe both. Glob the bundle name itself since it varies
+    # by version ("FreeCAD.app", "FreeCAD 1.1.app", "FreeCAD 26.app", ...).
+    mac_candidates = []
+    for bundle in sorted(glob.glob("/Applications/FreeCAD*.app")):
+        mac_candidates.append(os.path.join(bundle, "Contents", "Resources", "bin", "freecadcmd"))
+        mac_candidates.append(os.path.join(bundle, "Contents", "MacOS", "FreeCADCmd"))
+    mac_candidates += [
         # Local build (FC-clone)
         os.path.expanduser("~/Documents/FC-clone/build/release/bin/FreeCADCmd"),
         "/Volumes/Files/claude/FC-clone/build/release/bin/FreeCADCmd",
@@ -576,7 +579,11 @@ def _find_headless_script() -> str | None:
       1. FREECAD_MCP_MODULE_DIR env var / headless_server.py
       2. Alongside the bridge script (for dev workflows)
       3. ~/.freecad-mcp/ (standard install)
-      4. Known FreeCAD addon paths from MEMORY.md
+      4. FreeCAD's own per-user Mod dir (globbed, since the version-stamped
+         component -- v1-1, v1-2, v26-3, ... -- renumbers across releases),
+         same directory AGENT-INSTALL.md has the caller resolve via
+         FreeCAD.getUserAppDataDir()
+      5. Known addon paths from MEMORY.md (legacy fallback for this dev box)
     """
     override_dir = os.environ.get("FREECAD_MCP_MODULE_DIR")
     if override_dir:
@@ -590,9 +597,25 @@ def _find_headless_script() -> str | None:
         os.path.join(bridge_dir, "AICopilot", "headless_server.py"),
         # Standard install
         os.path.expanduser("~/.freecad-mcp/AICopilot/headless_server.py"),
-        # Known addon paths (from MEMORY.md). The version-stamped component
-        # follows FreeCAD's renumbering (v1-2 -> v26-3); keep both so a freshly
-        # migrated profile and a legacy one both resolve.
+    ]
+
+    system = platform.system()
+    if system == "Darwin":
+        mod_glob = os.path.expanduser(
+            "~/Library/Application Support/FreeCAD/*/Mod/AICopilot/headless_server.py"
+        )
+        candidates += sorted(glob.glob(mod_glob))
+    elif system == "Windows":
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            mod_glob = os.path.join(appdata, "FreeCAD", "*", "Mod", "AICopilot", "headless_server.py")
+            candidates += sorted(glob.glob(mod_glob))
+    else:
+        mod_glob = os.path.expanduser("~/.local/share/FreeCAD/*/Mod/AICopilot/headless_server.py")
+        candidates += sorted(glob.glob(mod_glob))
+
+    candidates += [
+        # Known addon paths (from MEMORY.md) -- legacy fallback for this dev box.
         "/Volumes/Files/claude/FreeCAD-prefs/Mod/AICopilot/headless_server.py",
         "/Volumes/Files/claude/FreeCAD-prefs/v26-3/Mod/AICopilot/headless_server.py",
         "/Volumes/Files/claude/FreeCAD-prefs/v1-2/Mod/AICopilot/headless_server.py",
