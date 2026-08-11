@@ -1800,8 +1800,15 @@ class FreeCADSocketServer:
             # Reload freecad_mcp_handler.py itself and rebind _execute_tool_inner
             # so dispatch-map changes (new tools added to generic_dispatch_map)
             # take effect without a FreeCAD restart.
-            import AICopilot.freecad_mcp_handler as _self_mod
-            new_self = _reload('AICopilot.freecad_mcp_handler', _self_mod)
+            #
+            # Imported under its bare name, not AICopilot.freecad_mcp_handler --
+            # InitGui.py appends the AICopilot directory itself to sys.path and
+            # does `from freecad_mcp_handler import ...`, so that's the name
+            # it's actually registered under in sys.modules. The AICopilot
+            # entry that does exist is just the addon's Init.py/workbench
+            # registration, not a real package containing this module.
+            import freecad_mcp_handler as _self_mod
+            new_self = _reload('freecad_mcp_handler', _self_mod)
             # Rebind all dispatch methods so routing changes take effect immediately.
             # _execute_tool_inner calls self._dispatch_view_control etc., so those
             # must be rebound too or the old routing (without new operations) runs.
