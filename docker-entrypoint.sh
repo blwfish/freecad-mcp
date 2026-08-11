@@ -2,6 +2,7 @@
 set -e
 
 SOCKET=/tmp/freecad_mcp.sock
+export FREECAD_MCP_SOCKET="$SOCKET"
 
 # Start FreeCAD headless socket server in the background
 "${FREECAD_MCP_FREECAD_BIN}" /opt/freecad-mcp/AICopilot/headless_server.py &
