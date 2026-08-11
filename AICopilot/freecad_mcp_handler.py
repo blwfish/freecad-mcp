@@ -22,8 +22,15 @@
 #                   to mcp 2.0's constructor-based handler registration. Added
 #                   recompute/contains_point bridge operations and a cached,
 #                   auditable GitHub release update check.
+# Version: 7.2.0 - macOS bridge reliability: FreeCADCmd/headless_server.py
+#                   discovery fixed for documented install locations;
+#                   screenshot capture consolidated into the bridge and
+#                   cropped to FreeCAD's window; reload_modules fixed to
+#                   import freecad_mcp_handler under its real name. Docker
+#                   image bumped to FreeCAD 1.1.3 and fixed a broken socket
+#                   wait that made every container run time out.
 
-__version__ = "7.1.0"
+__version__ = "7.2.0"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
