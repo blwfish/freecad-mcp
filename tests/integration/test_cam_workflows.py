@@ -726,7 +726,26 @@ class TestCAMToolControllerBugs:
         AICopilot/handlers/cam_ops.py. Pinning it so a future FreeCAD
         version bump that fixes it is visible (this test starting to fail
         would mean the upstream bug is gone and this test should be
-        deleted, not "fixed")."""
+        deleted, not "fixed").
+
+        Already known upstream: https://github.com/FreeCAD/FreeCAD/issues/31849
+        (filed 2026-08-16, independently confirmed here 2026-08-21 against
+        weekly-2026.08.20 — same root cause, same trigger condition: >1
+        tool controller + no GUI to prompt a choice). Fix is up as
+        https://github.com/FreeCAD/FreeCAD/pull/31863 ("CAM: Fix
+        findToolController for console mode"), milestone 26.3, open as of
+        2026-08-21 — once merged into a build we test against, this test
+        should start failing and should be DELETED at that point, not
+        patched. The issue thread also documents a workaround for real
+        (non-test) usage: create operations while the job still has only
+        its single default tool controller, then add extra controllers
+        and reassign op.ToolController per-operation afterward — that
+        ordering never hits the multi-TC code path this bug lives in.
+        Separately, the same thread reports a more severe secondary bug
+        (a Proxy-less op left behind by the crash later hangs the whole
+        FreeCAD GUI on doc.removeObject() — not confirmed to affect
+        headless/MCP use, but worth knowing if any cleanup path ever
+        calls removeObject on a failed CAM operation object)."""
         send_command("cam_tools", {
             "operation": "create_tool", "name": "Second Tool",
             "tool_type": "endmill", "diameter": 8.0,
