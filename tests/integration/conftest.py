@@ -15,6 +15,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import uuid
 
@@ -26,6 +27,61 @@ _DEFAULT_SOCKET = os.environ.get("FREECAD_MCP_SOCKET", "/tmp/freecad_mcp.sock")
 # Will be set by the session fixture — tests import this
 _active_socket_path: str | None = None
 _spawned_proc: subprocess.Popen | None = None
+_spawned_stdout_drain: "_PipeDrain | None" = None
+_spawned_stderr_drain: "_PipeDrain | None" = None
+
+
+class _PipeDrain:
+    """Continuously drain a subprocess pipe into a bounded in-memory
+    buffer, so a high-volume writer on the other end can never fill the
+    OS pipe buffer and block forever on write().
+
+    This is the actual, confirmed root cause of the 1.1-stable CI hangs
+    (see CLAUDE.md's Known Issues) -- live gdb thread dump (2026-08-21,
+    CI run 32462244329) caught a "freecadcmd" thread stuck in a raw
+    write(fd=1, ...) from Base::SequencerLauncher::next(), FreeCAD's own
+    console progress-bar output ("\\t\\t\\t(66 %)\\t\\r...") during
+    recompute(). _spawn_headless() pipes stdout/stderr
+    (stdout=subprocess.PIPE) but nothing ever read them while tests ran
+    -- only diagnose_dead_spawned_process() did, via proc.communicate(),
+    and only after the process had already died. Once cumulative
+    progress-tick output across ~250+ recomputes filled the 64KB pipe
+    buffer, that write() blocked forever: the process couldn't die (it
+    was stuck on the write, not exiting), so nothing would ever read and
+    unblock it either -- every later socket request piled up behind the
+    same permanently-stuck thread. A background reader that drains as
+    output arrives, same as subprocess.communicate() does internally via
+    select/poll, just running for the process's whole lifetime instead of
+    a one-shot call at the end.
+    """
+
+    def __init__(self, pipe, max_bytes: int = 200_000):
+        self._buf = bytearray()
+        self._max_bytes = max_bytes
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(target=self._run, args=(pipe,), daemon=True)
+        self._thread.start()
+
+    def _run(self, pipe) -> None:
+        try:
+            while True:
+                chunk = pipe.read(4096)
+                if not chunk:
+                    break
+                with self._lock:
+                    self._buf.extend(chunk)
+                    overflow = len(self._buf) - self._max_bytes
+                    if overflow > 0:
+                        del self._buf[:overflow]
+        except (OSError, ValueError):
+            pass
+
+    def text(self) -> str:
+        with self._lock:
+            return bytes(self._buf).decode("utf-8", errors="replace")
+
+    def join(self, timeout: float = 1.0) -> None:
+        self._thread.join(timeout=timeout)
 
 
 def _socket_responds(path: str, timeout: float = 2.0) -> bool:
@@ -202,19 +258,22 @@ def _spawn_headless(timeout: float = 30.0) -> tuple[subprocess.Popen, str]:
         stderr=subprocess.PIPE,
         start_new_session=True,
     )
+    # Drain immediately, not just on death -- see _PipeDrain's docstring
+    # for why an undrained pipe deadlocks the whole process eventually.
+    global _spawned_stdout_drain, _spawned_stderr_drain
+    _spawned_stdout_drain = _PipeDrain(proc.stdout)
+    _spawned_stderr_drain = _PipeDrain(proc.stderr)
 
     # Poll for readiness
     deadline = time.time() + timeout
     while time.time() < deadline:
         if proc.poll() is not None:
-            stdout = proc.stdout.read().decode("utf-8", errors="replace") if proc.stdout else ""
-            stderr = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
             raise RuntimeError(
                 f"FreeCADCmd exited prematurely with code {proc.returncode}\n"
                 f"  cmd: {cmd}\n"
                 f"  socket: {sock_path}\n"
-                f"  stdout: {stdout[:500]}\n"
-                f"  stderr: {stderr[:500]}"
+                f"  stdout: {_spawned_stdout_drain.text()[-500:]}\n"
+                f"  stderr: {_spawned_stderr_drain.text()[-500:]}"
             )
         if _socket_responds(sock_path):
             return proc, sock_path
@@ -420,16 +479,16 @@ def diagnose_dead_spawned_process() -> str:
     exit code + captured stdout/stderr if it died, or a live gdb thread
     dump if it's still running (hung rather than crashed).
 
-    Nothing else ever drains _spawned_proc's stdout/stderr pipes while
-    tests are running, so a mid-run crash (e.g. a native segfault in
-    FreeCAD/OCCT) leaves whatever it printed sitting unread in the pipe
-    buffer -- silently discarded once the test session ends. Call this
-    from a connection-failure or timeout handler to surface it instead.
+    _PipeDrain threads (started in _spawn_headless) continuously drain
+    _spawned_proc's stdout/stderr while tests run -- both because that's
+    what prevents the pipe-full deadlock (see _PipeDrain's docstring) and
+    as a side benefit, it means a mid-run crash's output is already
+    captured here rather than sitting unread in a pipe buffer. Call this
+    from a connection-failure or timeout handler to surface it.
 
-    subprocess.communicate() closes the pipes on first use, and the gdb
-    attach suspends-then-detaches the target, so both branches' results
-    are cached after the first call -- every later cascading failure in
-    the same session reuses the cached diagnostic instead of re-attaching.
+    Both branches' results are cached after the first call -- every later
+    cascading failure in the same session reuses the cached diagnostic
+    instead of re-attaching gdb or re-reading the drains.
     """
     global _death_diagnostics, _hang_diagnostics
     if _death_diagnostics is not None:
@@ -446,12 +505,12 @@ def diagnose_dead_spawned_process() -> str:
             f"{_gdb_attach_dump(proc.pid)}"
         )
         return _hang_diagnostics
-    try:
-        stdout, stderr = proc.communicate(timeout=2)
-        stdout = stdout.decode("utf-8", errors="replace") if stdout else ""
-        stderr = stderr.decode("utf-8", errors="replace") if stderr else ""
-    except Exception as e:
-        stdout, stderr = "", f"<failed to read pipes: {e}>"
+    if _spawned_stdout_drain is not None:
+        _spawned_stdout_drain.join(timeout=1.0)
+    if _spawned_stderr_drain is not None:
+        _spawned_stderr_drain.join(timeout=1.0)
+    stdout = _spawned_stdout_drain.text() if _spawned_stdout_drain else ""
+    stderr = _spawned_stderr_drain.text() if _spawned_stderr_drain else ""
     _death_diagnostics = (
         f"\nSpawned FreeCAD process died unexpectedly: returncode={proc.returncode}\n"
         f"--- stdout (from crash, if found, else tail) ---\n{_extract_relevant(stdout)}\n"
