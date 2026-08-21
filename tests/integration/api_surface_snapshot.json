@@ -229,6 +229,7 @@
     "ReferenceAxis": "App::PropertyLinkSub"
   },
   "PartDesign::SubtractiveLoft": {
+    "Profile": "App::PropertyLinkSub",
     "Sections": "App::PropertyLinkSubList"
   },
   "PartDesign::SubtractivePipe": {
@@ -251,12 +252,12 @@
       "26",
       "3",
       "0",
-      "47780 +9 (Git)",
+      "48135 +15 (Git)",
       "Unknown",
-      "2026/07/22 10:27:21",
+      "2026/08/21 00:39:22",
       "blw-fixes-v7",
-      "e66fa73e6fe62a60f7bdbe495d42eb906da2493c"
+      "d4f5f7bc5f8f58029b0f681224562efecf5e7fe9"
     ],
-    "generated_at": "2026-07-28T19:42:48.338890+00:00"
+    "generated_at": "2026-08-21T06:46:58.632601+00:00"
   }
 }

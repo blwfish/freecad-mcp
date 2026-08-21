@@ -1236,7 +1236,20 @@ class PartDesignOpsHandler(BaseHandler):
                 return "Sketches must be in a PartDesign Body"
 
             loft = body.newObject("PartDesign::SubtractiveLoft", name)
-            loft.Sections = sketch_objs
+            # PartDesign::SubtractiveLoft (like every other PartDesign
+            # additive/subtractive feature) has its own required Profile
+            # property distinct from Sections -- unlike the standalone
+            # Part::Loft this method used to be modeled after, which only
+            # has Sections. Leaving Profile unset (the bug: this used to
+            # just do `loft.Sections = sketch_objs` with every sketch,
+            # including the first) leaves the feature permanently
+            # State=Invalid with a null Shape -- confirmed live, reproduced
+            # identically even on the additive sibling PartDesign::AdditiveLoft
+            # with no subtraction involved at all, so it was never a
+            # subtraction-specific issue. Profile takes the first sketch;
+            # Sections takes the rest.
+            loft.Profile = sketch_objs[0]
+            loft.Sections = sketch_objs[1:]
 
             self.recompute(doc)
 

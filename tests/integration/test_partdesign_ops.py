@@ -1079,22 +1079,23 @@ result = None
 
 
 # ---------------------------------------------------------------------------
-# Tests: Subtractive loft — regression pin, not a fix. Confirmed live,
-# across multiple geometry variants (circular sections, rectangular
-# sections, sections flush with the pad's boundary faces, sections
-# protruding beyond them), that PartDesign::SubtractiveLoft consistently
-# fails to compute (State=Invalid, null Shape) via BOTH the real MCP
-# handler and a hand-built replica using the identical FreeCAD API calls
-# the handler itself uses. Whatever is wrong here is either a genuine
-# upstream FreeCAD limitation or something about this operation's
-# geometry requirements this investigation didn't uncover — not
-# something specific to this handler's own code (the manual replica
-# fails identically). Flagged separately for deeper investigation rather
-# than continuing to guess at geometry variants.
+# Tests: Subtractive loft — was a regression pin (State=Invalid, null
+# Shape, reproduced across every geometry variant tried, both via the real
+# handler and a hand-built replica using identical FreeCAD API calls).
+# Root cause found 2026-08-21: PartDesign::SubtractiveLoft (and its
+# additive sibling PartDesign::AdditiveLoft — confirmed the SAME failure
+# reproduces there too, standalone, with no subtraction involved at all,
+# proving this was never subtraction-specific) has its own required
+# Profile property distinct from Sections, matching every other PartDesign
+# additive/subtractive feature's convention (Pad, Pocket, Revolution, ...
+# all set .Profile). The handler used to model this after the standalone
+# Part::Loft (which has no Profile property, only Sections) and put every
+# sketch into Sections with Profile left unset — fixed to set
+# loft.Profile = sketches[0] and loft.Sections = sketches[1:].
 # ---------------------------------------------------------------------------
 
 class TestSubtractiveLoft:
-    def test_subtractive_loft_currently_fails_to_compute(self, clean_document):
+    def test_subtractive_loft_real_hollow_volume(self, clean_document):
         doc_name = clean_document
         send_command("execute_python_sync", {"code": """
 import Part, Sketcher
@@ -1136,11 +1137,16 @@ result = None
         result = send_command("partdesign_operations", {
             "operation": "subtractive_loft", "sketches": ["SLS1", "SLS2"],
         })
+        assert_op_succeeded(result, "subtractive_loft")
         text = _text(result)
-        assert "failed to compute" in text and "Invalid" in text, (
-            "If this assertion fails, subtractive_loft may now be working "
-            f"— investigate and replace this pin with a real test. Got: {text[:300]}"
-        )
+        assert "Created subtractive loft" in text, text[:300]
+
+        # Base pad: 40x40x20 box = 32000 mm^3. Tapered circular channel
+        # (R=8 at bottom to R=4 at top) removes a real, non-trivial volume.
+        props = get_shape_props(doc_name, "SubtractiveLoft")
+        assert props is not None
+        assert props["is_valid"]
+        assert 0 < props["volume"] < 32000.0
 
 
 # ---------------------------------------------------------------------------
