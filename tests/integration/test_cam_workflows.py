@@ -849,40 +849,61 @@ print(float(job.Stock.Length), float(job.Stock.Width), float(job.Stock.Height))
         text = str(result)
         assert "Setup stock" in text and "FromBase" in text, text[:300]
 
-    def test_setup_stock_unknown_type_silently_leaves_stock_unset(self, cam_document):
-        """Pins a real, current gap: setup_stock's if/elif chain only
-        handles stock_type 'CreateBox'/'FromBase' — the tool schema's own
-        enum also lists 'CreateCylinder', which matches neither branch.
-        Neither branch runs, job.Stock is never reassigned, and the
-        handler still reports success unconditionally ("Setup stock for
-        job ... using CreateCylinder") with no indication nothing
-        happened. create_job auto-seeds a default box-shaped Stock
-        (confirmed live, its own separate quirk — same auto-default shape
-        as the tool-controller bug elsewhere in this file), so "unset" is
-        the wrong check; the real observable symptom is that job.Stock
-        stays the SAME pre-existing object (Name unchanged), never
-        replaced by anything cylinder-related. Flagged separately as a
-        silent-no-op bug (Threshold-Boundary Testing Rule: unrecognized
-        enum value silently substituting a no-op), not fixed here."""
+    def test_setup_stock_create_cylinder(self, cam_document):
+        """CreateCylinder was previously unimplemented despite being in
+        the tool schema's own enum — silently left the job's
+        auto-created default Stock untouched while still reporting
+        success (fixed 2026-08-21). Confirms the real fix: a genuine
+        cylindrical Stock object gets created with the requested
+        radius/height."""
+        send_command("cam_operations", {"operation": "create_job", "base_object": "Body"})
+        result = send_command("cam_operations", {
+            "operation": "setup_stock", "job_name": "Job", "stock_type": "CreateCylinder",
+            "radius": 30, "height": 15,
+        })
+        text = str(result)
+        assert "Setup stock" in text and "CreateCylinder" in text, text[:300]
+        check = send_command("execute_python_sync", {"code": """
+job = FreeCAD.ActiveDocument.getObject('Job')
+print(float(job.Stock.Radius), float(job.Stock.Height))
+"""})
+        check_text = str(check)
+        assert "30" in check_text and "15" in check_text, check_text[:300]
+
+    def test_setup_stock_create_cylinder_radius_defaults_when_omitted(self, cam_document):
+        send_command("cam_operations", {"operation": "create_job", "base_object": "Body"})
+        result = send_command("cam_operations", {
+            "operation": "setup_stock", "job_name": "Job", "stock_type": "CreateCylinder",
+        })
+        text = str(result)
+        assert "Setup stock" in text, text[:300]
+        check = send_command("execute_python_sync", {"code": """
+job = FreeCAD.ActiveDocument.getObject('Job')
+print(float(job.Stock.Radius))
+"""})
+        assert "50" in str(check), str(check)[:300]
+
+    def test_setup_stock_unrecognized_type_errors(self, cam_document):
+        """An unrecognized stock_type must be rejected explicitly, not
+        silently leave the job's pre-existing Stock untouched while
+        still reporting success (the CreateCylinder bug's root cause,
+        generalized — fixed 2026-08-21)."""
         send_command("cam_operations", {"operation": "create_job", "base_object": "Body"})
         before = send_command("execute_python_sync", {"code": """
 job = FreeCAD.ActiveDocument.getObject('Job')
 print(job.Stock.Name)
 """})
         result = send_command("cam_operations", {
-            "operation": "setup_stock", "job_name": "Job", "stock_type": "CreateCylinder",
+            "operation": "setup_stock", "job_name": "Job", "stock_type": "CreateCone",
         })
         text = str(result)
-        assert "Setup stock" in text and "CreateCylinder" in text, (
-            "If this now mentions an error or an actual cylinder stock, "
-            f"the silent-no-op gap this test pins may be fixed. Got: {text[:300]}"
-        )
+        assert "Unknown stock_type" in text, text[:300]
         after = send_command("execute_python_sync", {"code": """
 job = FreeCAD.ActiveDocument.getObject('Job')
 print(job.Stock.Name)
 """})
         assert str(before) == str(after), (
-            f"Expected job.Stock to be untouched by the unhandled stock_type — "
+            f"Expected job.Stock to be untouched by the rejected stock_type — "
             f"before={str(before)[:200]}, after={str(after)[:200]}"
         )
 
