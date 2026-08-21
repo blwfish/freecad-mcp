@@ -45,6 +45,15 @@ def _socket_call(tool: str, args: dict, timeout: float = 10.0) -> dict:
         resp_len = struct.unpack("!I", length_bytes)[0]
         resp_bytes = _recv_exact(s, resp_len)
         return json.loads(resp_bytes.decode("utf-8"))
+    except TimeoutError as e:
+        # A recv()/sendall() timeout means the process is either still
+        # alive but hung (nothing to diagnose from stdout/stderr — it
+        # hasn't exited) or has died in a way that didn't produce a clean
+        # EOF (_recv_exact's own "Socket closed" path handles the EOF
+        # case). Either way, surface whatever diagnose_dead_spawned_process
+        # can find rather than a bare "timed out" — if the process *did*
+        # die, this is the only place left to catch it for this call shape.
+        raise TimeoutError(f"{e}{conftest.diagnose_dead_spawned_process()}") from e
     finally:
         s.close()
 
