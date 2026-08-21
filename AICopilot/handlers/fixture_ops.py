@@ -121,7 +121,15 @@ def _extract_topology(shape) -> Dict[str, Any]:
             "z": [bb.ZMin, bb.ZMax],
         },
         "center_of_mass": {"x": com.x, "y": com.y, "z": com.z},
-        "is_solid": bool(shape.isSolid()),
+        # shape.isSolid() was removed from FreeCAD's Part.Shape/Part.Solid
+        # Python API somewhere before weekly-2026.08.20 (confirmed live:
+        # AttributeError on every shape type, including a freshly-created
+        # Part::Box's own .Shape — not a one-off, isValid()/isClosed() on
+        # the same object still work fine). bool(shape.Solids) is a
+        # faithful replacement: a real solid's own .Solids traversal
+        # includes itself (len 1+), while a bare Face/open Shell's is
+        # empty — confirmed live against both cases.
+        "is_solid": bool(shape.Solids),
         "is_closed": bool(shape.isClosed()),
     }
 
@@ -135,9 +143,15 @@ def _write_binary_stl(shape, path: str) -> None:
     Raises on failure so the caller can surface the error to the MCP client.
     """
     import Mesh
-    mesh = Mesh.Mesh()
-    verts, tris = shape.tessellate(0.1)
-    mesh.addMesh(verts, tris)
+    # Mesh.Mesh.addMesh(verts, tris) was removed from FreeCAD's Python API
+    # somewhere before weekly-2026.08.20 (confirmed live: TypeError,
+    # "function takes exactly 1 argument (2 given)" — addMesh is now for
+    # combining two existing Mesh objects, not constructing from raw
+    # points/facets). The Mesh.Mesh(points_and_facets) tuple constructor
+    # still accepts tessellate()'s return value directly and is the
+    # documented modern replacement — confirmed live producing the correct
+    # facet count (12 for a 6-face box).
+    mesh = Mesh.Mesh(shape.tessellate(0.1))
     mesh.write(path)
 
 
@@ -147,7 +161,6 @@ def _write_stl_via_export(shape, path: str) -> None:
     MeshPart.meshFromShape produces better tessellations than the bare
     Mesh.Mesh approach for complex OCCT geometry (dormers, lofts, etc.).
     """
-    import Mesh
     import MeshPart
     mesh = MeshPart.meshFromShape(
         Shape=shape,
@@ -155,7 +168,13 @@ def _write_stl_via_export(shape, path: str) -> None:
         AngularDeflection=0.5,
         Relative=False,
     )
-    Mesh.export([mesh], path)
+    # Mesh.export([mesh], path) was the old call here -- confirmed live it
+    # now raises "TypeError: None of the objects can be exported to a mesh
+    # file": Mesh.export() expects real document objects, not the bare
+    # Mesh.MeshObject meshFromShape returns. That object has its own
+    # write() method, confirmed live to produce a valid non-empty STL file
+    # directly -- no export() wrapper needed.
+    mesh.write(path)
 
 
 def _export_stl(shape, path: str) -> None:
