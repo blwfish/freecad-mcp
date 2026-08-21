@@ -246,6 +246,27 @@ class TestFilletEdges(unittest.TestCase):
         self.assertEqual(fillet.Edges, [(1, 1.5, 1.5), (2, 1.5, 1.5), (3, 1.5, 1.5)])
         assert_success_contains(self, result, "3 edges", "1.5")
 
+    def test_explicit_edges_rejects_out_of_range_index_when_no_body(self):
+        """Out-of-range indices used to be silently dropped here (edge_list
+        built via `if 1 <= idx <= n_edges`), creating a fillet on fewer
+        edges than requested with no indication any were skipped -- the
+        Body path has no such filter at all, so it fails loudly via
+        _check_feature_state instead. Fixed 2026-08-21 to reject up front
+        here too, matching that same fail-loud contract, instead of
+        silently under-filleting."""
+        box = make_box_object("B")  # default 12 edges
+        doc = make_mock_doc([box])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.fillet_edges({
+            'object_name': 'B', 'radius': 1.5, 'edges': [1, 99],
+        })
+
+        assert_error_contains(self, result, "99", "valid range")
+        # No object should have been created at all -- validated before
+        # doc.addObject(), not after a partial fillet already exists.
+        doc.addObject.assert_not_called()
+
     def test_explicit_edges_creates_partdesign_fillet_in_body(self):
         """Object inside a Body gets a PartDesign::Fillet."""
         box = make_box_object("B")
