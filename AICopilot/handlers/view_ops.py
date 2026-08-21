@@ -446,7 +446,19 @@ class ViewOpsHandler(BaseHandler):
             return f"Error in recompute: {e}"
 
     def undo(self, args: Dict[str, Any]) -> str:
-        """Undo the last operation."""
+        """Undo the last operation.
+
+        KNOWN LIMITATION: this is effectively a no-op for MCP-driven changes.
+        doc.undo()/doc.redo() only replay FreeCAD *transactions*, and nothing
+        in the dispatch path (_call_on_gui_thread_async / _dispatch_to_handler
+        in freecad_mcp_handler.py) ever opens one around a handler call — that
+        only happens automatically for real GUI-driven edits. So this reports
+        "Undo completed" whether or not anything was actually undone. See
+        CLAUDE.md's Known Issues for why this isn't a small fix (transaction
+        boundaries would need to be added at the dispatch chokepoint(s), with
+        a read/write classification per operation to avoid polluting the
+        undo stack with empty transactions for read-only calls).
+        """
         try:
             doc = FreeCAD.ActiveDocument
             if not doc:
@@ -457,7 +469,7 @@ class ViewOpsHandler(BaseHandler):
             return f"Error during undo: {e}"
 
     def redo(self, args: Dict[str, Any]) -> str:
-        """Redo the last undone operation."""
+        """Redo the last undone operation. See undo()'s docstring — same limitation."""
         try:
             doc = FreeCAD.ActiveDocument
             if not doc:
