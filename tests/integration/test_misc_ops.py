@@ -20,6 +20,16 @@ test in this suite already uses via send_command's helper) before ever
 reaching the FreeCAD-side handler this tier talks to. Testing the
 MCP-facing translation belongs at the MCP-protocol test layer
 (tests/unit/test_mcp_protocol.py), not here.
+
+run_inspector and build_sketch both import from the FC-tools sibling repo
+(hardcoded fallback path /Volumes/Files/claude/FC-tools; see
+AICopilot/handlers/inspector_ops.py and sketch_builder_ops.py) rather than
+anything inside this repo. That repo exists on the dev machine but is not
+checked out in CI, so any test that exercises the real (FC-tools-backed)
+behavior of these two tools is marked `@pytest.mark.fc_tools` and excluded
+from the CI run (see .github/workflows/integration-tests.yml's pytest_args).
+Only build_sketch's pure-validation error path (layout not a dict, checked
+before FC-tools is ever imported) is CI-safe and left unmarked.
 """
 
 import json
@@ -210,6 +220,7 @@ class TestVerifyTopology:
 
 
 class TestRunInspector:
+    @pytest.mark.fc_tools
     def test_model_only_check_on_valid_box(self, clean_document):
         send_command("part_operations", {
             "operation": "box", "length": 10, "width": 10, "height": 10, "name": "InspBox",
@@ -224,6 +235,7 @@ class TestRunInspector:
 
 
 class TestBuildSketch:
+    @pytest.mark.fc_tools
     def test_empty_layout_with_spreadsheet(self, clean_document):
         send_command("execute_python_sync", {"code": """
 FreeCAD.ActiveDocument.addObject('Spreadsheet::Sheet', 'Spreadsheet')
@@ -234,6 +246,7 @@ FreeCAD.ActiveDocument.recompute()
         assert parsed["ok"] is True, parsed
         assert parsed["geo"] == 0
 
+    @pytest.mark.fc_tools
     def test_missing_spreadsheet_errors(self, clean_document):
         result = send_command("build_sketch", {"layout": {"elements": []}})
         parsed = _parsed(result)
