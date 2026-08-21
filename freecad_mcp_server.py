@@ -1255,9 +1255,10 @@ async def main():
                     "base_object": {"type": "string", "description": "Base 3D object for CAM operations"},
                     # Stock parameters
                     "stock_type": {"type": "string", "description": "Stock type (default CreateBox)", "enum": ["CreateBox", "CreateCylinder", "FromBase"]},
-                    "length": {"type": "number", "description": "Stock length", "default": 100},
-                    "width": {"type": "number", "description": "Stock width", "default": 100},
-                    "height": {"type": "number", "description": "Stock height", "default": 50},
+                    "length": {"type": "number", "description": "Stock length (CreateBox)", "default": 100},
+                    "width": {"type": "number", "description": "Stock width (CreateBox)", "default": 100},
+                    "height": {"type": "number", "description": "Stock height (CreateBox/CreateCylinder)", "default": 50},
+                    "radius": {"type": "number", "description": "Stock radius, mm (CreateCylinder; default 50)"},
                     "extent_x": {"type": "number", "description": "Stock extent in X", "default": 10},
                     "extent_y": {"type": "number", "description": "Stock extent in Y", "default": 10},
                     "extent_z": {"type": "number", "description": "Stock extent in Z", "default": 10},

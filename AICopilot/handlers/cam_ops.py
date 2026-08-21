@@ -111,7 +111,7 @@ class CAMOpsHandler(BaseHandler):
         start_time = time.time()
         try:
             # FreeCAD 1.0+ uses new module structure
-            from Path.Main.Stock import CreateBox, CreateFromBase
+            from Path.Main.Stock import CreateBox, CreateCylinder, CreateFromBase
 
             doc = self.get_document()
             if not doc:
@@ -135,6 +135,10 @@ class CAMOpsHandler(BaseHandler):
                 job.Stock.Length = length
                 job.Stock.Width = width
                 job.Stock.Height = height
+            elif stock_type == 'CreateCylinder':
+                job.Stock = CreateCylinder(job)
+                job.Stock.Radius = args.get('radius', 50)
+                job.Stock.Height = height
             elif stock_type == 'FromBase':
                 job.Stock = CreateFromBase(job)
                 extent_x = args.get('extent_x', 10)
@@ -146,6 +150,20 @@ class CAMOpsHandler(BaseHandler):
                 job.Stock.ExtYpos = extent_y
                 job.Stock.ExtZneg = 0
                 job.Stock.ExtZpos = extent_z
+            else:
+                # Previously fell through silently here: none of the
+                # branches matched, job.Stock was left untouched (still
+                # whatever create_job auto-seeded), and this still
+                # returned a success message naming the unrecognized
+                # stock_type with no indication nothing happened
+                # (confirmed live, 2026-08-21 — pinned in
+                # tests/integration/test_cam_workflows.py::TestSetupStock
+                # before this fix). Reject explicitly instead.
+                error = Exception(
+                    f"Unknown stock_type: {stock_type!r}. Must be one of: "
+                    f"CreateBox, CreateCylinder, FromBase"
+                )
+                return self.log_and_return("setup_stock", args, error=error, duration=time.time() - start_time)
 
             job.recompute()
             result = f"Setup stock for job '{job_name}' using {stock_type}"
