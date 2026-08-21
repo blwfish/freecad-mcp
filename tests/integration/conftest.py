@@ -326,9 +326,44 @@ def _extract_relevant(text: str, max_chars: int = 30000) -> str:
     return text[-max_chars:]
 
 
-def _gdb_attach_dump(pid: int, run_timeout: int = 25) -> str:
-    """Attach gdb to a live (presumably hung) process and dump every
-    thread's backtrace, then detach without killing it.
+def _find_descendant_pids(root_pid: int) -> list[int]:
+    """Return every live descendant of root_pid, via /proc/<pid>/task/<pid>/children.
+
+    The Popen'd process is the AppImage wrapper script (freecadcmd-wrapper.sh
+    -> AppRun), NOT the real FreeCAD binary -- confirmed live (2026-08-21):
+    a first version of this tool that only attached to root_pid dumped a
+    thread named "AppRun" sitting in a completely ordinary bash wait4()
+    for its child (wait_for/execute_command/reader_loop -- bash's own
+    interpreter loop, ../sysdeps wait4.c), telling us nothing about the
+    real hang. AppRun forks and waits rather than exec'ing into the real
+    binary (if it exec'd, it would keep the same pid and this walk would
+    be unnecessary) -- so the process actually holding whatever lock is
+    deadlocked lives one or more fork() hops below root_pid. Returns [] on
+    any /proc access failure (e.g. not Linux) rather than raising --
+    caller falls back to dumping root_pid alone in that case.
+    """
+    descendants: list[int] = []
+    frontier = [root_pid]
+    seen = {root_pid}
+    while frontier:
+        pid = frontier.pop()
+        try:
+            with open(f"/proc/{pid}/task/{pid}/children") as f:
+                children = [int(p) for p in f.read().split()]
+        except (OSError, ValueError):
+            continue
+        for child in children:
+            if child not in seen:
+                seen.add(child)
+                descendants.append(child)
+                frontier.append(child)
+    return descendants
+
+
+def _gdb_attach_dump(root_pid: int, run_timeout: int = 25) -> str:
+    """Attach gdb to a live (presumably hung) process tree and dump every
+    thread's backtrace from every descendant, then detach without killing
+    any of them.
 
     This is deliberately reactive -- attach only once a real timeout has
     already happened -- not the whole-session gdb-wrap the CAM SIGSEGV
@@ -342,6 +377,11 @@ def _gdb_attach_dump(pid: int, run_timeout: int = 25) -> str:
     lesson that dumping locals across many/deep-stacked threads can itself
     run long; if this needs revisiting, check that comment first.
 
+    root_pid itself is the AppImage wrapper, not the real binary (see
+    _find_descendant_pids) -- dump every live descendant too, since we
+    don't know in advance how many fork hops separate the wrapper from
+    the real FreeCAD process, or whether more than one of them matters.
+
     Best-effort and silent on any failure (gdb missing, ptrace denied,
     sudo not configured passwordless) -- this only ever runs after a test
     has already failed, so it must never raise or itself hang the run.
@@ -351,24 +391,28 @@ def _gdb_attach_dump(pid: int, run_timeout: int = 25) -> str:
     """
     if not shutil.which("gdb"):
         return "(gdb not available -- skipping live thread dump)"
-    cmd = [
-        "timeout", "-s", "KILL", str(run_timeout),
-        "sudo", "-n", "gdb", "-p", str(pid), "-batch",
-        "-ex", "echo \\n===GDB-ATTACHED===\\n",
-        "-ex", "thread apply all bt",
-        "-ex", "detach",
-        "-ex", "quit",
-    ]
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=run_timeout + 5,
-        )
-        return (
-            f"--- gdb live thread dump (pid={pid}, rc={result.returncode}) ---\n"
-            f"{result.stdout}\n{result.stderr}"
-        )
-    except Exception as e:
-        return f"(gdb attach to pid={pid} failed: {e})"
+    targets = [root_pid] + _find_descendant_pids(root_pid)
+    chunks = []
+    for pid in targets:
+        cmd = [
+            "timeout", "-s", "KILL", str(run_timeout),
+            "sudo", "-n", "gdb", "-p", str(pid), "-batch",
+            "-ex", "echo \\n===GDB-ATTACHED===\\n",
+            "-ex", "thread apply all bt",
+            "-ex", "detach",
+            "-ex", "quit",
+        ]
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=run_timeout + 5,
+            )
+            chunks.append(
+                f"--- gdb live thread dump (pid={pid}, rc={result.returncode}) ---\n"
+                f"{result.stdout}\n{result.stderr}"
+            )
+        except Exception as e:
+            chunks.append(f"(gdb attach to pid={pid} failed: {e})")
+    return "\n".join(chunks)
 
 
 def diagnose_dead_spawned_process() -> str:
