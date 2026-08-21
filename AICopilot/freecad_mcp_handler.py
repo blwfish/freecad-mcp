@@ -1387,7 +1387,7 @@ class FreeCADSocketServer:
             "chamfer_edges": self.partdesign_ops.chamfer_edges,
             "draft_faces": self.partdesign_ops.draft_faces,
             "shell_solid": self.partdesign_ops.shell_solid,
-            "thickness_faces": self.partdesign_ops.thickness_faces,
+            "thickness_faces": self.partdesign_ops.add_thickness,
         }
         method = resume_methods.get(resume_tool)
         if method is None:
@@ -1829,6 +1829,7 @@ class FreeCADSocketServer:
                 '_call_on_gui_thread_reload',
                 '_reload_handlers',   # rebind self so future reloads use latest code
                 '_instantiate_handlers',
+                '_continue_selection',
             ]
             for method_name in _dispatch_methods:
                 new_fn = getattr(new_self.FreeCADSocketServer, method_name, None)
