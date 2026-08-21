@@ -1195,6 +1195,14 @@ class TestSubtractiveLoft(unittest.TestCase):
         assert_error_contains(self, result, "partdesign body")
 
     def test_creates_subtractive_loft_in_body(self):
+        """PartDesign::SubtractiveLoft has its own required Profile
+        property distinct from Sections (like every other PartDesign
+        additive/subtractive feature) -- unlike the standalone Part::Loft
+        this method used to be modeled after. Profile must get the first
+        sketch and Sections only the rest; putting every sketch
+        (including the first) into Sections with Profile left unset
+        left the feature permanently State=Invalid with a null Shape
+        (confirmed live 2026-08-21, fixed same day)."""
         s1 = make_sketch("S1")
         s2 = make_sketch("S2")
         body = make_body("Body", group=[s1, s2])
@@ -1205,8 +1213,23 @@ class TestSubtractiveLoft(unittest.TestCase):
 
         body.newObject.assert_called_with("PartDesign::SubtractiveLoft", "SubtractiveLoft")
         loft = body.newObject.return_value
-        self.assertEqual(list(loft.Sections), [s1, s2])
+        self.assertEqual(loft.Profile, s1)
+        self.assertEqual(list(loft.Sections), [s2])
         assert_success_contains(self, result, "2 profiles")
+
+    def test_three_sketches_first_is_profile_rest_are_sections(self):
+        s1 = make_sketch("S1")
+        s2 = make_sketch("S2")
+        s3 = make_sketch("S3")
+        body = make_body("Body", group=[s1, s2, s3])
+        doc = make_mock_doc([body, s1, s2, s3])
+        mock_FreeCAD.ActiveDocument = doc
+
+        self.handler.subtractive_loft({'sketches': ['S1', 'S2', 'S3']})
+
+        loft = body.newObject.return_value
+        self.assertEqual(loft.Profile, s1)
+        self.assertEqual(list(loft.Sections), [s2, s3])
 
     def test_invalid_state_errors_instead_of_false_success(self):
         s1 = make_sketch("S1")
