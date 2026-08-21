@@ -25,6 +25,14 @@ sys.path.insert(0, AICOPILOT_DIR)
 # of each test that uses it.
 import freecad_health
 
+# Likewise grab the real PartDesignOpsHandler class now, before mock_handlers
+# replaces sys.modules["handlers"] with a plain (non-package) module of
+# MagicMocks — TestContinueSelectionDispatch needs the actual class to check
+# a resume-route method name really exists, not a MagicMock that
+# auto-vivifies any attribute you ask for.
+import tests.unit._freecad_mocks  # noqa: F401 — installs FreeCAD/Part/etc. mocks into sys.modules
+from handlers.partdesign_ops import PartDesignOpsHandler
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1926,11 +1934,33 @@ class TestContinueSelectionDispatch:
         """Every method that calls selector.request_selection() must be
         resumable — a sixth interactive-selection method added later without
         a matching resume_methods entry would silently dead-letter its
-        continuation, same as continue_selection did before this fix."""
-        for tool_name in (
-            "fillet_edges", "chamfer_edges", "draft_faces",
-            "shell_solid", "thickness_faces",
-        ):
+        continuation, same as continue_selection did before this fix.
+
+        `server.partdesign_ops` is a MagicMock (see mock_handlers fixture),
+        so `getattr(server.partdesign_ops, tool_name)` auto-vivifies rather
+        than raising — comparing two auto-vivified attributes of the same
+        name is trivially true regardless of whether that name is a real
+        method on the actual class. That let resume_methods map
+        "thickness_faces" to a nonexistent `PartDesignOpsHandler.thickness_faces`
+        (real method is `add_thickness`) for a month undetected — every
+        continue_selection call raised AttributeError building the dict,
+        breaking fillet/chamfer/draft/shell too, not just thickness (fixed
+        2026-08-20). Assert against the REAL class's methods, not the mock,
+        so a wrong attribute name fails here instead of only in a live
+        FreeCAD session."""
+        tool_to_real_method = {
+            "fillet_edges": "fillet_edges",
+            "chamfer_edges": "chamfer_edges",
+            "draft_faces": "draft_faces",
+            "shell_solid": "shell_solid",
+            "thickness_faces": "add_thickness",
+        }
+        for tool_name, real_method_name in tool_to_real_method.items():
+            assert hasattr(PartDesignOpsHandler, real_method_name), (
+                f"resume_methods maps tool '{tool_name}' to "
+                f"PartDesignOpsHandler.{real_method_name}, which doesn't exist"
+            )
+
             server.selector.pending_operations["op_x"] = {
                 "tool": tool_name, "type": "edges", "object": "Box", "timestamp": 0.0,
             }
@@ -1939,7 +1969,7 @@ class TestContinueSelectionDispatch:
             )
             server._execute_tool_inner("continue_selection", {"operation_id": "op_x"})
             method = server._call_on_gui_thread_async.call_args[0][0]
-            assert method == getattr(server.partdesign_ops, tool_name)
+            assert method == getattr(server.partdesign_ops, real_method_name)
 
 
 # ---------------------------------------------------------------------------
