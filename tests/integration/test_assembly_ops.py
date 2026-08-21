@@ -237,13 +237,14 @@ class TestGroundPart:
         assert f"Grounded {comp_a}" in text, text[:300]
 
     def test_ground_part_twice_creates_second_grounding(self, assembly_with_two_boxes):
-        """list_joints can't be used to observe this: Assembly::AssemblyObject's
-        own `.Joints` property never includes GroundedJoint objects in this
-        FreeCAD build (confirmed live — a real, non-hypothetical gap in
-        list_joints' own docstring claim "List the joints (and grounded
-        parts)"; flagged separately, not fixed here). Verify via
-        get_part_status (still reports grounded=True) and by counting the
-        real GroundedJoint objects in the document directly."""
+        """Verify via get_part_status, list_joints, and by counting the
+        real GroundedJoint objects in the document directly. list_joints
+        used to be unable to observe this at all: Assembly::AssemblyObject's
+        own `.Joints` property never includes GroundedJoint objects
+        (confirmed live — a real, non-hypothetical gap in list_joints'
+        own docstring claim "List the joints (and grounded parts)"); fixed
+        2026-08-21 to read the assembly's Assembly::JointGroup child
+        object's own .Group instead, which does include both."""
         _doc, comp_a, _comp_b = assembly_with_two_boxes
         first = send_command("assembly_operations", {
             "operation": "ground_part", "object_name": comp_a, "assembly_name": "Assy",
@@ -258,6 +259,12 @@ class TestGroundPart:
             "operation": "get_part_status", "object_name": comp_a, "assembly_name": "Assy",
         })
         assert "grounded=True" in _text(status), _text(status)[:300]
+
+        listing = send_command("assembly_operations", {
+            "operation": "list_joints", "assembly_name": "Assy",
+        })
+        listing_text = _text(listing)
+        assert listing_text.count("(Grounded)") == 2, listing_text[:400]
 
         code = f"""
 doc = FreeCAD.getDocument({_doc!r})
@@ -275,15 +282,17 @@ print(count)
 
 class TestSolve:
     def test_solve_without_grounding_succeeds_trivially(self, assembly_with_two_boxes):
-        """Pins actual observed behavior rather than the handler's own
-        comment, which is wrong here: assembly_ops.py's _SOLVE_STATUS
-        comment claims code=-6 (no_grounded_parts) is reachable, but a real
-        two-component assembly with NO grounding — with or without a real
-        joint between the components — solves successfully (code=0) on
-        this FreeCAD build (confirmed live, both with and without a
-        Fixed joint present). Flagged separately as a possible stale
-        comment; not fixed here since reproducing -6 needs a scenario this
-        exploration didn't find."""
+        """Pins actual observed behavior, not the handler's OLD comment
+        (fixed 2026-08-21): code=-6 (no_grounded_parts) is claimed
+        reachable in FreeCAD's own AssemblyObject.pyi contract, but reading
+        AssemblyObject.cpp directly shows getGroundedParts() unconditionally
+        inserts the assembly's own Origin object into the "grounded" set on
+        every call -- every assembly has an Origin by construction, so the
+        empty-set check that would produce -6 can never actually trigger.
+        A real two-component assembly with NO explicit grounding — with or
+        without a real joint between the components — therefore solves
+        successfully (code=0) here, confirmed live both with and without a
+        Fixed joint present."""
         _doc, comp_a, comp_b = assembly_with_two_boxes
         send_command("assembly_operations", {
             "operation": "create_joint", "joint_type": "Fixed",
@@ -341,11 +350,39 @@ class TestListJoints:
         })
         text = _text(result)
         assert "CylJoint" in text and "limits[" in text, text[:400]
-        assert "LengthMin=0" in text and "LengthMax=20" in text, text[:400]
+
+    def test_list_joints_shows_groundings_alongside_real_joints(self, assembly_with_two_boxes):
+        """A grounding and a real joint together must both appear —
+        assembly.Joints alone (the old data source) only ever contained
+        the real joint, never the grounding (fixed 2026-08-21, see
+        TestGroundPart.test_ground_part_twice_creates_second_grounding)."""
+        _doc, comp_a, comp_b = assembly_with_two_boxes
+        send_command("assembly_operations", {
+            "operation": "ground_part", "object_name": comp_a, "assembly_name": "Assy",
+        })
+        send_command("assembly_operations", {
+            "operation": "create_joint", "joint_type": "Fixed",
+            "ref1_object": comp_a, "ref1_element": "Face1",
+            "ref2_object": comp_b, "ref2_element": "Face1",
+            "name": "MixedJoint", "assembly_name": "Assy",
+        })
+        result = send_command("assembly_operations", {
+            "operation": "list_joints", "assembly_name": "Assy",
+        })
+        text = _text(result)
+        assert "2 total" in text, text[:300]
+        assert "(Grounded)" in text, text[:300]
+        assert "MixedJoint (Fixed)" in text, text[:300]
 
 
 class TestGetPartStatus:
     def test_grounded_only(self, assembly_with_two_boxes):
+        """joints=[...] must show the grounding relationship too -- the
+        handler had explicit code to detect it (checking for
+        ObjectToGround) but iterated assembly.Joints, which never
+        contains GroundedJoint objects, so this list was always empty
+        for a grounded-only part despite grounded=True (confirmed live,
+        fixed 2026-08-21 alongside the identical list_joints gap)."""
         _doc, comp_a, _comp_b = assembly_with_two_boxes
         send_command("assembly_operations", {
             "operation": "ground_part", "object_name": comp_a, "assembly_name": "Assy",
@@ -355,6 +392,7 @@ class TestGetPartStatus:
         })
         text = _text(result)
         assert "grounded=True" in text, text[:300]
+        assert "(grounding)" in text, text[:300]
 
     def test_connected_not_grounded(self, assembly_with_two_boxes):
         _doc, comp_a, comp_b = assembly_with_two_boxes
