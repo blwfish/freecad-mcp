@@ -29,7 +29,7 @@ if __package__ in (None, ""):
     __package__ = "tests.integration"
 
 from . import conftest
-from ._api_surface_remote import build_remote_scan_code
+from ._api_surface_remote import build_remote_scan_code, parse_remote_scan_result
 from ._api_surface_scan import scan_type_properties
 from .test_e2e_workflows import send_command
 
@@ -60,7 +60,7 @@ def generate_snapshot() -> dict:
         raise RuntimeError(f"execute_python failed while scanning API surface: {resp}")
     result_str = resp.get("result", "")
     try:
-        return json.loads(result_str)
+        return parse_remote_scan_result(result_str)
     except json.JSONDecodeError as e:
         raise RuntimeError(
             f"Expected the remote scan to print exactly one JSON line; "

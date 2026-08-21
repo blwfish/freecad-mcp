@@ -5,7 +5,9 @@
 import ast
 import io
 import json
+import os
 import sys
+import threading
 import traceback as tb_module
 from typing import Any, Dict
 
@@ -29,6 +31,84 @@ class ExecutePythonOpsHandler(BaseHandler):
         # Persistent namespace for execute_python calls.
         # Variables created in one call survive to the next.
         self._python_namespace: Dict[str, Any] = {}
+
+    def _capture_console_stderr_start(self):
+        """Redirect the real OS-level stderr fd to a pipe with a background
+        drain thread, so FreeCAD's own C++ Console output (PrintWarning,
+        PrintError, PrintLog, PrintCritical -- and warnings FreeCAD emits
+        internally as a side effect of property sets/recomputes, e.g.
+        deprecation notices) gets captured instead of vanishing silently.
+
+        Confirmed via FreeCAD's own source (FC-clone/src/Base/
+        ConsoleObserver.cpp): ConsoleObserverStd::Warning/Error/Log/Critical
+        write via raw fprintf(stderr, ...) at the C level, below Python's
+        sys.stdout/sys.stderr -- redirecting those (as run_code already does
+        for stdout) never sees it. ConsoleObserverStd is unconditionally
+        attached with LoggingConsole="1" in both MainCmd.cpp (headless) and
+        MainGui.cpp (GUI), confirmed in the same source tree, so this works
+        in both modes. (Console.Message()/plain Msg-level output goes to
+        stdout instead, along with FreeCAD's recompute() progress-bar spam
+        -- deliberately NOT captured here, to avoid returning tick-spam
+        noise in the response; only stderr, i.e. actually-actionable
+        Warning/Error/Log/Critical output, is worth surfacing.)
+
+        A background drain thread (not a one-shot read at the end) avoids
+        the exact pipe-full deadlock class fixed in tests/integration/
+        conftest.py's _PipeDrain for the same underlying reason (an
+        unbounded fprintf into an unread OS pipe blocks forever once the
+        64KB buffer fills) -- unlikely here since stderr should be low-
+        volume, but the mechanism is identical so the same guard applies.
+
+        Returns a state dict for _capture_console_stderr_stop, or None if
+        redirection failed for any reason -- must never block or break
+        code execution just because this diagnostic capture couldn't be
+        set up.
+        """
+        try:
+            read_fd, write_fd = os.pipe()
+            saved_fd = os.dup(2)
+            os.dup2(write_fd, 2)
+            os.close(write_fd)
+        except OSError:
+            return None
+        buf = bytearray()
+        lock = threading.Lock()
+
+        def _drain():
+            try:
+                while True:
+                    chunk = os.read(read_fd, 4096)
+                    if not chunk:
+                        break
+                    with lock:
+                        buf.extend(chunk)
+            except OSError:
+                pass
+
+        thread = threading.Thread(target=_drain, daemon=True)
+        thread.start()
+        return {"read_fd": read_fd, "saved_fd": saved_fd, "buf": buf, "lock": lock, "thread": thread}
+
+    def _capture_console_stderr_stop(self, state) -> str:
+        """Restore the real stderr fd and return whatever was captured."""
+        if state is None:
+            return ""
+        try:
+            # Closes the pipe's write end (fd 2 was its only remaining
+            # reference -- the original write_fd number was already closed
+            # in _capture_console_stderr_start), which lets the drain
+            # thread's os.read() see EOF and exit.
+            os.dup2(state["saved_fd"], 2)
+            os.close(state["saved_fd"])
+        except OSError:
+            pass
+        state["thread"].join(timeout=1.0)
+        try:
+            os.close(state["read_fd"])
+        except OSError:
+            pass
+        with state["lock"]:
+            return bytes(state["buf"]).decode("utf-8", errors="replace").strip()
 
     def run_code(self, code: str) -> dict:
         """Core Python execution: runs code on the GUI thread, captures stdout.
@@ -72,6 +152,7 @@ class ExecutePythonOpsHandler(BaseHandler):
         result_value = None
         old_stdout = sys.stdout
         sys.stdout = captured = io.StringIO()
+        console_stderr_state = self._capture_console_stderr_start()
         try:
             try:
                 tree = ast.parse(code)
@@ -95,11 +176,14 @@ class ExecutePythonOpsHandler(BaseHandler):
             return {"error": f"Python execution error: {e}", "error_id": self.server.diagnostics_ops.store_traceback(tb_module.format_exc())}
         finally:
             sys.stdout = old_stdout
+            console_stderr = self._capture_console_stderr_stop(console_stderr_state)
 
         stdout_output = captured.getvalue().rstrip("\n")
         parts = []
         if stdout_output:
             parts.append(stdout_output)
+        if console_stderr:
+            parts.append(f"[FreeCAD Console]\n{console_stderr}")
         if result_value is not None:
             parts.append(repr(result_value))
 
