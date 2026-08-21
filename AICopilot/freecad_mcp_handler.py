@@ -29,8 +29,19 @@
 #                   import freecad_mcp_handler under its real name. Docker
 #                   image bumped to FreeCAD 1.1.3 and fixed a broken socket
 #                   wait that made every container run time out.
+# Version: 7.3.0 - execute_python() now surfaces FreeCAD Console warnings/
+#                   errors (issue #49), not just Python stdout. CAM
+#                   setup_stock CreateCylinder implemented; hole_wizard
+#                   infers hole_type from operation; fillet's non-Body path
+#                   now rejects out-of-range edges instead of silently
+#                   dropping them; subtractive_loft and list_joints/
+#                   get_part_status grounding visibility fixed. Broad
+#                   integration test coverage expansion (assembly, fixture,
+#                   continue_selection, and other previously-uncovered
+#                   tools); fixed a real pipe-full deadlock in the CI test
+#                   harness itself.
 
-__version__ = "7.2.0"
+__version__ = "7.3.0"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
