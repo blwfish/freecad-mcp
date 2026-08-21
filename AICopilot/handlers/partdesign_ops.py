@@ -455,7 +455,20 @@ class PartDesignOpsHandler(BaseHandler):
         """
         try:
             object_name = args.get('object_name', '')
-            hole_type = args.get('hole_type', 'simple')
+            # hole/counterbore/countersink all dispatch here as the same
+            # method (freecad_mcp_handler.py's operation_map) -- hole_type
+            # used to default to 'simple' whenever the caller didn't pass
+            # it explicitly, silently ignoring which of the three
+            # operations was actually called (confirmed live 2026-08-21:
+            # operation="counterbore" with no hole_type created a plain
+            # hole). args['operation'] is the original dispatched
+            # operation name, still present in this same args dict --
+            # infer hole_type from it when not given explicitly, so the
+            # operation name itself is authoritative instead of a
+            # same-value-for-all-three default.
+            hole_type = args.get('hole_type') or {
+                'counterbore': 'counterbore', 'countersink': 'countersink',
+            }.get(args.get('operation', ''), 'simple')
             diameter = args.get('diameter', 6)
             depth = args.get('depth', 10)
             x = args.get('x', 0)
