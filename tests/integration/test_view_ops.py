@@ -8,12 +8,35 @@ the queue serialization and Qt-task drain can only be exercised end-to-
 end. Unit tests with mocks cover the handler logic in test_document_ops.py;
 this file complements them with a real-FreeCAD round-trip.
 
+Also covers: delete_object, undo, redo, recompute (real headless-testable
+behavior — pure App-layer, no FreeCADGui touch); select_object,
+clear_selection, get_selection (success-but-silent-no-op headless —
+UniversalSelector's own methods check `if FreeCADGui:` and no-op when it's
+None, so these return a success string without any real 3D-view effect;
+still worth testing the returned string and the not-found error path);
+save_document (via view_control, dispatches to document_ops).
+
 Not covered here:
   * Clip planes (add_clip_plane / remove_clip_plane) — they touch Coin3D
     via pivy and we have no headless way to verify the visual effect.
+    (add_clip_plane/remove_clip_plane do have a clean, deliberate headless
+    guard — "Clip plane not available in headless mode" — rather than an
+    exception, unlike the 8 ops below, but still produce no observable
+    visual effect to assert on here.)
   * Screenshot — covered by test_view_ops_screenshot.py at the unit level
     (the macOS subprocess path is the gnarly part and doesn't benefit
     from headless integration coverage).
+  * set_view, fit_all, zoom_in, zoom_out, hide_object, show_object,
+    activate_workbench, get_report_view — all eight read FreeCADGui
+    directly (FreeCADGui.ActiveDocument, .Selection, .activateWorkbench,
+    .getMainWindow) with no headless guard, so every one of them raises
+    an AttributeError-derived string headless every time, regardless of
+    document/object state. The only legitimate integration assertion for
+    these would be "returns an error string, doesn't crash the socket" —
+    a much thinner test than the real-behavior ones above, and one that
+    can't observe whether the *intended* GUI-mode behavior still works.
+    Deliberately out of scope for this tier (candidates for a Phase 3
+    GUI-mode-only suite if ever wanted).
 """
 
 import json
@@ -212,3 +235,176 @@ class TestInsertShape:
         text = _text(result)
         assert "not found" in text.lower(), \
             f"Expected object-not-found error: {text[:300]}"
+
+
+# ---------------------------------------------------------------------------
+# delete_object / undo / redo / recompute — real, headless-testable
+# behavior, pure App layer.
+# ---------------------------------------------------------------------------
+
+class TestDeleteObject:
+    def test_delete_object_removes_it(self, clean_document):
+        doc_name = clean_document
+        send_command("part_operations", {
+            "operation": "box", "length": 5, "width": 5, "height": 5, "name": "ToDelete",
+        })
+        result = send_command("view_control", {
+            "operation": "delete_object", "object_name": "ToDelete",
+        })
+        text = _text(result)
+        assert "deleted" in text.lower(), text[:300]
+
+        check = send_command("execute_python_sync", {
+            "code": f"print(FreeCAD.getDocument({doc_name!r}).getObject('ToDelete') is None)\nresult = None\n"
+        })
+        assert _text(check).strip().endswith("True"), _text(check)[:300]
+
+    def test_delete_object_not_found(self, clean_document):
+        result = send_command("view_control", {
+            "operation": "delete_object", "object_name": "Ghost",
+        })
+        text = _text(result)
+        assert "not found" in text.lower(), text[:300]
+
+
+class TestUndoRedo:
+    """undo/redo currently do NOT revert anything created via any MCP
+    tool. Confirmed live and systemically: `grep -rn "openTransaction"
+    AICopilot/` returns zero matches anywhere in this codebase.
+    doc.UndoMode=1 alone does not auto-wrap arbitrary doc.addObject()
+    calls in an undo transaction the way GUI Command execution normally
+    does — FreeCAD's doc.UndoCount stays 0 after part_operations creates
+    a box (confirmed live), so doc.undo() has nothing to revert. This is
+    a real, systemic gap (every mutating handler across every workbench
+    would need doc.openTransaction()/commitTransaction() pairing to fix),
+    well beyond this test file's scope — flagged separately. These tests
+    pin the actual current (non-)behavior rather than assert the
+    documented intent, so a future fix is visible as these tests
+    starting to fail in a way that should prompt updating them, not
+    reverting the fix."""
+
+    def test_undo_does_not_currently_revert_mcp_created_objects(self, clean_document):
+        doc_name = clean_document
+        send_command("part_operations", {
+            "operation": "box", "length": 5, "width": 5, "height": 5, "name": "UndoBox",
+        })
+        result = send_command("view_control", {"operation": "undo"})
+        text = _text(result)
+        assert "undo" in text.lower(), text[:300]
+
+        check = send_command("execute_python_sync", {
+            "code": f"print(FreeCAD.getDocument({doc_name!r}).getObject('UndoBox') is None)\nresult = None\n"
+        })
+        assert _text(check).strip().endswith("False"), (
+            "If this now says True, undo started actually reverting MCP-created "
+            f"objects — investigate before assuming it's just this test being "
+            f"stale. Got: {_text(check)[:300]}"
+        )
+
+    def test_undo_on_document_with_no_transactions_reports_completed_not_error(self, clean_document):
+        """undo() on a document with nothing to undo doesn't error —
+        FreeCAD's Document.undo() is a silent no-op with UndoCount==0,
+        and the handler doesn't distinguish that from a real undo."""
+        result = send_command("view_control", {"operation": "undo"})
+        text = _text(result)
+        assert "Undo completed" in text, text[:300]
+
+    def test_redo_on_document_with_no_transactions_reports_completed_not_error(self, clean_document):
+        result = send_command("view_control", {"operation": "redo"})
+        text = _text(result)
+        assert "Redo completed" in text, text[:300]
+
+
+class TestRecompute:
+    def test_recompute_whole_document(self, clean_document):
+        result = send_command("view_control", {"operation": "recompute"})
+        text = _text(result)
+        assert "Recomputed document" in text, text[:300]
+
+    def test_recompute_single_object(self, clean_document):
+        send_command("part_operations", {
+            "operation": "box", "length": 5, "width": 5, "height": 5, "name": "RecBox",
+        })
+        result = send_command("view_control", {
+            "operation": "recompute", "object_name": "RecBox",
+        })
+        text = _text(result)
+        assert "Recomputed 'RecBox'" in text, text[:300]
+
+    def test_recompute_object_not_found(self, clean_document):
+        result = send_command("view_control", {
+            "operation": "recompute", "object_name": "Ghost",
+        })
+        text = _text(result)
+        assert "not found" in text.lower(), text[:300]
+
+
+# ---------------------------------------------------------------------------
+# select_object / clear_selection / get_selection — headless these are
+# real no-ops (UniversalSelector guards on `if FreeCADGui:`), but the
+# returned strings and not-found error paths are still real behavior
+# worth pinning.
+# ---------------------------------------------------------------------------
+
+class TestSelectionOpsHeadlessNoOp:
+    def test_select_object_success_message(self, clean_document):
+        send_command("part_operations", {
+            "operation": "box", "length": 5, "width": 5, "height": 5, "name": "SelBox",
+        })
+        result = send_command("view_control", {
+            "operation": "select_object", "object_name": "SelBox",
+        })
+        text = _text(result)
+        assert "Selected object 'SelBox'" in text, text[:300]
+
+    def test_select_object_not_found(self, clean_document):
+        result = send_command("view_control", {
+            "operation": "select_object", "object_name": "Ghost",
+        })
+        text = _text(result)
+        assert "not found" in text.lower(), text[:300]
+
+    def test_clear_selection(self, clean_document):
+        result = send_command("view_control", {"operation": "clear_selection"})
+        text = _text(result)
+        assert "Selection cleared" in text, text[:300]
+
+    def test_get_selection_empty_headless(self, clean_document):
+        """select_object is itself a headless no-op (no real FreeCADGui.
+        Selection to add to), so get_selection can only ever observe an
+        empty selection in this tier — that's the real, correct behavior
+        to pin, not a gap in this test."""
+        send_command("part_operations", {
+            "operation": "box", "length": 5, "width": 5, "height": 5, "name": "SelBox2",
+        })
+        send_command("view_control", {
+            "operation": "select_object", "object_name": "SelBox2",
+        })
+        result = send_command("view_control", {"operation": "get_selection"})
+        text = _text(result)
+        assert "No objects selected" in text, text[:300]
+
+
+# ---------------------------------------------------------------------------
+# save_document (view_control -> document_ops.save_document)
+# ---------------------------------------------------------------------------
+
+class TestSaveDocument:
+    def test_save_document_to_explicit_path(self, clean_document):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = f"{tmp_dir}/saved_doc.FCStd"
+            result = send_command("view_control", {
+                "operation": "save_document", "filename": path,
+            })
+            text = _text(result)
+            assert "Document saved as" in text, text[:300]
+            import os
+            assert os.path.isfile(path), f"expected file at {path}"
+
+    def test_save_document_rejects_path_outside_allowed_dirs(self, clean_document):
+        result = send_command("view_control", {
+            "operation": "save_document", "filename": "/etc/definitely_not_allowed.FCStd",
+        })
+        text = _text(result)
+        assert "outside allowed directories" in text, text[:300]
