@@ -59,13 +59,19 @@ def _make_box_obj(name="Box", volume=1000.0, faces=6, edges=12, vertices=8,
         volume=volume, faces=faces, edges=edges, vertices=vertices,
         bbox=(xmax - xmin, ymax - ymin, zmax - zmin),
         is_closed=is_closed,
+        # fixture_ops.py derives is_solid from bool(shape.Solids), not a
+        # shape.isSolid() call — that method doesn't exist on real FreeCAD
+        # Part.Shape/Part.Solid objects as of weekly-2026.08.20 (confirmed
+        # live, fixed 2026-08-21). solids=1 when is_solid=True mirrors a
+        # real solid's own .Solids traversal including itself; solids=0
+        # mirrors a bare Face/open Shell's empty .Solids.
+        solids=1 if is_solid else 0,
     )
     # Override bbox mins (make_part_object sets XMin=0 by default)
     bb = obj.Shape.BoundBox
     bb.XMin, bb.XMax = xmin, xmax
     bb.YMin, bb.YMax = ymin, ymax
     bb.ZMin, bb.ZMax = zmin, zmax
-    obj.Shape.isSolid = MagicMock(return_value=is_solid)
     return obj
 
 
