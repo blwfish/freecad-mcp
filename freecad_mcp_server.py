@@ -1254,7 +1254,7 @@ async def main():
                     "job_name": {"type": "string", "description": "CAM job name"},
                     "base_object": {"type": "string", "description": "Base 3D object for CAM operations"},
                     # Stock parameters
-                    "stock_type": {"type": "string", "description": "Stock type", "enum": ["CreateBox", "CreateCylinder", "FromBase"], "default": "CreateBox"},
+                    "stock_type": {"type": "string", "description": "Stock type (default CreateBox)", "enum": ["CreateBox", "CreateCylinder", "FromBase"]},
                     "length": {"type": "number", "description": "Stock length", "default": 100},
                     "width": {"type": "number", "description": "Stock width", "default": 100},
                     "height": {"type": "number", "description": "Stock height", "default": 50},
@@ -1286,7 +1286,7 @@ async def main():
                     "feed_rate": {"type": "number", "description": "Feed rate in mm/min", "default": 1000},
                     # Post-processing parameters
                     "output_file": {"type": "string", "description": "Output G-code file path"},
-                    "post_processor": {"type": "string", "description": "Post processor name", "default": "grbl"},
+                    "post_processor": {"type": "string", "description": "Post processor name (default grbl)"},
                     "post_processor_args": {"type": "string", "description": "Post processor arguments (e.g. '--no-show-editor')"},
                     # Adaptive parameters
                     "tolerance": {"type": "number", "description": "Adaptive tolerance"},
@@ -1318,7 +1318,7 @@ async def main():
                         "enum": ["endmill", "ballend", "bullnose", "chamfer", "drill", "v-bit"],
                         "default": "endmill"
                     },
-                    "diameter": {"type": "number", "description": "Tool diameter in mm", "default": 6.0},
+                    "diameter": {"type": "number", "description": "Tool diameter in mm (default 6.0)"},
                     "flute_length": {"type": "number", "description": "Cutting edge length in mm"},
                     "shank_diameter": {"type": "number", "description": "Shank diameter in mm"},
                     "material": {"type": "string", "description": "Tool material (HSS, Carbide, etc.)"},
@@ -1346,10 +1346,10 @@ async def main():
                     "job_name": {"type": "string", "description": "CAM job name"},
                     "tool_name": {"type": "string", "description": "Name of the tool bit to use"},
                     "controller_name": {"type": "string", "description": "Name for the tool controller"},
-                    "spindle_speed": {"type": "number", "description": "Spindle speed in RPM", "default": 10000},
-                    "feed_rate": {"type": "number", "description": "Horizontal feed rate in mm/min", "default": 1000},
+                    "spindle_speed": {"type": "number", "description": "Spindle speed in RPM (default 10000)"},
+                    "feed_rate": {"type": "number", "description": "Horizontal feed rate in mm/min (default 1000)"},
                     "vertical_feed_rate": {"type": "number", "description": "Vertical (plunge) feed rate in mm/min"},
-                    "tool_number": {"type": "integer", "description": "Tool number for G-code", "default": 1}
+                    "tool_number": {"type": "integer", "description": "Tool number for G-code. Omit to auto-assign the next available number"}
                 },
                 "required": ["operation"]
             },
