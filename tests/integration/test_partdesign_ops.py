@@ -774,6 +774,425 @@ class TestShellThicknessRealGeometry:
 
 
 # ---------------------------------------------------------------------------
+# Tests: Groove (subtractive revolution — needs an existing base feature
+# to cut into, unlike revolution)
+# ---------------------------------------------------------------------------
+
+class TestGroove:
+    def test_groove_cuts_ring_channel(self, clean_document):
+        """Base pad: 30x30x30 box (27000 mm^3). Groove sketch: a small
+        rectangle offset from the Y-axis on XZ_Plane, revolved 360 deg
+        around Y — cuts a ring-shaped channel out of the box. Exact
+        removed volume isn't hand-derivable here (the groove only
+        partially overlaps the box's footprint), so this asserts the
+        real, non-hypothetical property: some material was removed, the
+        result is a valid solid, and it's a genuine PartDesign::Groove
+        (not silently falling back to some other feature type)."""
+        doc_name = clean_document
+        send_command("execute_python_sync", {"code": """
+import Part, Sketcher
+doc = FreeCAD.ActiveDocument
+body = doc.addObject('PartDesign::Body', 'Body')
+
+base_sketch = doc.addObject('Sketcher::SketchObject', 'GrooveBaseSketch')
+body.addObject(base_sketch)
+base_sketch.AttachmentSupport = [(doc.getObject('XY_Plane'), '')]
+base_sketch.MapMode = 'FlatFace'
+base_sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(-15,-15,0), FreeCAD.Vector(15,-15,0)))
+base_sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(15,-15,0), FreeCAD.Vector(15,15,0)))
+base_sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(15,15,0), FreeCAD.Vector(-15,15,0)))
+base_sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(-15,15,0), FreeCAD.Vector(-15,-15,0)))
+base_sketch.addConstraint(Sketcher.Constraint('Coincident', 0, 2, 1, 1))
+base_sketch.addConstraint(Sketcher.Constraint('Coincident', 1, 2, 2, 1))
+base_sketch.addConstraint(Sketcher.Constraint('Coincident', 2, 2, 3, 1))
+base_sketch.addConstraint(Sketcher.Constraint('Coincident', 3, 2, 0, 1))
+doc.recompute()
+pad = body.newObject('PartDesign::Pad', 'BasePad')
+pad.Profile = base_sketch
+pad.Length = 30
+doc.recompute()
+
+groove_sketch = doc.addObject('Sketcher::SketchObject', 'GrooveSk')
+body.addObject(groove_sketch)
+groove_sketch.AttachmentSupport = [(doc.getObject('XZ_Plane'), '')]
+groove_sketch.MapMode = 'FlatFace'
+groove_sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(5,10,0), FreeCAD.Vector(10,10,0)))
+groove_sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(10,10,0), FreeCAD.Vector(10,15,0)))
+groove_sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(10,15,0), FreeCAD.Vector(5,15,0)))
+groove_sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(5,15,0), FreeCAD.Vector(5,10,0)))
+groove_sketch.addConstraint(Sketcher.Constraint('Coincident', 0, 2, 1, 1))
+groove_sketch.addConstraint(Sketcher.Constraint('Coincident', 1, 2, 2, 1))
+groove_sketch.addConstraint(Sketcher.Constraint('Coincident', 2, 2, 3, 1))
+groove_sketch.addConstraint(Sketcher.Constraint('Coincident', 3, 2, 0, 1))
+doc.recompute()
+result = None
+"""})
+        result = send_command("partdesign_operations", {
+            "operation": "groove", "sketch_name": "GrooveSk", "axis": "y", "angle": 360,
+        })
+        assert_op_succeeded(result, "groove")
+        props = get_shape_props(doc_name, "Groove")
+        assert props is not None
+        assert props["is_valid"]
+        assert 0 < props["volume"] < 27000.0
+        type_id = send_command("execute_python_sync", {
+            "code": "FreeCAD.ActiveDocument.getObject('Groove').TypeId"
+        })
+        assert "PartDesign::Groove" in _text(type_id)
+
+    def test_groove_z_axis_rejected(self, clean_document):
+        """Same unconditional N_Axis rejection as revolution's Body path —
+        groove.py shares the identical validation."""
+        send_command("execute_python_sync", {"code": """
+import Part, Sketcher
+doc = FreeCAD.ActiveDocument
+body = doc.addObject('PartDesign::Body', 'Body')
+sketch = doc.addObject('Sketcher::SketchObject', 'GrooveZSketch')
+body.addObject(sketch)
+sketch.AttachmentSupport = [(doc.getObject('XZ_Plane'), '')]
+sketch.MapMode = 'FlatFace'
+sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(5,0,0), FreeCAD.Vector(10,0,0)))
+sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(10,0,0), FreeCAD.Vector(10,5,0)))
+sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(10,5,0), FreeCAD.Vector(5,5,0)))
+sketch.addGeometry(Part.LineSegment(FreeCAD.Vector(5,5,0), FreeCAD.Vector(5,0,0)))
+sketch.addConstraint(Sketcher.Constraint('Coincident', 0, 2, 1, 1))
+sketch.addConstraint(Sketcher.Constraint('Coincident', 1, 2, 2, 1))
+sketch.addConstraint(Sketcher.Constraint('Coincident', 2, 2, 3, 1))
+sketch.addConstraint(Sketcher.Constraint('Coincident', 3, 2, 0, 1))
+doc.recompute()
+result = None
+"""})
+        result = send_command("partdesign_operations", {
+            "operation": "groove", "sketch_name": "GrooveZSketch", "axis": "z", "angle": 360,
+        })
+        text = _text(result)
+        assert "n_axis" in text.lower() or "own plane" in text.lower(), text[:300]
+
+
+# ---------------------------------------------------------------------------
+# Tests: Loft / Sweep (Part::Loft / Part::Sweep — no PartDesign Body
+# needed, unlike additive_pipe/subtractive_loft/subtractive_sweep below)
+# ---------------------------------------------------------------------------
+
+class TestLoft:
+    def test_loft_two_circles_produces_frustum(self, clean_document):
+        """A circle-to-circle loft (no Body) between R=10 at z=0 and R=5
+        at z=20 is a cone frustum: V = (pi*h/3)*(r1^2+r1*r2+r2^2) =
+        (pi*20/3)*(100+50+25) = 3665.19 mm^3. Confirmed empirically
+        against this exact FreeCAD build. Uses a direct Placement on the
+        second sketch rather than AttachmentSupport+AttachmentOffset —
+        confirmed live that combination silently fails to actually shift
+        the sketch in Z when both sketches attach to the SAME datum
+        plane object (both ended up coincident at z=0)."""
+        doc_name = clean_document
+        send_command("execute_python_sync", {"code": """
+import Part
+doc = FreeCAD.ActiveDocument
+s1 = doc.addObject('Sketcher::SketchObject', 'LoftS1')
+s1.addGeometry(Part.Circle(FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,1), 10))
+doc.recompute()
+s2 = doc.addObject('Sketcher::SketchObject', 'LoftS2')
+s2.Placement = FreeCAD.Placement(FreeCAD.Vector(0,0,20), FreeCAD.Rotation())
+s2.addGeometry(Part.Circle(FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,1), 5))
+doc.recompute()
+result = None
+"""})
+        result = send_command("partdesign_operations", {
+            "operation": "loft", "sketches": ["LoftS1", "LoftS2"],
+        })
+        assert_op_succeeded(result, "loft")
+        props = get_shape_props(doc_name, "Loft")
+        assert props is not None
+        assert props["is_valid"]
+        assert_volume_close(props["volume"], 3665.19, op_label="loft frustum")
+
+    def test_loft_requires_two_sketches(self, clean_document):
+        result = send_command("partdesign_operations", {
+            "operation": "loft", "sketches": ["OnlyOne"],
+        })
+        text = _text(result)
+        assert "at least 2 sketches" in text.lower(), text[:300]
+
+
+class TestSweep:
+    def test_sweep_circle_along_straight_line_produces_cylinder(self, clean_document):
+        """R=3 circle swept 30mm along a straight line: V = pi*3^2*30 =
+        848.23 mm^3. Confirmed empirically that Part::Sweep (Frenet=True
+        by default, unset by this handler) produces a NULL shape when
+        Sections/Spine reference Sketcher::SketchObject sketches directly
+        for a perfectly straight, axis-aligned spine (a Frenet-frame
+        degenerate case: an unbent line has no well-defined normal to
+        build a frame from) — same null-shape result whether Frenet is
+        left at its True default or explicitly set False, and whether
+        Spine is a bare object or an explicit (obj, ['Edge1']) tuple, so
+        this isn't a handler bug, it's a spine-representation quirk of
+        this exact geometry. Using plain Part::Feature objects (a Wire
+        Shape assigned directly, no Sketcher involved) for BOTH profile
+        and path sidesteps it entirely and produces a correct, non-null
+        cylinder — confirmed via the real MCP handler, not just raw OCCT
+        calls."""
+        doc_name = clean_document
+        send_command("execute_python_sync", {"code": """
+import Part
+doc = FreeCAD.ActiveDocument
+circ = Part.Circle(FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,1), 3)
+prof = doc.addObject('Part::Feature', 'SweepProfile')
+prof.Shape = Part.Wire([circ.toShape()])
+line_shape = Part.LineSegment(FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,30)).toShape()
+path = doc.addObject('Part::Feature', 'SweepPath')
+path.Shape = Part.Wire([line_shape])
+doc.recompute()
+result = None
+"""})
+        result = send_command("partdesign_operations", {
+            "operation": "sweep", "profile_sketch": "SweepProfile", "path_sketch": "SweepPath",
+        })
+        assert_op_succeeded(result, "sweep")
+        props = get_shape_props(doc_name, "Sweep")
+        assert props is not None
+        assert props["is_valid"]
+        assert_volume_close(props["volume"], 848.23, op_label="swept cylinder")
+
+    def test_sweep_missing_profile_sketch(self, clean_document):
+        result = send_command("partdesign_operations", {
+            "operation": "sweep", "profile_sketch": "Ghost", "path_sketch": "AlsoGhost",
+        })
+        text = _text(result)
+        assert "profile sketch not found" in text.lower(), text[:300]
+
+
+# ---------------------------------------------------------------------------
+# Tests: Additive pipe / Subtractive sweep (PartDesign — need a Body;
+# both use the same bent-path recipe as TestSweep's straight-line finding
+# implies: a straight spine hits the same Frenet degeneracy here too, so
+# both fixtures use a 2-segment bent path instead)
+# ---------------------------------------------------------------------------
+
+class TestAdditivePipe:
+    def test_additive_pipe_bent_path_real_geometry(self, clean_document):
+        doc_name = clean_document
+        send_command("execute_python_sync", {"code": """
+import Part, Sketcher
+doc = FreeCAD.ActiveDocument
+body = doc.addObject('PartDesign::Body', 'Body')
+
+prof = doc.addObject('Sketcher::SketchObject', 'PipeProfile')
+body.addObject(prof)
+prof.AttachmentSupport = [(doc.getObject('XY_Plane'), '')]
+prof.MapMode = 'FlatFace'
+prof.addGeometry(Part.Circle(FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,1), 3))
+doc.recompute()
+
+path = doc.addObject('Sketcher::SketchObject', 'PipePath')
+body.addObject(path)
+path.AttachmentSupport = [(doc.getObject('YZ_Plane'), '')]
+path.MapMode = 'FlatFace'
+path.addGeometry(Part.LineSegment(FreeCAD.Vector(0,0,0), FreeCAD.Vector(10,10,0)))
+path.addGeometry(Part.LineSegment(FreeCAD.Vector(10,10,0), FreeCAD.Vector(0,20,0)))
+path.addConstraint(Sketcher.Constraint('Coincident', 0, 2, 1, 1))
+doc.recompute()
+result = None
+"""})
+        result = send_command("partdesign_operations", {
+            "operation": "additive_pipe", "profile_sketch": "PipeProfile", "path_sketch": "PipePath",
+        })
+        assert_op_succeeded(result, "additive_pipe")
+        props = get_shape_props(doc_name, "AdditivePipe")
+        assert props is not None
+        assert props["is_valid"]
+        assert props["volume"] > 0
+
+    def test_additive_pipe_missing_path_sketch(self, clean_document):
+        send_command("execute_python_sync", {"code": """
+import Part
+doc = FreeCAD.ActiveDocument
+body = doc.addObject('PartDesign::Body', 'Body')
+prof = doc.addObject('Sketcher::SketchObject', 'LonelyProfile')
+body.addObject(prof)
+prof.addGeometry(Part.Circle(FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,1), 3))
+doc.recompute()
+result = None
+"""})
+        result = send_command("partdesign_operations", {
+            "operation": "additive_pipe", "profile_sketch": "LonelyProfile", "path_sketch": "Ghost",
+        })
+        text = _text(result)
+        assert "path sketch not found" in text.lower(), text[:300]
+
+
+class TestSubtractiveSweep:
+    def test_subtractive_sweep_bent_path_real_geometry(self, clean_document):
+        """Base pad: 40x40x20 box (32000 mm^3). A small circular channel
+        swept along a bent path near one edge removes a modest, real
+        volume — assert strictly less than the unfilleted pad, not an
+        exact hand-derived number (the bent-path sweep's exact swept
+        volume isn't simple to hand-calculate)."""
+        doc_name = clean_document
+        send_command("execute_python_sync", {"code": """
+import Part, Sketcher
+doc = FreeCAD.ActiveDocument
+body = doc.addObject('PartDesign::Body', 'Body')
+
+base_sk = doc.addObject('Sketcher::SketchObject', 'SSBaseSk')
+body.addObject(base_sk)
+base_sk.AttachmentSupport = [(doc.getObject('XY_Plane'), '')]
+base_sk.MapMode = 'FlatFace'
+base_sk.addGeometry(Part.LineSegment(FreeCAD.Vector(-20,-20,0), FreeCAD.Vector(20,-20,0)))
+base_sk.addGeometry(Part.LineSegment(FreeCAD.Vector(20,-20,0), FreeCAD.Vector(20,20,0)))
+base_sk.addGeometry(Part.LineSegment(FreeCAD.Vector(20,20,0), FreeCAD.Vector(-20,20,0)))
+base_sk.addGeometry(Part.LineSegment(FreeCAD.Vector(-20,20,0), FreeCAD.Vector(-20,-20,0)))
+base_sk.addConstraint(Sketcher.Constraint('Coincident', 0, 2, 1, 1))
+base_sk.addConstraint(Sketcher.Constraint('Coincident', 1, 2, 2, 1))
+base_sk.addConstraint(Sketcher.Constraint('Coincident', 2, 2, 3, 1))
+base_sk.addConstraint(Sketcher.Constraint('Coincident', 3, 2, 0, 1))
+doc.recompute()
+pad = body.newObject('PartDesign::Pad', 'SSBasePad')
+pad.Profile = base_sk
+pad.Length = 20
+doc.recompute()
+
+prof = doc.addObject('Sketcher::SketchObject', 'SSProfile')
+body.addObject(prof)
+prof.AttachmentSupport = [(doc.getObject('XY_Plane'), '')]
+prof.MapMode = 'FlatFace'
+prof.addGeometry(Part.Circle(FreeCAD.Vector(-15,0,0), FreeCAD.Vector(0,0,1), 2))
+doc.recompute()
+
+path = doc.addObject('Sketcher::SketchObject', 'SSPath')
+body.addObject(path)
+path.AttachmentSupport = [(doc.getObject('YZ_Plane'), '')]
+path.MapMode = 'FlatFace'
+path.addGeometry(Part.LineSegment(FreeCAD.Vector(-15,0,0), FreeCAD.Vector(-10,10,0)))
+path.addGeometry(Part.LineSegment(FreeCAD.Vector(-10,10,0), FreeCAD.Vector(-15,20,0)))
+path.addConstraint(Sketcher.Constraint('Coincident', 0, 2, 1, 1))
+doc.recompute()
+result = None
+"""})
+        result = send_command("partdesign_operations", {
+            "operation": "subtractive_sweep", "profile_sketch": "SSProfile", "path_sketch": "SSPath",
+        })
+        assert_op_succeeded(result, "subtractive_sweep")
+        props = get_shape_props(doc_name, "SubtractivePipe")
+        assert props is not None
+        assert props["is_valid"]
+        assert 0 < props["volume"] < 32000.0
+
+
+# ---------------------------------------------------------------------------
+# Tests: Subtractive loft — regression pin, not a fix. Confirmed live,
+# across multiple geometry variants (circular sections, rectangular
+# sections, sections flush with the pad's boundary faces, sections
+# protruding beyond them), that PartDesign::SubtractiveLoft consistently
+# fails to compute (State=Invalid, null Shape) via BOTH the real MCP
+# handler and a hand-built replica using the identical FreeCAD API calls
+# the handler itself uses. Whatever is wrong here is either a genuine
+# upstream FreeCAD limitation or something about this operation's
+# geometry requirements this investigation didn't uncover — not
+# something specific to this handler's own code (the manual replica
+# fails identically). Flagged separately for deeper investigation rather
+# than continuing to guess at geometry variants.
+# ---------------------------------------------------------------------------
+
+class TestSubtractiveLoft:
+    def test_subtractive_loft_currently_fails_to_compute(self, clean_document):
+        doc_name = clean_document
+        send_command("execute_python_sync", {"code": """
+import Part, Sketcher
+doc = FreeCAD.ActiveDocument
+body = doc.addObject('PartDesign::Body', 'Body')
+base_sk = doc.addObject('Sketcher::SketchObject', 'SLBaseSk')
+body.addObject(base_sk)
+base_sk.AttachmentSupport = [(doc.getObject('XY_Plane'), '')]
+base_sk.MapMode = 'FlatFace'
+base_sk.addGeometry(Part.LineSegment(FreeCAD.Vector(-20,-20,0), FreeCAD.Vector(20,-20,0)))
+base_sk.addGeometry(Part.LineSegment(FreeCAD.Vector(20,-20,0), FreeCAD.Vector(20,20,0)))
+base_sk.addGeometry(Part.LineSegment(FreeCAD.Vector(20,20,0), FreeCAD.Vector(-20,20,0)))
+base_sk.addGeometry(Part.LineSegment(FreeCAD.Vector(-20,20,0), FreeCAD.Vector(-20,-20,0)))
+base_sk.addConstraint(Sketcher.Constraint('Coincident', 0, 2, 1, 1))
+base_sk.addConstraint(Sketcher.Constraint('Coincident', 1, 2, 2, 1))
+base_sk.addConstraint(Sketcher.Constraint('Coincident', 2, 2, 3, 1))
+base_sk.addConstraint(Sketcher.Constraint('Coincident', 3, 2, 0, 1))
+doc.recompute()
+pad = body.newObject('PartDesign::Pad', 'SLBasePad')
+pad.Profile = base_sk
+pad.Length = 20
+doc.recompute()
+
+s1 = doc.addObject('Sketcher::SketchObject', 'SLS1')
+body.addObject(s1)
+s1.AttachmentSupport = [(doc.getObject('XY_Plane'), '')]
+s1.MapMode = 'FlatFace'
+s1.addGeometry(Part.Circle(FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,1), 8))
+doc.recompute()
+
+s2 = doc.addObject('Sketcher::SketchObject', 'SLS2')
+body.addObject(s2)
+s2.AttachmentSupport = [(pad, 'Face6')]
+s2.MapMode = 'FlatFace'
+s2.addGeometry(Part.Circle(FreeCAD.Vector(0,0,0), FreeCAD.Vector(0,0,1), 4))
+doc.recompute()
+result = None
+"""})
+        result = send_command("partdesign_operations", {
+            "operation": "subtractive_loft", "sketches": ["SLS1", "SLS2"],
+        })
+        text = _text(result)
+        assert "failed to compute" in text and "Invalid" in text, (
+            "If this assertion fails, subtractive_loft may now be working "
+            f"— investigate and replace this pin with a real test. Got: {text[:300]}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Tests: Datum line / point (auto-creates a Body if none exists) /
+# datum_from_face (shortcut over create_datum_plane)
+# ---------------------------------------------------------------------------
+
+class TestDatumLinePoint:
+    def test_datum_line_auto_creates_body(self, clean_document):
+        result = send_command("partdesign_operations", {"operation": "datum_line"})
+        text = _text(result)
+        assert "Created datum line: DatumLine" in text, text[:300]
+        type_id = send_command("execute_python_sync", {
+            "code": "FreeCAD.ActiveDocument.getObject('DatumLine').TypeId"
+        })
+        assert "PartDesign::Line" in _text(type_id)
+
+    def test_datum_point_auto_creates_body(self, clean_document):
+        result = send_command("partdesign_operations", {"operation": "datum_point"})
+        text = _text(result)
+        assert "Created datum point: DatumPoint" in text, text[:300]
+        type_id = send_command("execute_python_sync", {
+            "code": "FreeCAD.ActiveDocument.getObject('DatumPoint').TypeId"
+        })
+        assert "PartDesign::Point" in _text(type_id)
+
+    def test_datum_point_with_offset(self, clean_document):
+        result = send_command("partdesign_operations", {
+            "operation": "datum_point", "offset_x": 5, "offset_y": 10, "offset_z": 15,
+        })
+        text = _text(result)
+        assert "Created datum point" in text, text[:300]
+
+
+class TestDatumFromFace:
+    def test_datum_from_face_on_top_face(self, body_with_pad):
+        result = send_command("partdesign_operations", {
+            "operation": "datum_from_face", "object_name": "Pad", "face_index": 6,
+        })
+        text = _text(result)
+        assert "Created datum plane: Datum_Face6" in text, text[:300]
+        assert "Face centroid:" in text and "Face normal:" in text, text[:300]
+
+    def test_datum_from_face_out_of_range(self, body_with_pad):
+        result = send_command("partdesign_operations", {
+            "operation": "datum_from_face", "object_name": "Pad", "face_index": 99,
+        })
+        text = _text(result)
+        assert "out of range" in text.lower(), text[:300]
+
+
+# ---------------------------------------------------------------------------
 # Tests: Unknown operation
 # ---------------------------------------------------------------------------
 
