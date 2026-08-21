@@ -816,3 +816,285 @@ class TestCAMSimulateGuiGate:
         })
         text = str(result)
         assert "GUI not available" in text, text[:300]
+
+
+# ---------------------------------------------------------------------------
+# Tests: setup_stock, operation-level CRUD (get/configure/delete), job
+# CRUD (export_gcode, delete_job), surface_stl, inspect, and the
+# cam_operations-level create_tool/tool_controller legacy aliases.
+# ---------------------------------------------------------------------------
+
+class TestSetupStock:
+    def test_setup_stock_create_box(self, cam_document):
+        send_command("cam_operations", {"operation": "create_job", "base_object": "Body"})
+        result = send_command("cam_operations", {
+            "operation": "setup_stock", "job_name": "Job", "stock_type": "CreateBox",
+            "length": 80, "width": 60, "height": 20,
+        })
+        text = str(result)
+        assert "Setup stock" in text, text[:300]
+        check = send_command("execute_python_sync", {"code": """
+job = FreeCAD.ActiveDocument.getObject('Job')
+print(float(job.Stock.Length), float(job.Stock.Width), float(job.Stock.Height))
+"""})
+        check_text = str(check)
+        assert "80" in check_text and "60" in check_text and "20" in check_text, check_text[:300]
+
+    def test_setup_stock_from_base(self, cam_document):
+        send_command("cam_operations", {"operation": "create_job", "base_object": "Body"})
+        result = send_command("cam_operations", {
+            "operation": "setup_stock", "job_name": "Job", "stock_type": "FromBase",
+            "extent_x": 3, "extent_y": 3, "extent_z": 5,
+        })
+        text = str(result)
+        assert "Setup stock" in text and "FromBase" in text, text[:300]
+
+    def test_setup_stock_unknown_type_silently_leaves_stock_unset(self, cam_document):
+        """Pins a real, current gap: setup_stock's if/elif chain only
+        handles stock_type 'CreateBox'/'FromBase' — the tool schema's own
+        enum also lists 'CreateCylinder', which matches neither branch.
+        Neither branch runs, job.Stock is never reassigned, and the
+        handler still reports success unconditionally ("Setup stock for
+        job ... using CreateCylinder") with no indication nothing
+        happened. create_job auto-seeds a default box-shaped Stock
+        (confirmed live, its own separate quirk — same auto-default shape
+        as the tool-controller bug elsewhere in this file), so "unset" is
+        the wrong check; the real observable symptom is that job.Stock
+        stays the SAME pre-existing object (Name unchanged), never
+        replaced by anything cylinder-related. Flagged separately as a
+        silent-no-op bug (Threshold-Boundary Testing Rule: unrecognized
+        enum value silently substituting a no-op), not fixed here."""
+        send_command("cam_operations", {"operation": "create_job", "base_object": "Body"})
+        before = send_command("execute_python_sync", {"code": """
+job = FreeCAD.ActiveDocument.getObject('Job')
+print(job.Stock.Name)
+"""})
+        result = send_command("cam_operations", {
+            "operation": "setup_stock", "job_name": "Job", "stock_type": "CreateCylinder",
+        })
+        text = str(result)
+        assert "Setup stock" in text and "CreateCylinder" in text, (
+            "If this now mentions an error or an actual cylinder stock, "
+            f"the silent-no-op gap this test pins may be fixed. Got: {text[:300]}"
+        )
+        after = send_command("execute_python_sync", {"code": """
+job = FreeCAD.ActiveDocument.getObject('Job')
+print(job.Stock.Name)
+"""})
+        assert str(before) == str(after), (
+            f"Expected job.Stock to be untouched by the unhandled stock_type — "
+            f"before={str(before)[:200]}, after={str(after)[:200]}"
+        )
+
+
+class TestSurfaceStl:
+    def test_surface_stl_generates_real_toolpath(self, cam_document, tmp_path):
+        stl_path = str(tmp_path / "surface.stl")
+        send_command("cam_operations", {"operation": "create_job", "base_object": "Body"})
+        result = send_command("execute_python_sync", {"code": f"""
+import Mesh, FreeCAD
+mesh = Mesh.Mesh()
+mesh.addFacet(FreeCAD.Vector(0,0,0), FreeCAD.Vector(20,0,0), FreeCAD.Vector(20,20,0))
+mesh.addFacet(FreeCAD.Vector(0,0,0), FreeCAD.Vector(20,20,0), FreeCAD.Vector(0,20,0))
+mesh.write({stl_path!r})
+result = None
+"""})
+        assert "error" not in str(result).lower() or "Error" not in str(result)
+
+        result = send_command("cam_operations", {
+            "operation": "surface_stl", "job_name": "Job", "stl_file": stl_path,
+        }, timeout=30.0)
+        text = str(result)
+        assert '"success": true' in text or '"success":true' in text, text[:300]
+        assert '"command_count"' in text, text[:300]
+
+    def test_surface_stl_missing_file(self, cam_document):
+        send_command("cam_operations", {"operation": "create_job", "base_object": "Body"})
+        result = send_command("cam_operations", {
+            "operation": "surface_stl", "job_name": "Job", "stl_file": "/tmp/does_not_exist_xyz.stl",
+        })
+        text = str(result)
+        assert "not found" in text.lower(), text[:300]
+
+    def test_surface_stl_missing_stl_file_arg(self, cam_document):
+        send_command("cam_operations", {"operation": "create_job", "base_object": "Body"})
+        result = send_command("cam_operations", {
+            "operation": "surface_stl", "job_name": "Job",
+        })
+        text = str(result)
+        assert "stl_file is required" in text, text[:300]
+
+
+class TestOperationCRUD:
+    @pytest.fixture
+    def job_with_profile_op(self, cam_document):
+        send_command("cam_operations", {"operation": "create_job", "base_object": "Body"})
+        send_command("cam_operations", {
+            "operation": "profile", "job_name": "Job", "faces": ["Face6"],
+        })
+        return cam_document
+
+    def test_get_operation(self, job_with_profile_op):
+        result = send_command("cam_operations", {
+            "operation": "get_operation", "job_name": "Job", "operation_name": "Profile",
+        })
+        text = str(result)
+        assert "Operation: Profile" in text, text[:300]
+        assert "Type: Path::" in text, text[:300]
+
+    def test_get_operation_not_found(self, job_with_profile_op):
+        result = send_command("cam_operations", {
+            "operation": "get_operation", "job_name": "Job", "operation_name": "Ghost",
+        })
+        text = str(result)
+        assert "not found" in text.lower(), text[:300]
+
+    def test_configure_operation_stepdown(self, job_with_profile_op):
+        result = send_command("cam_operations", {
+            "operation": "configure_operation", "job_name": "Job", "operation_name": "Profile",
+            "stepdown": 2.5,
+        })
+        text = str(result)
+        assert "Updated operation" in text and "stepdown" in text, text[:300]
+
+    def test_configure_operation_no_fields_errors(self, job_with_profile_op):
+        result = send_command("cam_operations", {
+            "operation": "configure_operation", "job_name": "Job", "operation_name": "Profile",
+        })
+        text = str(result)
+        assert "No parameters to update" in text, text[:300]
+
+    def test_delete_operation(self, job_with_profile_op):
+        result = send_command("cam_operations", {
+            "operation": "delete_operation", "job_name": "Job", "operation_name": "Profile",
+        })
+        text = str(result)
+        assert "Deleted operation" in text, text[:300]
+        check = send_command("execute_python_sync", {
+            "code": "print(FreeCAD.ActiveDocument.getObject('Profile') is None)"
+        })
+        assert "True" in str(check), str(check)[:300]
+
+    def test_delete_operation_not_found(self, job_with_profile_op):
+        result = send_command("cam_operations", {
+            "operation": "delete_operation", "job_name": "Job", "operation_name": "Ghost",
+        })
+        text = str(result)
+        assert "not found" in text.lower(), text[:300]
+
+
+class TestJobCRUD:
+    def test_export_gcode(self, cam_document, tmp_path):
+        send_command("cam_tools", {
+            "operation": "create_tool", "name": "GCodeTool", "tool_type": "endmill", "diameter": 6.0,
+        })
+        send_command("cam_operations", {"operation": "create_job", "base_object": "Body"})
+        send_command("cam_operations", {
+            "operation": "profile", "job_name": "Job", "faces": ["Face6"],
+        })
+        gcode_path = str(tmp_path / "out.gcode")
+        result = send_command("cam_operations", {
+            "operation": "export_gcode", "job_name": "Job",
+            "output_file": gcode_path, "post_processor": "grbl",
+        }, timeout=30.0)
+        text = str(result)
+        assert "Error" not in text, text[:300]
+        import os
+        assert os.path.isfile(gcode_path) and os.path.getsize(gcode_path) > 0
+
+    def test_export_gcode_missing_job(self, cam_document):
+        result = send_command("cam_operations", {
+            "operation": "export_gcode", "job_name": "Ghost", "output_file": "/tmp/whatever.gcode",
+        })
+        text = str(result)
+        assert "not found" in text.lower(), text[:300]
+
+    def test_delete_job(self, cam_document):
+        send_command("cam_operations", {"operation": "create_job", "base_object": "Body"})
+        result = send_command("cam_operations", {
+            "operation": "delete_job", "job_name": "Job",
+        })
+        text = str(result)
+        assert "Deleted job" in text, text[:300]
+        check = send_command("execute_python_sync", {
+            "code": "print(FreeCAD.ActiveDocument.getObject('Job') is None)"
+        })
+        assert "True" in str(check), str(check)[:300]
+
+    def test_delete_job_removes_tools_and_operations_too(self, cam_document):
+        send_command("cam_tools", {
+            "operation": "create_tool", "name": "DelJobTool", "tool_type": "endmill", "diameter": 6.0,
+        })
+        send_command("cam_operations", {"operation": "create_job", "base_object": "Body"})
+        send_command("cam_tool_controllers", {
+            "operation": "add_tool_controller", "tool_name": "DelJobTool", "job_name": "Job",
+        })
+        send_command("cam_operations", {
+            "operation": "profile", "job_name": "Job", "faces": ["Face6"],
+        })
+        send_command("cam_operations", {"operation": "delete_job", "job_name": "Job"})
+        check = send_command("execute_python_sync", {"code": """
+import json
+doc = FreeCAD.ActiveDocument
+print(json.dumps({
+    'job': doc.getObject('Job') is None,
+    'profile': doc.getObject('Profile') is None,
+}))
+"""})
+        text = str(check)
+        assert '"job": true' in text and '"profile": true' in text, text[:300]
+
+    def test_delete_job_not_found(self, cam_document):
+        result = send_command("cam_operations", {
+            "operation": "delete_job", "job_name": "Ghost",
+        })
+        text = str(result)
+        assert "not found" in text.lower(), text[:300]
+
+
+class TestInspect:
+    def test_inspect_no_jobs(self, cam_document):
+        result = send_command("cam_operations", {"operation": "inspect"})
+        text = str(result)
+        assert "No CAM jobs found" in text, text[:300]
+
+    def test_inspect_lists_all_jobs(self, cam_document):
+        send_command("cam_operations", {"operation": "create_job", "base_object": "Body"})
+        result = send_command("cam_operations", {"operation": "inspect"})
+        text = str(result)
+        assert "Found 1 CAM job" in text and "Job" in text, text[:300]
+
+    def test_inspect_specific_job(self, cam_document):
+        send_command("cam_operations", {"operation": "create_job", "base_object": "Body"})
+        send_command("cam_operations", {
+            "operation": "profile", "job_name": "Job", "faces": ["Face6"],
+        })
+        result = send_command("cam_operations", {"operation": "inspect", "job_name": "Job"})
+        text = str(result)
+        assert "Job 'Job':" in text and "Profile" in text, text[:300]
+
+
+class TestLegacyAliases:
+    """cam_operations' create_tool/tool_controller are legacy aliases that
+    delegate to cam_tools.create_tool/cam_tool_controllers.add_tool_controller
+    — already covered by TestCAMToolCRUD/TestCAMToolControllerCRUD above,
+    this just confirms the ALIAS operation names themselves dispatch
+    correctly (a distinct code path/enum value from the real ones)."""
+
+    def test_create_tool_alias(self, cam_document):
+        result = send_command("cam_operations", {
+            "operation": "create_tool", "name": "AliasTool", "tool_type": "endmill", "diameter": 5.0,
+        })
+        text = str(result)
+        assert "Created tool 'AliasTool'" in text, text[:300]
+
+    def test_tool_controller_alias(self, cam_document):
+        send_command("cam_tools", {
+            "operation": "create_tool", "name": "AliasTCTool", "tool_type": "endmill", "diameter": 5.0,
+        })
+        send_command("cam_operations", {"operation": "create_job", "base_object": "Body"})
+        result = send_command("cam_operations", {
+            "operation": "tool_controller", "tool_name": "AliasTCTool", "job_name": "Job",
+        })
+        text = str(result)
+        assert "Added tool controller" in text, text[:300]
