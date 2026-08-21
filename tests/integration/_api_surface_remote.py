@@ -5,7 +5,13 @@ in the test-runner process) and prepended to ``execute_python`` code blocks
 by both the golden-snapshot generator and the drift test itself, so the
 translation/description logic lives in exactly one place rather than being
 duplicated as separate strings in two places.
+
+build_remote_scan_code() and parse_remote_scan_result() below are the
+exception -- they run locally in the test-runner process (building the
+remote code string, and parsing what comes back), not inside FreeCAD.
 """
+
+import json
 
 
 def _resolve_type_to_instance(doc, type_id):
@@ -110,8 +116,6 @@ def build_remote_scan_code(scope):
     driver code that both scripts need in exactly one place rather than
     duplicated as two near-identical f-strings.
     """
-    import json
-
     with open(__file__) as f:
         helpers_src = f.read()
     scope_literal = json.dumps({k: sorted(v) for k, v in scope.items()})
@@ -140,3 +144,26 @@ except Exception as e:
     snapshot["__meta__"] = {{"freecad_version": f"__ERROR__: {{e}}"}}
 print(_json.dumps(snapshot))
 """
+
+
+def parse_remote_scan_result(result_str: str) -> dict:
+    """Parse execute_python_sync's response text into the scan's JSON dict.
+
+    build_remote_scan_code's remote driver ends with a single
+    ``print(_json.dumps(snapshot))`` as its last statement, so the JSON is
+    always the first line of stdout -- but execute_python_ops.py's
+    run_code() may append a "[FreeCAD Console]\\n..." section afterward
+    when FreeCAD's C++ layer emits any Console output during the scan
+    (confirmed live: routine Log-level chatter from PartDesign::Hole's
+    thread-definition lookup, not even a real warning, but the capture
+    doesn't discriminate by severity -- see issue #49's fix in
+    AICopilot/handlers/execute_python_ops.py). Parse only the first line
+    rather than the whole string, so incidental Console noise appended
+    after the JSON doesn't fail the scan.
+
+    Raises json.JSONDecodeError (same as a bare json.loads would) if even
+    the first line isn't valid JSON -- both call sites already handle
+    that themselves.
+    """
+    first_line = result_str.split("\n", 1)[0]
+    return json.loads(first_line)

@@ -39,7 +39,7 @@ import pytest
 
 from . import conftest as _conftest  # noqa: F401
 from ._api_surface_diff import diff_snapshots
-from ._api_surface_remote import build_remote_scan_code
+from ._api_surface_remote import build_remote_scan_code, parse_remote_scan_result
 from ._api_surface_scan import scan_type_properties
 from .test_e2e_workflows import send_command
 
@@ -57,7 +57,7 @@ def _live_scan(scope: dict) -> dict:
     assert "error" not in resp, f"execute_python failed while live-scanning API surface: {resp}"
     result_str = resp.get("result", "")
     try:
-        return json.loads(result_str)
+        return parse_remote_scan_result(result_str)
     except json.JSONDecodeError:
         pytest.fail(
             f"Expected the remote scan to print exactly one JSON line; "
