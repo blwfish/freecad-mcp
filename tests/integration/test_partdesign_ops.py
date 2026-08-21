@@ -645,25 +645,36 @@ class TestHoleWizard:
         assert "countersink hole" in text.lower(), text[:300]
         assert "PartDesign::Hole" in text, text[:300]
 
-    def test_operation_name_alone_does_not_select_hole_type(self, body_with_pad):
-        """Pins a real, current dispatch quirk: `operation="counterbore"`
-        and `operation="countersink"` both route to the same hole_wizard
-        method as `operation="hole"` (freecad_mcp_handler.py's
-        operation_map has no auto-injection of hole_type from the
-        operation name) -- hole_wizard reads hole_type from its OWN args,
-        defaulting to 'simple' regardless of which of the three
-        operations dispatched here. Calling operation="counterbore"
-        WITHOUT an explicit hole_type therefore silently creates a
-        SIMPLE hole, not a counterbore. This is current, real behavior
-        being pinned, not necessarily desired behavior -- flagged
-        separately, not fixed here."""
+    def test_operation_name_alone_selects_hole_type(self, body_with_pad):
+        """`operation="counterbore"`/`"countersink"` and `operation="hole"`
+        all route to the same hole_wizard method (freecad_mcp_handler.py's
+        operation_map) -- hole_wizard used to read hole_type only from its
+        own args, defaulting to 'simple' regardless of which of the three
+        operations dispatched here, so operation="counterbore" WITHOUT an
+        explicit hole_type used to silently create a plain hole (confirmed
+        live, fixed 2026-08-21). args['operation'] is the original
+        dispatched name, still present in the same args dict hole_wizard
+        receives -- now used to infer hole_type when the caller doesn't
+        pass it explicitly."""
         result = send_command("partdesign_operations", {
             "operation": "counterbore", "object_name": "Pad",
             "diameter": 5, "depth": 5, "x": 0, "y": 0, "face_index": 6,
         })
         text = _text(result)
-        assert "simple hole" in text.lower(), text[:300]
-        assert "counterbore" not in text.lower(), text[:300]
+        assert "counterbore hole" in text.lower(), text[:300]
+
+    def test_explicit_hole_type_still_overrides_operation_name(self, body_with_pad):
+        """Explicit hole_type is authoritative over the inferred-from-
+        operation-name default -- operation="hole" with an explicit
+        hole_type="countersink" still creates a countersink, not a plain
+        hole."""
+        result = send_command("partdesign_operations", {
+            "operation": "hole", "object_name": "Pad", "hole_type": "countersink",
+            "diameter": 5, "depth": 5, "cb_diameter": 9, "cb_depth": 2,
+            "x": 0, "y": 0, "face_index": 6,
+        })
+        text = _text(result)
+        assert "countersink hole" in text.lower(), text[:300]
 
 
 # ---------------------------------------------------------------------------
