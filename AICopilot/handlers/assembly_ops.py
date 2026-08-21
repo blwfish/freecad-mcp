@@ -44,12 +44,20 @@ _DISTANCE2_JOINT_TYPES = frozenset({"Gears", "Belt"})
 _ANGLE_JOINT_TYPES = frozenset({"Angle"})
 
 # assembly.solve()'s return code, per AssemblyObject.pyi's documented
-# contract. Confirmed by source reading (2026-07-24) that only 0/-1/-6 are
-# actually reachable in the current FreeCAD tree -- -2/-3/-4/-5 are declared
-# in the docstring but the C++ implementation never returns them today. Kept
-# here in full for forward-compatibility and because the docstring is the
-# closed vocabulary FreeCAD itself commits to, not because all branches are
-# currently live.
+# contract. The 2026-07-24 source-reading note below claiming 0/-1/-6 are
+# "actually reachable" was itself wrong for -6 -- corrected 2026-08-21
+# after reading AssemblyObject.cpp directly: solve() returns -6 only when
+# fixGroundedParts()/getGroundedParts() finds an empty set, but
+# getGroundedParts() unconditionally inserts the assembly's own Origin
+# object into that set on every call (AssemblyObject.cpp, getGroundedParts(),
+# `groundedSet.insert(Origin.getValue())`) -- every assembly has an Origin
+# by construction, so the set can never actually be empty in normal use.
+# -6 is therefore effectively unreachable via this handler's solve(), same
+# as -2/-3/-4/-5 -- confirmed live: solve() with zero explicitly-grounded
+# parts returns code=0 (success), not -6, regardless of whether any joints
+# exist. Kept in _SOLVE_STATUS in full anyway, for the same reason -2..-5
+# already were: it's the closed vocabulary FreeCAD's own docstring commits
+# to, not a claim every branch is currently live.
 _SOLVE_STATUS = {
     0: "success",
     -1: "solver_error",
@@ -386,6 +394,27 @@ class AssemblyOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error listing components: {e}"
 
+    def _find_joint_group(self, assembly):
+        """Return the assembly's Assembly::JointGroup child object, or
+        None if it doesn't have one yet.
+
+        assembly.Joints only ever contains real Joint objects, never
+        GroundedJoint ones -- confirmed live, contradicting both
+        list_joints' own docstring and get_part_status's "related joints"
+        display (which explicitly checks for ObjectToGround but iterated
+        assembly.Joints, so that branch was dead code in practice). The
+        JointGroup child (the "Joints" group UtilsAssembly.getJointGroup
+        manages) has both under its own .Group. Deliberately does NOT call
+        UtilsAssembly.getJointGroup(assembly) itself -- that function
+        auto-creates the group as a side effect if missing (confirmed
+        live), an unwanted mutation from what should be a read-only
+        lookup; this mirrors just its lookup half.
+        """
+        for obj in getattr(assembly, 'OutList', []) or []:
+            if obj.TypeId == "Assembly::JointGroup":
+                return obj
+        return None
+
     def _resolve_assembly(self, assembly_name: str, doc):
         """Shared assembly-resolution: explicit name, or first in document.
 
@@ -694,10 +723,16 @@ class AssemblyOpsHandler(BaseHandler):
         """Solve the assembly, updating part placements from its joints.
 
         The return code is mapped to a named status rather than left as a
-        bare int -- 0=success, -1=solver_error, -6=no_grounded_parts are the
-        codes actually reachable in the current FreeCAD tree; -2/-3/-4/-5
+        bare int. Only 0=success and -1=solver_error are actually reachable
+        in the current FreeCAD tree; -6=no_grounded_parts and -2/-3/-4/-5
         (redundant/conflicting/over_constrained/malformed) are declared in
-        FreeCAD's own contract but not currently produced by the solver.
+        FreeCAD's own contract but not currently produced by the solver --
+        -6 specifically because AssemblyObject.cpp's getGroundedParts()
+        unconditionally counts the assembly's own Origin object as
+        "grounded", so the empty-set check that would return -6 can never
+        actually trigger (confirmed by reading AssemblyObject.cpp directly,
+        2026-08-21; solve() with zero explicitly-grounded parts returns
+        code=0, not -6).
 
         Args:
             assembly_name: Assembly to solve (default: first
@@ -749,7 +784,8 @@ class AssemblyOpsHandler(BaseHandler):
             if err:
                 return err
 
-            joints = list(getattr(assembly, 'Joints', []) or [])
+            joint_group = self._find_joint_group(assembly)
+            joints = list(getattr(joint_group, 'Group', []) or []) if joint_group else []
             total = len(joints)
             if not joints:
                 return f"Assembly '{assembly.Name}' has no joints."
@@ -906,7 +942,8 @@ class AssemblyOpsHandler(BaseHandler):
                 pass
 
             related = []
-            for j in (getattr(assembly, 'Joints', []) or []):
+            joint_group = self._find_joint_group(assembly)
+            for j in (getattr(joint_group, 'Group', []) or []) if joint_group else []:
                 try:
                     if hasattr(j, 'ObjectToGround'):
                         if getattr(j.ObjectToGround, 'Name', None) == obj.Name:

@@ -49,6 +49,7 @@ def _make_joint_group(name="Joints"):
     mirroring make_assembly's newObject side effect."""
     jg = MagicMock()
     jg.Name = name
+    jg.TypeId = "Assembly::JointGroup"
     jg.Group = []
 
     def _new_object(type_id, obj_name=None):
@@ -59,6 +60,19 @@ def _make_joint_group(name="Joints"):
         return obj
 
     jg.newObject = MagicMock(side_effect=_new_object)
+    return jg
+
+
+def _set_joints(assembly, joints):
+    """Wire a mock Assembly::JointGroup containing `joints` into
+    assembly.OutList -- list_joints() finds the group by scanning OutList
+    for TypeId=="Assembly::JointGroup" and reads its .Group, not
+    assembly.Joints (which never includes GroundedJoint objects; fixed
+    2026-08-21). Mirrors the shape create_joint/ground_part's real
+    UtilsAssembly.getJointGroup(assembly) call produces."""
+    jg = _make_joint_group()
+    jg.Group = list(joints)
+    assembly.OutList = [jg]
     return jg
 
 
@@ -1076,7 +1090,7 @@ class TestListJoints(unittest.TestCase):
 
     def test_empty_joints(self):
         assembly = make_assembly("Asm")
-        assembly.Joints = []
+        _set_joints(assembly, [])
         doc = make_mock_doc([assembly])
         mock_FreeCAD.ActiveDocument = doc
         result = self.handler.list_joints({})
@@ -1096,7 +1110,7 @@ class TestListJoints(unittest.TestCase):
         del joint.ObjectToGround
 
         assembly = make_assembly("Asm")
-        assembly.Joints = [joint]
+        _set_joints(assembly, [joint])
         doc = make_mock_doc([assembly])
         mock_FreeCAD.ActiveDocument = doc
 
@@ -1112,7 +1126,7 @@ class TestListJoints(unittest.TestCase):
         ground.ObjectToGround = box
 
         assembly = make_assembly("Asm")
-        assembly.Joints = [ground]
+        _set_joints(assembly, [ground])
         doc = make_mock_doc([assembly])
         mock_FreeCAD.ActiveDocument = doc
 
@@ -1129,7 +1143,7 @@ class TestListJoints(unittest.TestCase):
         del joint.ObjectToGround
 
         assembly = make_assembly("Asm")
-        assembly.Joints = [joint]
+        _set_joints(assembly, [joint])
         doc = make_mock_doc([assembly])
         mock_FreeCAD.ActiveDocument = doc
 
@@ -1150,7 +1164,7 @@ class TestListJoints(unittest.TestCase):
             del j.ObjectToGround
             joints.append(j)
         assembly = make_assembly("Asm")
-        assembly.Joints = joints
+        _set_joints(assembly, joints)
         doc = make_mock_doc([assembly])
         mock_FreeCAD.ActiveDocument = doc
 
@@ -1178,7 +1192,7 @@ class TestListJoints(unittest.TestCase):
         bad.Name = "BadJoint"
 
         assembly = make_assembly("Asm")
-        assembly.Joints = [bad, good]
+        _set_joints(assembly, [bad, good])
         doc = make_mock_doc([assembly])
         mock_FreeCAD.ActiveDocument = doc
 
@@ -1196,7 +1210,7 @@ class TestListJoints(unittest.TestCase):
         del joint.ObjectToGround
 
         assembly = make_assembly("Asm")
-        assembly.Joints = [joint]
+        _set_joints(assembly, [joint])
         doc = make_mock_doc([assembly])
         mock_FreeCAD.ActiveDocument = doc
 
@@ -1216,7 +1230,7 @@ class TestListJoints(unittest.TestCase):
         del joint.ObjectToGround
 
         assembly = make_assembly("Asm")
-        assembly.Joints = [joint]
+        _set_joints(assembly, [joint])
         doc = make_mock_doc([assembly])
         mock_FreeCAD.ActiveDocument = doc
 
@@ -1238,7 +1252,7 @@ class TestListJoints(unittest.TestCase):
         joint.EnableLengthMax = False
 
         assembly = make_assembly("Asm")
-        assembly.Joints = [joint]
+        _set_joints(assembly, [joint])
         doc = make_mock_doc([assembly])
         mock_FreeCAD.ActiveDocument = doc
 
@@ -1488,7 +1502,7 @@ class TestGetPartStatus(unittest.TestCase):
         joint.Reference2 = None
         del joint.ObjectToGround
 
-        assembly.Joints = [ground, joint]
+        _set_joints(assembly, [ground, joint])
         doc = make_mock_doc([box, assembly])
         mock_FreeCAD.ActiveDocument = doc
 
