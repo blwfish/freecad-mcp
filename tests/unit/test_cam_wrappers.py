@@ -692,6 +692,78 @@ class TestCreateJob(unittest.TestCase):
         mock_Path_Main_Job.Create.assert_not_called()
 
 
+class TestSetupStock(unittest.TestCase):
+    """setup_stock's stock_type dispatch — CreateBox/CreateCylinder/
+    FromBase each set different properties on job.Stock, and an
+    unrecognized stock_type must error rather than silently leave
+    job.Stock untouched while still reporting success (confirmed live
+    2026-08-21, fixed same day: CreateCylinder wasn't implemented at all
+    despite being in the tool schema's own enum)."""
+
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(CAMOpsHandler)
+
+    def test_create_box_sets_dimensions(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        stock = MagicMock()
+        mock_Path_Main_Stock.CreateBox = MagicMock(return_value=stock)
+
+        result = self.handler.setup_stock({
+            'job_name': 'Job1', 'stock_type': 'CreateBox',
+            'length': 80, 'width': 60, 'height': 20,
+        })
+
+        mock_Path_Main_Stock.CreateBox.assert_called_once_with(job)
+        self.assertEqual(stock.Length, 80)
+        self.assertEqual(stock.Width, 60)
+        self.assertEqual(stock.Height, 20)
+        assert_success_contains(self, result, "CreateBox")
+
+    def test_create_cylinder_sets_radius_and_height(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        stock = MagicMock()
+        mock_Path_Main_Stock.CreateCylinder = MagicMock(return_value=stock)
+
+        result = self.handler.setup_stock({
+            'job_name': 'Job1', 'stock_type': 'CreateCylinder',
+            'radius': 30, 'height': 15,
+        })
+
+        mock_Path_Main_Stock.CreateCylinder.assert_called_once_with(job)
+        self.assertEqual(stock.Radius, 30)
+        self.assertEqual(stock.Height, 15)
+        assert_success_contains(self, result, "CreateCylinder")
+
+    def test_create_cylinder_radius_defaults_when_omitted(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        stock = MagicMock()
+        mock_Path_Main_Stock.CreateCylinder = MagicMock(return_value=stock)
+
+        self.handler.setup_stock({'job_name': 'Job1', 'stock_type': 'CreateCylinder'})
+
+        self.assertEqual(stock.Radius, 50)
+
+    def test_unknown_stock_type_errors_and_leaves_stock_untouched(self):
+        job = make_cam_job("Job1")
+        job.Stock = None
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.setup_stock({
+            'job_name': 'Job1', 'stock_type': 'CreateCone',
+        })
+
+        assert_error_contains(self, result, "Unknown stock_type")
+        self.assertIsNone(job.Stock)
+
+
 class TestConfigureJob(unittest.TestCase):
     """configure_job's stock_type branch must be checked before other
     fields are applied, so a call combining stock_type with e.g.
