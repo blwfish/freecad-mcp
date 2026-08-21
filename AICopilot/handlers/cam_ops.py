@@ -906,6 +906,13 @@ class CAMOpsHandler(BaseHandler):
                 error = Exception(f"Job '{job_name}' not found")
                 return self.log_and_return("configure_job", args, error=error, duration=time.time() - start_time)
 
+            if 'stock_type' in args:
+                # Stock type changes require setup_stock operation. Checked before any
+                # other field is applied so this doesn't silently half-apply a call that
+                # combines stock_type with output_file/post_processor/post_processor_args.
+                result = f"To change stock type, use the setup_stock operation instead"
+                return self.log_and_return("configure_job", args, result=result, duration=time.time() - start_time)
+
             updates = []
 
             if 'output_file' in args:
@@ -919,11 +926,6 @@ class CAMOpsHandler(BaseHandler):
             if 'post_processor_args' in args:
                 job.PostProcessorArgs = args['post_processor_args']
                 updates.append(f"post_processor_args: {args['post_processor_args']}")
-
-            if 'stock_type' in args:
-                # Stock type changes require setup_stock operation
-                result = f"To change stock type, use the setup_stock operation instead"
-                return self.log_and_return("configure_job", args, result=result, duration=time.time() - start_time)
 
             if not updates:
                 error = Exception("No parameters to update. Provide output_file, post_processor, or post_processor_args.")
