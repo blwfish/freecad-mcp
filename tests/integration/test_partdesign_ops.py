@@ -535,6 +535,245 @@ class TestPatterns:
 
 
 # ---------------------------------------------------------------------------
+# Tests: Fillet via the public edges= bypass (no GUI selection needed)
+# ---------------------------------------------------------------------------
+
+class TestFilletExplicitEdges:
+    def test_fillet_specific_edges_real_geometry(self, body_with_pad):
+        """fillet's `edges` param (a list of 1-based edge indices) routes
+        straight to _create_fillet_with_edges — no GUI selection handshake
+        at all, so this is real, non-error-path headless coverage of the
+        actual PartDesign::Fillet creation logic."""
+        doc_name = body_with_pad
+        result = send_command("partdesign_operations", {
+            "operation": "fillet", "object_name": "Pad",
+            "edges": [1], "radius": 2.0, "name": "ExplicitFillet",
+        })
+        assert_op_succeeded(result, "fillet(edges=[1])")
+        text = _text(result)
+        assert "Created fillet" in text, text[:300]
+
+        props = get_shape_props(doc_name, "ExplicitFillet")
+        assert props is not None
+        assert props["is_valid"]
+        # A fillet removes material — strictly less than the unfilleted
+        # pad's 20*15*10 = 3000 mm^3, but still close (small radius).
+        assert props["volume"] < 3000.0
+        assert_volume_close(props["volume"], 3000.0, rel=0.05, op_label="filleted pad volume")
+
+    def test_fillet_out_of_range_edge_index_fails_loudly_not_silently(self, body_with_pad):
+        """_create_fillet_with_edges's bounds-check (1 <= idx <=
+        len(Shape.Edges)) only applies to the non-Body Part::Fillet
+        fallback branch — a Body-based PartDesign::Fillet (this fixture's
+        case) builds Edge{idx} names for every given index unconditionally,
+        with no bounds-check at all. An out-of-range index therefore isn't
+        silently dropped here (unlike the non-Body path); it reaches OCCT
+        as a real invalid edge reference, and _check_feature_state catches
+        the resulting State=Invalid and reports it — a loud, reported
+        failure, not silent data loss or a crash. Pinning this asymmetry
+        as real current behavior, not fixing it here."""
+        result = send_command("partdesign_operations", {
+            "operation": "fillet", "object_name": "Pad",
+            "edges": [1, 9999], "radius": 1.0, "name": "PartialFillet",
+        })
+        text = _text(result)
+        assert "failed to compute" in text and "Invalid" in text, text[:300]
+
+
+# ---------------------------------------------------------------------------
+# Tests: Hole wizard (hole / counterbore / countersink)
+# ---------------------------------------------------------------------------
+
+class TestHoleWizard:
+    def test_standalone_simple_hole_no_body(self, clean_document):
+        """No face_index, no Body -- the original CSG cylinder-cut path."""
+        doc_name = clean_document
+        send_command("part_operations", {
+            "operation": "box", "length": 20, "width": 20, "height": 10, "name": "HoleBox",
+        })
+        result = send_command("partdesign_operations", {
+            "operation": "hole", "object_name": "HoleBox", "hole_type": "simple",
+            "diameter": 6, "depth": 10, "x": 10, "y": 10,
+        })
+        text = _text(result)
+        assert "hole" in text.lower(), text[:300]
+        assert "Error" not in text.split("\n")[0], text[:300]
+
+        props = get_shape_props(doc_name, "HoleBox_WithHole")
+        assert props is not None, text
+        assert props["is_valid"]
+        # A through-hole strictly reduces volume below the box's 20*20*10=4000.
+        assert props["volume"] < 4000.0
+
+    def test_body_aware_simple_hole_on_top_face(self, body_with_pad):
+        """face_index given + object in a Body -> genuine PartDesign::Hole.
+        Pad's top face (Face6, z=10 plane per test_e2e_workflows'
+        established face numbering for this exact box shape) is used so
+        x=0,y=0 lands at the face's own centroid (hole_wizard recenters
+        local (0,0) to the face's CenterOfMass, not the native FlatFace
+        origin)."""
+        doc_name = body_with_pad
+        result = send_command("partdesign_operations", {
+            "operation": "hole", "object_name": "Pad", "hole_type": "simple",
+            "diameter": 5, "depth": 5, "x": 0, "y": 0, "face_index": 6,
+        })
+        text = _text(result)
+        assert "PartDesign::Hole" in text, text[:300]
+        assert "Face6" in text, text[:300]
+
+        props = get_shape_props(doc_name, "Pad_Hole")
+        assert props is not None, text
+        assert props["is_valid"]
+
+    def test_body_aware_counterbore(self, body_with_pad):
+        result = send_command("partdesign_operations", {
+            "operation": "counterbore", "object_name": "Pad", "hole_type": "counterbore",
+            "diameter": 5, "depth": 5, "cb_diameter": 9, "cb_depth": 2,
+            "x": 0, "y": 0, "face_index": 6,
+        })
+        text = _text(result)
+        assert "counterbore hole" in text.lower(), text[:300]
+        assert "PartDesign::Hole" in text, text[:300]
+
+    def test_body_aware_countersink(self, body_with_pad):
+        result = send_command("partdesign_operations", {
+            "operation": "countersink", "object_name": "Pad", "hole_type": "countersink",
+            "diameter": 5, "depth": 5, "cb_diameter": 9, "cb_depth": 2,
+            "x": 0, "y": 0, "face_index": 6,
+        })
+        text = _text(result)
+        assert "countersink hole" in text.lower(), text[:300]
+        assert "PartDesign::Hole" in text, text[:300]
+
+    def test_operation_name_alone_does_not_select_hole_type(self, body_with_pad):
+        """Pins a real, current dispatch quirk: `operation="counterbore"`
+        and `operation="countersink"` both route to the same hole_wizard
+        method as `operation="hole"` (freecad_mcp_handler.py's
+        operation_map has no auto-injection of hole_type from the
+        operation name) -- hole_wizard reads hole_type from its OWN args,
+        defaulting to 'simple' regardless of which of the three
+        operations dispatched here. Calling operation="counterbore"
+        WITHOUT an explicit hole_type therefore silently creates a
+        SIMPLE hole, not a counterbore. This is current, real behavior
+        being pinned, not necessarily desired behavior -- flagged
+        separately, not fixed here."""
+        result = send_command("partdesign_operations", {
+            "operation": "counterbore", "object_name": "Pad",
+            "diameter": 5, "depth": 5, "x": 0, "y": 0, "face_index": 6,
+        })
+        text = _text(result)
+        assert "simple hole" in text.lower(), text[:300]
+        assert "counterbore" not in text.lower(), text[:300]
+
+
+# ---------------------------------------------------------------------------
+# Tests: Chamfer / Draft real geometry via internal-method reach-in
+# (Phase 2 — see the plan's note: this exercises the real creation/
+# recompute logic but bypasses the public continue_selection dispatch,
+# a narrower guard than test_continue_selection.py's dispatch-level tests.
+# Reached via FreeCAD.__ai_socket_server.partdesign_ops, the same handle
+# headless_server.py/InitGui.py expose for the running FreeCADSocketServer
+# instance.)
+# ---------------------------------------------------------------------------
+
+def _call_internal_selection_method(method_name: str, args: dict, elements: list) -> str:
+    code = f"""
+server = FreeCAD.__ai_socket_server
+selection_result = {{"selection_data": {{"elements": {elements!r}}}}}
+print(server.partdesign_ops.{method_name}({args!r}, selection_result))
+result = None
+"""
+    raw = send_command("execute_python_sync", {"code": code})
+    text = _text(raw)
+    if text.startswith("Result: "):
+        text = text[len("Result: "):]
+    return text.strip()
+
+
+class TestChamferRealGeometry:
+    def test_chamfer_specific_edges(self, body_with_pad):
+        doc_name = body_with_pad
+        text = _call_internal_selection_method(
+            "_create_chamfer_with_selection",
+            {"object_name": "Pad", "distance": 1.5, "name": "RealChamfer"},
+            [1],
+        )
+        assert "Created chamfer" in text, text[:300]
+
+        props = get_shape_props(doc_name, "RealChamfer")
+        assert props is not None
+        assert props["is_valid"]
+        assert props["volume"] < 3000.0
+        assert_volume_close(props["volume"], 3000.0, rel=0.05, op_label="chamfered pad volume")
+
+
+class TestDraftRealGeometry:
+    def test_draft_specific_face(self, body_with_pad):
+        doc_name = body_with_pad
+        text = _call_internal_selection_method(
+            "_create_draft_with_selection",
+            {"object_name": "Pad", "angle": 3.0, "name": "RealDraft"},
+            [1],
+        )
+        assert "Created draft" in text, text[:300]
+
+        props = get_shape_props(doc_name, "RealDraft")
+        assert props is not None
+        assert props["is_valid"]
+
+    def test_draft_requires_body(self, clean_document):
+        """_create_draft_with_selection explicitly rejects a non-Body
+        target rather than crashing on a missing find_body_for_object
+        result."""
+        send_command("part_operations", {
+            "operation": "box", "length": 10, "width": 10, "height": 10, "name": "BareBox",
+        })
+        text = _call_internal_selection_method(
+            "_create_draft_with_selection",
+            {"object_name": "BareBox", "angle": 3.0, "name": "ShouldFail"},
+            [1],
+        )
+        assert "requires object to be in a PartDesign Body" in text, text[:300]
+
+
+class TestShellThicknessRealGeometry:
+    """Upgrades the existing TestShellThickness dispatch-only tests (which
+    only assert the dispatch doesn't dead-letter) with real hollow-geometry
+    assertions, using the same internal-method reach-in as chamfer/draft
+    above."""
+
+    def test_shell_specific_face_real_hollow_volume(self, body_with_pad):
+        doc_name = body_with_pad
+        text = _call_internal_selection_method(
+            "_create_shell_with_selection",
+            {"object_name": "Pad", "thickness": 2.0, "name": "RealShell"},
+            [6],
+        )
+        assert "Created shell" in text, text[:300]
+
+        props = get_shape_props(doc_name, "RealShell")
+        assert props is not None
+        assert props["is_valid"]
+        # Hollowed 20x15x10 box, 2mm walls, one face open: strictly less
+        # than the solid 3000 mm^3, strictly more than 0.
+        assert 0 < props["volume"] < 3000.0
+
+    def test_thickness_specific_face_real_hollow_volume(self, body_with_pad):
+        doc_name = body_with_pad
+        text = _call_internal_selection_method(
+            "_create_thickness_with_selection",
+            {"object_name": "Pad", "thickness": 2.0, "name": "RealThickness"},
+            [6],
+        )
+        assert "Created PartDesign Thickness" in text, text[:300]
+
+        props = get_shape_props(doc_name, "RealThickness")
+        assert props is not None
+        assert props["is_valid"]
+        assert 0 < props["volume"] < 3000.0
+
+
+# ---------------------------------------------------------------------------
 # Tests: Unknown operation
 # ---------------------------------------------------------------------------
 
