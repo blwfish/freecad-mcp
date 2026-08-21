@@ -306,6 +306,7 @@ def get_socket_path() -> str:
 
 
 _death_diagnostics: str | None = None
+_hang_diagnostics: str | None = None
 
 # gdb's crash backtrace (KNOWN_ISSUES.md's create_tool SIGSEGV) starts at
 # one of these; a plain trailing slice missed it entirely in an earlier
@@ -325,25 +326,82 @@ def _extract_relevant(text: str, max_chars: int = 30000) -> str:
     return text[-max_chars:]
 
 
+def _gdb_attach_dump(pid: int, run_timeout: int = 25) -> str:
+    """Attach gdb to a live (presumably hung) process and dump every
+    thread's backtrace, then detach without killing it.
+
+    This is deliberately reactive -- attach only once a real timeout has
+    already happened -- not the whole-session gdb-wrap the CAM SIGSEGV
+    investigation used (FREECAD_MCP_TEST_GDB_TRAP): that approach is known
+    to introduce its own ~20s stall mid-run (see integration-tests.yml's
+    comment on why that flag is off for the routine suite). A hang has no
+    signal to catch anyway -- there's nothing for a whole-session wrapper
+    to intercept -- so a live `gdb -p <pid>` attach at the moment of
+    failure is the only way to see what every thread is actually blocked
+    on. "thread apply all bt" (no "full") mirrors the SIGSEGV trap's own
+    lesson that dumping locals across many/deep-stacked threads can itself
+    run long; if this needs revisiting, check that comment first.
+
+    Best-effort and silent on any failure (gdb missing, ptrace denied,
+    sudo not configured passwordless) -- this only ever runs after a test
+    has already failed, so it must never raise or itself hang the run.
+    Requires sudo: gdb is a fresh sibling process, not an ancestor of the
+    FreeCAD process, so default Yama ptrace_scope=1 (Ubuntu's default)
+    denies a plain attach.
+    """
+    if not shutil.which("gdb"):
+        return "(gdb not available -- skipping live thread dump)"
+    cmd = [
+        "timeout", "-s", "KILL", str(run_timeout),
+        "sudo", "-n", "gdb", "-p", str(pid), "-batch",
+        "-ex", "echo \\n===GDB-ATTACHED===\\n",
+        "-ex", "thread apply all bt",
+        "-ex", "detach",
+        "-ex", "quit",
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=run_timeout + 5,
+        )
+        return (
+            f"--- gdb live thread dump (pid={pid}, rc={result.returncode}) ---\n"
+            f"{result.stdout}\n{result.stderr}"
+        )
+    except Exception as e:
+        return f"(gdb attach to pid={pid} failed: {e})"
+
+
 def diagnose_dead_spawned_process() -> str:
-    """If we spawned a headless instance and it has since died, return a
-    diagnostic string with its exit code and captured stdout/stderr.
+    """If we spawned a headless instance, return a diagnostic string:
+    exit code + captured stdout/stderr if it died, or a live gdb thread
+    dump if it's still running (hung rather than crashed).
 
     Nothing else ever drains _spawned_proc's stdout/stderr pipes while
     tests are running, so a mid-run crash (e.g. a native segfault in
     FreeCAD/OCCT) leaves whatever it printed sitting unread in the pipe
     buffer -- silently discarded once the test session ends. Call this
-    from a connection-failure handler to surface it instead.
+    from a connection-failure or timeout handler to surface it instead.
 
-    subprocess.communicate() closes the pipes on first use, so the result
-    is cached after the first successful read.
+    subprocess.communicate() closes the pipes on first use, and the gdb
+    attach suspends-then-detaches the target, so both branches' results
+    are cached after the first call -- every later cascading failure in
+    the same session reuses the cached diagnostic instead of re-attaching.
     """
-    global _death_diagnostics
+    global _death_diagnostics, _hang_diagnostics
     if _death_diagnostics is not None:
         return _death_diagnostics
+    if _hang_diagnostics is not None:
+        return _hang_diagnostics
     proc = _spawned_proc
-    if proc is None or proc.poll() is None:
+    if proc is None:
         return ""
+    if proc.poll() is None:
+        _hang_diagnostics = (
+            f"\nSpawned FreeCAD process (pid={proc.pid}) is still alive but "
+            f"unresponsive -- likely hung/deadlocked, not crashed.\n"
+            f"{_gdb_attach_dump(proc.pid)}"
+        )
+        return _hang_diagnostics
     try:
         stdout, stderr = proc.communicate(timeout=2)
         stdout = stdout.decode("utf-8", errors="replace") if stdout else ""
