@@ -697,6 +697,14 @@ def make_assembly(name="Assembly", group=None):
     obj.Type = "Assembly"
     obj.Placement = _Placement()
     obj.Group = list(group) if group else []
+    # list_joints reads the assembly's Assembly::JointGroup child (found by
+    # scanning OutList) rather than the .Joints property, since .Joints
+    # never includes GroundedJoint objects (confirmed live 2026-08-21,
+    # fixed same day) -- default to no JointGroup present (list_joints'
+    # "has no joints" path); tests needing joints/groundings should mock
+    # a JointGroup-typed object into OutList with the desired .Group
+    # contents, matching the real Assembly::JointGroup shape.
+    obj.OutList = []
     obj.isDerivedFrom = MagicMock(
         side_effect=lambda t: t == "Assembly::AssemblyObject"
     )
