@@ -692,6 +692,58 @@ class TestCreateJob(unittest.TestCase):
         mock_Path_Main_Job.Create.assert_not_called()
 
 
+class TestConfigureJob(unittest.TestCase):
+    """configure_job's stock_type branch must be checked before other
+    fields are applied, so a call combining stock_type with e.g.
+    output_file doesn't silently apply-but-not-recompute the others (the
+    stock_type check used to run last and early-return past the recompute
+    that would otherwise finalize the already-applied changes)."""
+
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(CAMOpsHandler)
+
+    def test_output_file_alone_is_applied_and_recomputed(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.configure_job({
+            'job_name': 'Job1', 'output_file': '/tmp/out.ngc',
+        })
+
+        self.assertEqual(job.PostProcessorOutputFile, '/tmp/out.ngc')
+        assert_success_contains(self, result, "output_file")
+
+    def test_stock_type_alone_returns_setup_stock_message(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.configure_job({
+            'job_name': 'Job1', 'stock_type': 'CreateCylinder',
+        })
+
+        self.assertIn("setup_stock", result)
+
+    def test_stock_type_combined_with_output_file_does_not_apply_either(self):
+        """stock_type is checked first now, so a combined call rejects up
+        front rather than mutating PostProcessorOutputFile and then
+        discarding that change behind a stock_type-only message."""
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.configure_job({
+            'job_name': 'Job1',
+            'stock_type': 'CreateCylinder',
+            'output_file': '/tmp/out.ngc',
+        })
+
+        self.assertIn("setup_stock", result)
+        self.assertNotEqual(job.PostProcessorOutputFile, '/tmp/out.ngc')
+
+
 class TestCreateToolShapes(unittest.TestCase):
     def setUp(self):
         reset_mocks()

@@ -245,3 +245,87 @@ class TestExecutePythonNonJsonResponse:
         parsed = json.loads(content[0].text)
         assert "error" in parsed
         assert "non-json" in parsed["error"].lower() or "json" in parsed["error"].lower()
+
+
+# ---------------------------------------------------------------------------
+# cam_tool_controllers — omitted tool_number must reach the bridge omitted,
+# not filled in from a JSON-schema default. Regression test for the schema
+# `"default": 1` bug: a schema-respecting client (or jsonschema itself) could
+# fill in tool_number=1 before the handler's `'tool_number' in args` check
+# ever runs, making the auto-assign path dead. See freecad_mcp_server.py's
+# cam_tool_controllers tool schema and AICopilot/handlers/cam_tool_controllers.py.
+# ---------------------------------------------------------------------------
+
+
+class TestCamToolControllersSchemaHasNoDefaults:
+    """The MCP tool schemas for cam_tool_controllers/cam_tools/cam_operations
+    intentionally omit "default" on fields whose handlers do a presence
+    check (`if 'field' in args`) rather than `args.get(field, fallback)` —
+    a declared schema default gets sent explicitly by schema-respecting
+    clients, making "omitted" indistinguishable from "explicitly chose the
+    default value". Pins that this doesn't regress."""
+
+    _NO_DEFAULT_FIELDS = {
+        "cam_tool_controllers": ["tool_number", "spindle_speed", "feed_rate"],
+        "cam_tools": ["diameter"],
+        "cam_operations": ["stock_type", "post_processor"],
+    }
+
+    def test_presence_checked_fields_have_no_schema_default(self):
+        tools_by_name = {t.name: t for t in _list_tools()}
+        for tool_name, fields in self._NO_DEFAULT_FIELDS.items():
+            props = tools_by_name[tool_name].input_schema["properties"]
+            for field in fields:
+                assert "default" not in props[field], (
+                    f"{tool_name}.{field} declares a schema default; a "
+                    "schema-respecting client can send it explicitly, "
+                    "making the handler's presence check always true"
+                )
+
+
+class TestCamToolControllersToolNumberOmission:
+    def test_omitted_tool_number_reaches_bridge_omitted(self):
+        from unittest.mock import MagicMock as _MagicMock
+
+        captured_commands = []
+
+        def _fake_send_message(sock, command):
+            captured_commands.append(command)
+            return True
+
+        # See TestExecutePythonNonJsonResponse above for why the event loop
+        # is created outside the patched block.
+        loop = asyncio.new_event_loop()
+        try:
+            async def _call():
+                entry = _SERVER.get_request_handler("tools/call")
+                params = types.CallToolRequestParams(
+                    name="cam_tool_controllers",
+                    arguments={
+                        "operation": "add_tool_controller",
+                        "job_name": "Job",
+                        "tool_name": "EM6",
+                    },
+                )
+                result = await entry.handler(None, params)
+                return result.content
+
+            with patch.object(freecad_mcp_server._ctx, "resolve_target",
+                               return_value=("/tmp/fake.sock", None)), \
+                 patch.object(freecad_mcp_server.socket, "socket") as mock_socket_cls, \
+                 patch.object(freecad_mcp_server, "send_message", _fake_send_message), \
+                 patch.object(freecad_mcp_server, "receive_message",
+                               return_value=json.dumps({"result": "ok"})):
+                mock_socket_cls.return_value = _MagicMock()
+
+                loop.run_until_complete(_call())
+        finally:
+            loop.close()
+
+        assert len(captured_commands) == 1
+        sent_args = json.loads(captured_commands[0])["args"]
+        assert "tool_number" not in sent_args, (
+            "tool_number was omitted by the caller but reached the bridge "
+            "anyway -- a JSON-schema default is leaking through the MCP "
+            "dispatch layer"
+        )
