@@ -561,23 +561,72 @@ class TestFilletExplicitEdges:
         assert props["volume"] < 3000.0
         assert_volume_close(props["volume"], 3000.0, rel=0.05, op_label="filleted pad volume")
 
-    def test_fillet_out_of_range_edge_index_fails_loudly_not_silently(self, body_with_pad):
-        """_create_fillet_with_edges's bounds-check (1 <= idx <=
-        len(Shape.Edges)) only applies to the non-Body Part::Fillet
-        fallback branch — a Body-based PartDesign::Fillet (this fixture's
-        case) builds Edge{idx} names for every given index unconditionally,
-        with no bounds-check at all. An out-of-range index therefore isn't
-        silently dropped here (unlike the non-Body path); it reaches OCCT
-        as a real invalid edge reference, and _check_feature_state catches
-        the resulting State=Invalid and reports it — a loud, reported
-        failure, not silent data loss or a crash. Pinning this asymmetry
-        as real current behavior, not fixing it here."""
+    def test_fillet_out_of_range_edge_index_fails_loudly_not_silently_body_path(self, body_with_pad):
+        """The Body-based PartDesign::Fillet path builds Edge{idx} names
+        for every given index unconditionally, with no upfront
+        bounds-check — an out-of-range index reaches OCCT as a real
+        invalid edge reference, and _check_feature_state catches the
+        resulting State=Invalid and reports it: a loud, reported failure,
+        not silent data loss or a crash. (The non-Body Part::Fillet
+        fallback used to silently drop out-of-range indices instead of
+        erroring — fixed 2026-08-21, see TestFilletExplicitEdgesNoBody
+        below — so both paths now fail loud on bad input, just via
+        different mechanisms: OCCT recompute failure here vs. explicit
+        upfront rejection there.)"""
         result = send_command("partdesign_operations", {
             "operation": "fillet", "object_name": "Pad",
             "edges": [1, 9999], "radius": 1.0, "name": "PartialFillet",
         })
         text = _text(result)
         assert "failed to compute" in text and "Invalid" in text, text[:300]
+
+
+class TestFilletExplicitEdgesNoBody:
+    """The non-Body Part::Fillet fallback (object not in a PartDesign
+    Body) used to silently filter out any out-of-range edge index and
+    create a fillet on fewer edges than requested, with no indication any
+    were skipped. Fixed 2026-08-21 to validate all indices up front and
+    reject explicitly instead — matching the Body path's own fail-loud
+    behavior (TestFilletExplicitEdges.test_fillet_out_of_range_edge_index_fails_loudly_not_silently_body_path)."""
+
+    def test_out_of_range_index_rejected_before_creating_anything(self, clean_document):
+        doc_name = clean_document
+        send_command("part_operations", {
+            "operation": "box", "length": 10, "width": 10, "height": 10, "name": "BareBox",
+        })
+        result = send_command("partdesign_operations", {
+            "operation": "fillet", "object_name": "BareBox",
+            "edges": [1, 99], "radius": 1.0,
+        })
+        text = _text(result)
+        assert "Invalid edge index" in text and "99" in text, text[:300]
+        assert "valid range 1-12" in text, text[:300]
+
+        check = send_command("execute_python_sync", {
+            "code": f"print(FreeCAD.getDocument({doc_name!r}).getObject('Fillet') is None)"
+        })
+        assert _text(check).strip().endswith("True"), (
+            "Expected no Fillet object to have been created at all — "
+            f"got: {_text(check)[:300]}"
+        )
+
+    def test_all_valid_indices_still_succeed(self, clean_document):
+        doc_name = clean_document
+        send_command("part_operations", {
+            "operation": "box", "length": 10, "width": 10, "height": 10, "name": "BareBox2",
+        })
+        result = send_command("partdesign_operations", {
+            "operation": "fillet", "object_name": "BareBox2",
+            "edges": [1, 2], "radius": 1.0,
+        })
+        assert_op_succeeded(result, "fillet(no Body, valid edges)")
+        text = _text(result)
+        assert "Created fillet" in text and "2 edges" in text, text[:300]
+
+        props = get_shape_props(doc_name, "Fillet")
+        assert props is not None
+        assert props["is_valid"]
+        assert props["volume"] < 1000.0  # 10^3, unfilleted
 
 
 # ---------------------------------------------------------------------------

@@ -252,13 +252,26 @@ class PartDesignOpsHandler(BaseHandler):
                 edge_names = [f"Edge{idx}" for idx in edges]
                 fillet.Base = (obj, edge_names)
             else:
+                # Validate BEFORE creating anything -- an out-of-range index
+                # used to be silently dropped here (edge_list built via
+                # `if 1 <= idx <= n_edges`), creating a fillet on fewer
+                # edges than requested with no indication any were
+                # skipped. The Body path above has no such filter at all
+                # (an invalid index there reaches OCCT directly and fails
+                # loudly via _check_feature_state below) -- reject
+                # up front here instead of silently under-filleting,
+                # matching that same "fail loud, not quiet" contract
+                # (fixed 2026-08-21).
+                n_edges = len(obj.Shape.Edges) if hasattr(obj, 'Shape') else 0
+                invalid = [idx for idx in edges if not (1 <= idx <= n_edges)]
+                if invalid:
+                    return (
+                        f"Invalid edge index/indices {invalid} for {object_name} "
+                        f"({n_edges} edges, valid range 1-{n_edges})"
+                    )
                 fillet = doc.addObject("Part::Fillet", name)
                 fillet.Base = obj
-                # Bounds-check like _create_fillet_with_selection — an out-of-range
-                # index otherwise produces a cryptic OCCT recompute error.
-                n_edges = len(obj.Shape.Edges) if hasattr(obj, 'Shape') else 0
-                edge_list = [(idx, radius, radius) for idx in edges if 1 <= idx <= n_edges]
-                fillet.Edges = edge_list
+                fillet.Edges = [(idx, radius, radius) for idx in edges]
 
             self.recompute(doc)
 
