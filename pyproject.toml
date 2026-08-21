@@ -47,6 +47,7 @@ testpaths = ["tests/unit"]
 markers = [
     "cam: requires FreeCAD 1.2-dev (CAM/Path workbench)",
     "real_document: exercises a real, complex .FCStd fixture -- slower/heavier than the rest of the suite; run on PR, not every push",
+    "fc_tools: requires the FC-tools sibling repo on sys.path (Inspector, SketchBuilder) -- present on the dev machine, not checked out in CI",
 ]
 
 # Coverage is a floor-check, not a quality gate — deliberately not wired
