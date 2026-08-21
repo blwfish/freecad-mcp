@@ -723,8 +723,8 @@ confirming it no longer happens.
 
 ### Issue: `execute_python()` never surfaces FreeCAD Console warnings/errors, only Python stdout
 
-**Status**: NOT FIXED (open) — design decision deferred, not just an
-implementation gap
+**Status**: FIXED (2026-08-21) — see below; scope kept to `execute_python()`
+only, per the open design question this issue originally raised
 **Severity**: Low-medium — no crash, but real FreeCAD-level warnings
 (deprecation notices, recompute warnings, etc.) triggered by code run through
 `execute_python()` are silently invisible to the caller unless they separately
@@ -760,19 +760,65 @@ output functions plus `SetStatus`/`GetStatus`/`GetObservers` for observers
 that are already registered by name (e.g. the GUI Report View widget
 registers itself natively in C++) — no `SetObserver`/callback-registration
 entry point for arbitrary Python objects turned up in this version's source.
+Re-confirmed still true 2026-08-21 against a current build.
 
-#### Suggested fix (not yet decided on)
+#### Suggested fix in the original report — investigated further, NOT what shipped
 
-Doesn't need that observer API — `get_report_view` already works (used
-successfully by hand during the coach-side session). `run_code()` could
-snapshot the Report View tail before executing user code, run it, then diff
-and fold any new Warning/Error-level lines into the response automatically.
-Same underlying mechanism as the manual workaround, just applied proactively.
+The original suggestion was: snapshot the Report View tail before executing
+user code, run it, then diff and fold any new Warning/Error-level lines into
+the response. Re-examined this before implementing anything: `get_report_view`
+(`AICopilot/handlers/view_ops.py`) reads a literal Qt `QTextEdit` widget via
+`FreeCADGui.getMainWindow()` — **GUI-only**. It would silently do nothing for
+any headless-spawned instance (`spawn_freecad_instance`, the entire
+integration-test tier), which is a real, common way this server runs. Diffing
+Report View text was never going to work universally.
 
-**Open design question, deliberately left unresolved:** should this live only
-in `execute_python()`, or should every mutating tool call pay the same
-before/after Report View diff? `execute_python()` is the highest-value target
-(arbitrary code, hardest to predict what it'll trigger), but the same class
-of silent-warning problem could in principle happen from any handler that
-calls into FreeCAD's property/recompute machinery. Deferred rather than
-guessed at — needs a real decision, not a quick patch.
+#### What actually shipped: OS-level stderr fd capture, not a Report View diff
+
+Verified in FreeCAD's own source (`FC-clone/src/Base/ConsoleObserver.cpp`):
+`ConsoleObserverStd::Warning()`/`Error()`/`Log()`/`Critical()` write via raw
+`fprintf(stderr, ...)` at the C level — below Python's `sys.stdout`/
+`sys.stderr`, which is exactly why the existing `io.StringIO()` capture never
+saw it. `ConsoleObserverStd` is unconditionally attached with
+`LoggingConsole="1"` in both `MainCmd.cpp` (headless) and `MainGui.cpp` (GUI)
+— confirmed in the same source tree — so this works in both modes, unlike the
+Report-View-diff idea.
+
+`run_code()` now redirects the real OS-level stderr fd (`os.dup2`) to a pipe
+for the duration of code execution, with a background drain thread (not a
+one-shot read at the end — the exact mechanism that caused a real pipe-full
+deadlock in this repo's own CI test harness the same day; see
+`tests/integration/conftest.py`'s `_PipeDrain`) so it can never block FreeCAD
+on `write()` if a lot of Console output happens. Captured stderr is folded
+into the response text under a `[FreeCAD Console]` heading. `stdout`-level
+Console output (`Console.Message()`, plus FreeCAD's `recompute()`
+progress-bar spam) is deliberately NOT captured this way — it's noise, not
+what this issue was about.
+
+**Real regression found and fixed during this work**: folding Console
+stderr into the same opaque `"result"` string can break a caller relying on
+`execute_python`'s output being *exactly* machine-parseable (e.g.
+`tests/integration/test_api_surface.py`'s live-scan, which does
+`print(json.dumps(...))` as the last statement and expects the whole response
+to be valid JSON) if FreeCAD emits any incidental Console output during that
+call — confirmed live: a routine `Log`-level message from
+`PartDesign::Hole`'s thread-definition lookup, not even a real warning, broke
+`json.loads()` on the response. The dispatch envelope
+(`freecad_mcp_handler.py::_run_on_gui_thread`) only ever forwards a
+handler's `"result"`/`"error"` dict keys — there's no separate structured
+channel to put Console output in without touching that shared chokepoint,
+which is exactly the kind of "every mutating tool call" scope-widening this
+issue's own open question was about avoiding without a deliberate decision.
+Fixed the one real internal consumer instead:
+`tests/integration/_api_surface_remote.py::parse_remote_scan_result()` now
+parses only the first line of the response (the JSON is always the remote
+driver's last `print()`), shared by both `test_api_surface.py` and
+`generate_api_surface_snapshot.py` rather than duplicated. Any other consumer
+that needs execute_python's stdout to be byte-exact should be aware Console
+output can now be appended after it.
+
+**Open design question from the original report, still deliberately
+unresolved:** should every mutating tool call get the same treatment, not
+just `execute_python()`? Not decided here — scope was kept to
+`execute_python()` only, the highest-value target (arbitrary code, hardest to
+predict what it'll trigger) and the one this issue was actually filed about.
