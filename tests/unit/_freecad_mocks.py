@@ -598,6 +598,198 @@ def make_sketch(name="Sketch", has_wires=True, has_faces=False,
     return obj
 
 
+class VarSetPropError(Exception):
+    """Stand-in for the FreeCAD C++ exceptions (Base::NameError,
+    Base::ValueError, ...) that addProperty/enum assignment raise — real
+    FreeCAD surfaces these to Python as regular exceptions carrying its own
+    message text, and varset_ops.py's handler methods catch bare Exception,
+    so any exception type works here as long as the message matches."""
+    pass
+
+
+# Mirrors varset_ops._PROP_DYNAMIC_BIT (Property::PropDynamic, src/App/Property.h) —
+# duplicated here only because this is a fixture faking FreeCAD's own behavior,
+# not a business rule the handler and its tests should share a single source for.
+_MOCK_PROP_DYNAMIC_BIT = 21
+
+_VARSET_DEFAULT_VALUES = {
+    'App::PropertyLength': 0.0, 'App::PropertyDistance': 0.0, 'App::PropertyFloat': 0.0,
+    'App::PropertyAngle': 0.0, 'App::PropertyArea': 0.0, 'App::PropertyVolume': 0.0,
+    'App::PropertyInteger': 0, 'App::PropertyString': '', 'App::PropertyBool': False,
+    'App::PropertyEnumeration': None, 'App::PropertyLink': None,
+}
+
+_VARSET_QUANTITY_TYPES = {
+    'App::PropertyLength', 'App::PropertyDistance', 'App::PropertyFloat',
+    'App::PropertyAngle', 'App::PropertyArea', 'App::PropertyVolume',
+}
+
+_VARSET_SUPPORTED_TYPES = sorted(set(_VARSET_DEFAULT_VALUES) | {
+    'App::PropertyPlacement', 'App::PropertyColor', 'App::PropertyVector',
+})
+
+
+class MockQuantity:
+    """Minimal stand-in for FreeCAD.Units.Quantity — just enough surface
+    (.Value, .getValueAs, .UserString) for varset_ops._property_value_for_json's
+    hasattr(raw, 'getValueAs') branch."""
+
+    def __init__(self, value, unit='mm'):
+        self.Value = float(value)
+        self._unit = unit
+
+    def getValueAs(self, unit):
+        return self.Value
+
+    @property
+    def UserString(self):
+        return f"{self.Value:.2f} {self._unit}"
+
+
+class MockVarSet:
+    """Mock App::VarSet that faithfully replicates the source-verified
+    FreeCAD behaviors varset_ops.py's handler depends on (see
+    SPEC-varset-operations.md's review notes):
+
+      * addProperty raises on a duplicate name — it never silently
+        overwrites the existing property (DynamicProperty.cpp:253-254).
+      * removeProperty returns a bool; it never raises for locked or
+        non-dynamic properties (that exception path is unreachable from
+        Python — DocumentObjectPyImp.cpp:153-162 + DocumentObject.cpp:831-834).
+      * PropertyEnumeration overloads one attribute for the allowed-values
+        list vs. the current value: assigning a list sets the options,
+        assigning a string sets the value (raising if it's not in the
+        list), assigning an int silently no-ops (PropertyStandard.cpp).
+      * getPropertyStatus reports the PropDynamic bit (21) as a bare int
+        for dynamic properties (it has no name in FreeCAD's status-name
+        table) plus named strings (LockDynamic, Hidden, ReadOnly) for
+        whichever flags addProperty set.
+    """
+
+    def __init__(self, name="VarSet"):
+        self.Name = name
+        self.Label = name
+        self.TypeId = "App::VarSet"
+        self.Placement = _Placement()
+        self._props = {}
+        self._values = {}
+        self._enum_options = {}
+        self.ExpressionEngine = []
+        self.setExpression = MagicMock(
+            side_effect=lambda prop, expr: self.ExpressionEngine.append((prop, expr))
+        )
+
+    @property
+    def PropertiesList(self):
+        return ['Placement', 'Label', 'Visibility'] + list(self._props.keys())
+
+    def supportedProperties(self):
+        return list(_VARSET_SUPPORTED_TYPES)
+
+    def addProperty(self, type_, name, group='', doc='', attr=0,
+                     read_only=False, hidden=False, locked=False, enum_vals=None):
+        if name in self._props:
+            raise VarSetPropError(f"Property {self.Name}.{name} already exists")
+        self._props[name] = {
+            'type': type_, 'group': group, 'doc': doc,
+            'locked': bool(locked), 'hidden': bool(hidden), 'read_only': bool(read_only),
+        }
+        if type_ == 'App::PropertyEnumeration':
+            self._enum_options[name] = list(enum_vals) if enum_vals else None
+            self._values[name] = enum_vals[0] if enum_vals else None
+        else:
+            self._values[name] = _VARSET_DEFAULT_VALUES.get(type_)
+        return self
+
+    def removeProperty(self, name):
+        info = self._props.get(name)
+        if info is None or info['locked']:
+            return False
+        del self._props[name]
+        self._values.pop(name, None)
+        self._enum_options.pop(name, None)
+        return True
+
+    def getTypeIdOfProperty(self, name):
+        builtin = {'Placement': 'App::PropertyPlacement', 'Label': 'App::PropertyString',
+                   'Visibility': 'App::PropertyBool'}
+        if name in builtin:
+            return builtin[name]
+        return self._props[name]['type']
+
+    def getGroupOfProperty(self, name):
+        return self._props.get(name, {}).get('group', '')
+
+    def getPropertyStatus(self, name=""):
+        if name not in self._props:
+            return []
+        info = self._props[name]
+        status = [_MOCK_PROP_DYNAMIC_BIT]
+        if info['locked']:
+            status.append('LockDynamic')
+        if info['hidden']:
+            status.append('Hidden')
+        if info['read_only']:
+            status.append('ReadOnly')
+        return status
+
+    def getEnumerationsOfProperty(self, name):
+        return self._enum_options.get(name)
+
+    def __getattr__(self, name):
+        # Only reached when normal attribute lookup fails — i.e. for
+        # dynamic properties, matching FreeCAD's real attribute proxy.
+        values = self.__dict__.get('_values', {})
+        if name in values:
+            value = values[name]
+            type_ = self._props[name]['type']
+            if type_ in _VARSET_QUANTITY_TYPES and isinstance(value, (int, float)):
+                return MockQuantity(value)
+            return value
+        raise AttributeError(name)
+
+    def __setattr__(self, name, value):
+        props = self.__dict__.get('_props')
+        if props is not None and name in props:
+            info = props[name]
+            if info['type'] == 'App::PropertyEnumeration':
+                if isinstance(value, (list, tuple)):
+                    self.__dict__['_enum_options'][name] = list(value)
+                elif isinstance(value, bool):
+                    pass  # bool is an int subclass — silent no-op, same as int
+                elif isinstance(value, str):
+                    options = self.__dict__['_enum_options'].get(name)
+                    if not options or value not in options:
+                        raise VarSetPropError(
+                            f"'{value}' is not a valid enumeration for {self.Name}.{name}"
+                        )
+                    self.__dict__['_values'][name] = value
+                elif isinstance(value, int):
+                    pass  # silent no-op — matches PropertyStandard.cpp's real behavior
+                return
+            self.__dict__['_values'][name] = value
+            return
+        object.__setattr__(self, name, value)
+
+
+def make_varset(name="VarSet"):
+    """Factory matching this file's make_X(name) convention, wrapping MockVarSet."""
+    return MockVarSet(name)
+
+
+def make_dep_edge(from_obj, to_prop, from_prop="ExpressionEngine"):
+    """Mock App::DepEdge — FromObj/FromProp/ToObj/ToProp, as returned by
+    getInListProp() on FreeCAD builds >= weekly-2026.06.24. FromProp is
+    hardcoded to the literal "ExpressionEngine" for expression-derived
+    edges in real FreeCAD (DocumentObject.cpp) — that's the default here too.
+    """
+    edge = MagicMock()
+    edge.FromObj = from_obj
+    edge.FromProp = from_prop
+    edge.ToProp = to_prop
+    return edge
+
+
 def make_spreadsheet(name="Spreadsheet"):
     """Mock Spreadsheet::Sheet with set/get/setAlias/getAlias/clear methods."""
     obj = MagicMock()

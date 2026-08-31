@@ -238,6 +238,7 @@ _HANDLER_CLASS_NAMES = {
     'diagnostics_ops': 'DiagnosticsOpsHandler',
     'execute_python_ops': 'ExecutePythonOpsHandler',
     'assembly_ops': 'AssemblyOpsHandler',
+    'varset_ops': 'VarSetOpsHandler',
     # GUI-sensitive handlers get the task queues for thread safety
     # (see _instantiate_handlers) -- listed last only to mirror the
     # historical dict order; position carries no behavioral meaning.
@@ -1314,6 +1315,7 @@ class FreeCADSocketServer:
             "geometric_verification": self.verification_ops,
             "fixture_operations": self.fixture_ops,
             "assembly_operations": self.assembly_ops,
+            "varset_operations": self.varset_ops,
         }
 
         # run_inspector is a direct-dispatch tool (no 'operation' sub-field)
