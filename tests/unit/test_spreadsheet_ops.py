@@ -522,6 +522,30 @@ class TestCsvRoundTrip(unittest.TestCase):
         payload = json.loads(result)
         self.assertNotIn('truncation_check_error', payload)
 
+    def test_range_detection_failure_is_surfaced_not_silenced(self):
+        """M12 (full review, second call site): when end_cell is omitted,
+        the getUsedRange() call used to determine it also had a bare
+        `except: pass` -- a failure there silently fell back to the
+        hardcoded J100 window with no signal at all, indistinguishable
+        from "confirmed J100 is correct". Must surface a
+        range_detection_error instead, and still succeed using the J100
+        fallback."""
+        sheet = make_spreadsheet("S")
+        sheet._cells_data['A1'] = 'x'
+        sheet.getUsedRange.side_effect = RuntimeError("scripting object invalidated")
+        doc = make_mock_doc([sheet])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.export_csv({
+            'spreadsheet_name': 'S', 'start_cell': 'A1',
+        })
+        payload = json.loads(result)
+
+        self.assertIn('x', payload['csv'])
+        self.assertIn('range_detection_error', payload)
+        self.assertIn('scripting object invalidated', payload['range_detection_error'])
+        self.assertIn('J100', payload['range'])
+
 
 class TestCellRefParsing(unittest.TestCase):
     """Pins the review finding: re.match (not fullmatch) let 'A1extra'

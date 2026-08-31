@@ -433,6 +433,7 @@ class SpreadsheetOpsHandler(BaseHandler):
 
             # Default to the sheet's actual used range, not a hardcoded J100 box
             # that silently drops any data beyond column J / row 100.
+            range_detection_error = None
             if not end_cell:
                 end_cell = 'J100'
                 try:
@@ -440,8 +441,12 @@ class SpreadsheetOpsHandler(BaseHandler):
                         ur = spreadsheet.getUsedRange()
                         if ur and len(ur) == 2 and ur[1]:
                             end_cell = ur[1]
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Falls back to the hardcoded J100 window -- record why,
+                    # so a caller can tell "no getUsedRange on this FreeCAD
+                    # version" from "confirmed nothing past J100" instead of
+                    # both silently producing the same end_cell.
+                    range_detection_error = str(e)
 
             parsed_start = _parse_cell_ref(start_cell)
             parsed_end = _parse_cell_ref(end_cell)
@@ -501,6 +506,8 @@ class SpreadsheetOpsHandler(BaseHandler):
             }
             if truncation_check_error:
                 result["truncation_check_error"] = truncation_check_error
+            if range_detection_error:
+                result["range_detection_error"] = range_detection_error
             return json.dumps(result)
 
         except Exception as e:
