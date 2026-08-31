@@ -6,6 +6,7 @@
 # FreeCAD source citations backing the design choices below.
 
 import json
+import re
 import FreeCAD
 from typing import Dict, Any
 from .base import BaseHandler
@@ -49,6 +50,23 @@ def _property_value_for_json(raw_value):
     if hasattr(raw_value, 'Name'):
         return raw_value.Name, None
     return str(raw_value), None
+
+
+def _contains_reference(expr_str: str, needle: str) -> bool:
+    """True if `needle` (e.g. "Params.Width") appears in `expr_str` as a
+    whole reference, not as a substring of a longer identifier.
+
+    Plain `needle in expr_str` containment is a syntactic-semantic-seam bug:
+    a VarSet with sibling properties "Width" and "Width2" makes needle
+    "Params.Width" a substring of "Params.Width2 * 2", so an expression that
+    only references Width2 gets misattributed to Width. Word-boundary
+    lookaround rejects a match with an identifier character immediately
+    before or after it (so "MyParams.Width" and "Params.Width2" both
+    correctly fail to match needle "Params.Width"), without requiring a full
+    expression parser.
+    """
+    pattern = r'(?<![\w.])' + re.escape(needle) + r'(?!\w)'
+    return re.search(pattern, expr_str) is not None
 
 
 class VarSetOpsHandler(BaseHandler):
@@ -97,6 +115,8 @@ class VarSetOpsHandler(BaseHandler):
                 return "Property name is required"
             if not type_:
                 return "Property type is required (e.g. 'App::PropertyLength')"
+            if enum_vals is not None and not isinstance(enum_vals, (list, tuple)):
+                return "enum_vals must be a list of strings, not a bare string"
 
             supported = set(varset.supportedProperties())
             if type_ not in supported:
@@ -231,8 +251,12 @@ class VarSetOpsHandler(BaseHandler):
             type_id = varset.getTypeIdOfProperty(name)
             if type_id != 'App::PropertyEnumeration':
                 return f"'{name}' is {type_id}, not App::PropertyEnumeration"
+            if not isinstance(options, (list, tuple)):
+                return "options must be a list of strings, not a bare string"
             if not options:
                 return "options list is required and must be non-empty"
+            if not isinstance(default_index, int) or isinstance(default_index, bool):
+                return f"default_index must be an integer, got {type(default_index).__name__}"
             if not (0 <= default_index < len(options)):
                 return f"default_index {default_index} out of range for {len(options)} options"
 
@@ -376,10 +400,24 @@ class VarSetOpsHandler(BaseHandler):
                 return err
             if varset.TypeId != 'App::VarSet':
                 return f"Object {varset_name} is not a VarSet"
+            if not property_name:
+                return "property_name is required"
+            if not varset_property:
+                return "varset_property is required"
+            if varset_property not in varset.PropertiesList:
+                return f"Property not found on VarSet {varset_name}: {varset_property}"
 
             expression = f"{varset_name}.{varset_property}"
             obj.setExpression(property_name, expression)
             self.recompute(doc)
+
+            # setExpression() doesn't validate the reference until recompute,
+            # and a failed recompute doesn't raise -- it marks the feature's
+            # State Invalid instead. Without this check, a bad varset_property
+            # would report unconditional success.
+            state_err = self._check_feature_state(obj, f"{object_name}.{property_name}")
+            if state_err:
+                return f"Error: expression bound but {state_err}"
 
             return f"Bound {object_name}.{property_name} to {expression}"
 
@@ -439,7 +477,7 @@ class VarSetOpsHandler(BaseHandler):
                     needle = f"{varset_name}.{to_prop}" if to_prop else varset_name
                     try:
                         for path_str, expr_str in from_obj.ExpressionEngine:
-                            if needle in expr_str:
+                            if _contains_reference(expr_str, needle):
                                 resolved_prop = path_str
                                 break
                     except Exception:

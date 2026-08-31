@@ -199,6 +199,19 @@ class TestAddProperty(unittest.TestCase):
         })
         self.assertEqual(vs.getEnumerationsOfProperty('Grade'), ['A', 'B', 'C'])
 
+    def test_enum_vals_as_string_rejected_not_split_into_characters(self):
+        """Pins the review finding: `list("Red")` would silently split a
+        bare string into ['R', 'e', 'd'] instead of erroring."""
+        vs = make_varset("Params")
+        doc = make_mock_doc([vs])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.add_property({
+            'varset_name': 'Params', 'type': 'App::PropertyEnumeration', 'name': 'Tint',
+            'enum_vals': 'Red',
+        })
+        assert_error_contains(self, result, "must be a list")
+        self.assertNotIn('Tint', vs.PropertiesList)
+
     def test_locked_true_recorded(self):
         vs = make_varset("Params")
         doc = make_mock_doc([vs])
@@ -359,7 +372,19 @@ class TestSetEnumOptions(unittest.TestCase):
         self.assertEqual(vs._values['Grade'], 'C')
 
     def test_default_index_one_past_end_rejected(self):
-        """Threshold: default_index == len(options) is one past the last valid index."""
+        """Threshold: default_index == len(options) is one past the last valid index.
+
+        Mutation-tested (full-review 2026-08-31, finding #06): a `<` -> `<=`
+        mutant on the bounds check used to survive this test, because it let
+        execution reach `options[default_index]`, raise IndexError, and get
+        reported as "...list index out of range" -- which still satisfied a
+        bare `assertIn("out of range", result)`. Asserting the exact
+        validation message ("out of range for N options", which the
+        IndexError's "list index out of range" text does NOT contain) plus
+        confirming no partial state mutation happened together kill that
+        mutant: under it, the first setattr (the options list) would have
+        already succeeded before the IndexError on the second setattr.
+        """
         vs = self._varset_with_enum()
         doc = make_mock_doc([vs])
         mock_FreeCAD.ActiveDocument = doc
@@ -367,7 +392,8 @@ class TestSetEnumOptions(unittest.TestCase):
             'varset_name': 'Params', 'name': 'Grade', 'options': ['A', 'B', 'C'],
             'default_index': 3,
         })
-        assert_error_contains(self, result, "out of range")
+        assert_error_contains(self, result, "out of range for 3 options")
+        self.assertIsNone(vs._enum_options.get('Grade'))
 
     def test_default_index_negative_rejected(self):
         vs = self._varset_with_enum()
@@ -377,7 +403,36 @@ class TestSetEnumOptions(unittest.TestCase):
             'varset_name': 'Params', 'name': 'Grade', 'options': ['A', 'B', 'C'],
             'default_index': -1,
         })
-        assert_error_contains(self, result, "out of range")
+        assert_error_contains(self, result, "out of range for 3 options")
+        self.assertIsNone(vs._enum_options.get('Grade'))
+
+    def test_default_index_non_int_rejected(self):
+        """Ambiguous input: a JSON client could send default_index as a
+        string or float rather than an int -- must be rejected explicitly,
+        not raise an unlabeled TypeError from `options[default_index]`."""
+        vs = self._varset_with_enum()
+        doc = make_mock_doc([vs])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.set_enum_options({
+            'varset_name': 'Params', 'name': 'Grade', 'options': ['A', 'B', 'C'],
+            'default_index': '1',
+        })
+        assert_error_contains(self, result, "must be an integer")
+        self.assertIsNone(vs._enum_options.get('Grade'))
+
+    def test_options_as_string_rejected_not_split_into_characters(self):
+        """Pins the review finding: `list("AB")` silently splits a bare
+        string into ['A', 'B'] instead of erroring -- a caller who forgets
+        to wrap a single option in a list gets a corrupted enum, not a clear
+        error."""
+        vs = self._varset_with_enum()
+        doc = make_mock_doc([vs])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.set_enum_options({
+            'varset_name': 'Params', 'name': 'Grade', 'options': 'AB',
+        })
+        assert_error_contains(self, result, "must be a list")
+        self.assertIsNone(vs._enum_options.get('Grade'))
 
     def test_value_assigned_by_string_not_index(self):
         """Pins the review finding: PropertyStandard.cpp's int-assignment
@@ -565,6 +620,7 @@ class TestBindProperty(unittest.TestCase):
 
     def test_binds_expression(self):
         vs = make_varset("Params")
+        vs.addProperty('App::PropertyLength', 'Width')
         cube = make_part_object("Cube")
         doc = make_mock_doc([vs, cube])
         mock_FreeCAD.ActiveDocument = doc
@@ -575,6 +631,44 @@ class TestBindProperty(unittest.TestCase):
         assert_success_contains(self, result, "Cube.Length", "Params.Width")
         cube.setExpression.assert_called_once_with('Length', 'Params.Width')
         doc.recompute.assert_called()
+
+    def test_nonexistent_varset_property_rejected(self):
+        """Pins the review finding: bind_property previously reported
+        unconditional success even when varset_property didn't exist on the
+        VarSet at all -- setExpression() doesn't validate the reference, and
+        nothing checked existence beforehand."""
+        vs = make_varset("Params")  # no properties added
+        cube = make_part_object("Cube")
+        doc = make_mock_doc([vs, cube])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.bind_property({
+            'object_name': 'Cube', 'property_name': 'Length',
+            'varset_name': 'Params', 'varset_property': 'DoesNotExist',
+        })
+        assert_error_contains(self, result, "not found", "DoesNotExist")
+        cube.setExpression.assert_not_called()
+
+    def test_missing_property_name_rejected(self):
+        vs = make_varset("Params")
+        vs.addProperty('App::PropertyLength', 'Width')
+        cube = make_part_object("Cube")
+        doc = make_mock_doc([vs, cube])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.bind_property({
+            'object_name': 'Cube', 'varset_name': 'Params', 'varset_property': 'Width',
+        })
+        assert_error_contains(self, result, "property_name is required")
+
+    def test_missing_varset_property_rejected(self):
+        vs = make_varset("Params")
+        vs.addProperty('App::PropertyLength', 'Width')
+        cube = make_part_object("Cube")
+        doc = make_mock_doc([vs, cube])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.bind_property({
+            'object_name': 'Cube', 'property_name': 'Length', 'varset_name': 'Params',
+        })
+        assert_error_contains(self, result, "varset_property is required")
 
 
 class TestListReferences(unittest.TestCase):
@@ -637,6 +731,29 @@ class TestListReferences(unittest.TestCase):
         parsed = json.loads(result)
         self.assertEqual(len(parsed['references']), 1)
         self.assertEqual(parsed['references'][0]['to_property'], 'Width')
+
+    def test_prefix_colliding_property_names_not_misattributed(self):
+        """Pins the review finding: plain substring containment (`needle in
+        expr_str`) misattributed a Width2 binding to Width, because
+        "Params.Width" is a substring of "Params.Width2 * 2". The object here
+        has ExpressionEngine entries for BOTH properties, ordered so the
+        colliding one comes first -- a naive substring match finds it and
+        stops there via `break`, never reaching the real match."""
+        vs = make_varset("Params")
+        cube = make_part_object("Cube")
+        cube.ExpressionEngine = [
+            ('.Length', 'Params.Width2 * 2'),
+            ('.Height', 'Params.Width + 1'),
+        ]
+        vs.getInListProp = lambda: [make_dep_edge(cube, 'Width')]
+        doc = make_mock_doc([vs, cube])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.list_references({
+            'varset_name': 'Params', 'property_name': 'Width',
+        })
+        parsed = json.loads(result)
+        self.assertEqual(len(parsed['references']), 1)
+        self.assertEqual(parsed['references'][0]['from_property'], '.Height')
 
 
 class TestAllowedOperations(unittest.TestCase):
