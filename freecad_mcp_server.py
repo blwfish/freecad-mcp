@@ -1390,6 +1390,53 @@ async def main():
             ),
         ),
         types.Tool(
+            name="varset_operations",
+            description="App::VarSet operations: create parametric-variable containers, add/remove typed properties, and bind other objects' properties to them via expressions",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "description": "VarSet operation to perform",
+                        "enum": [
+                            "create_varset", "add_property", "set_property", "get_property",
+                            "set_enum_options", "list_properties", "remove_property",
+                            "bind_property", "list_references"
+                        ]
+                    },
+                    "varset_name": {"type": "string", "description": "VarSet object name"},
+                    "name": {"type": "string", "description": "Property name on the VarSet"},
+                    "type": {
+                        "type": "string",
+                        "description": (
+                            "Fully-qualified FreeCAD property type, e.g. 'App::PropertyLength', "
+                            "'App::PropertyString', 'App::PropertyInteger', 'App::PropertyFloat', "
+                            "'App::PropertyBool', 'App::PropertyAngle', 'App::PropertyArea', "
+                            "'App::PropertyVolume', 'App::PropertyDistance', "
+                            "'App::PropertyEnumeration', 'App::PropertyLink'. Any type FreeCAD's "
+                            "supportedProperties() returns on the running build is accepted."
+                        )
+                    },
+                    "group": {"type": "string", "description": "Property group/category label"},
+                    "docs": {"type": "string", "description": "Property tooltip/documentation string"},
+                    "locked": {"type": "boolean", "description": "If true, permanently blocks remove_property on this property"},
+                    "enum_vals": {"type": "array", "items": {"type": "string"}, "description": "Initial allowed values for an App::PropertyEnumeration, set at creation"},
+                    "value": {"type": ["string", "number", "boolean"], "description": "Value to assign to the property (set_property)"},
+                    "options": {"type": "array", "items": {"type": "string"}, "description": "Allowed values for set_enum_options"},
+                    "default_index": {"type": "integer", "description": "Index into options to set as the current value (set_enum_options, default 0)"},
+                    "force": {"type": "boolean", "description": "Force remove_property to proceed even if references were found, or reference detection is unavailable"},
+                    "object_name": {"type": "string", "description": "Object whose property will be bound (bind_property)"},
+                    "property_name": {"type": "string", "description": "Property on object_name to bind (bind_property), or to filter list_references by"},
+                    "varset_property": {"type": "string", "description": "Property on the VarSet to bind to (bind_property)"}
+                },
+                "required": ["operation"]
+            },
+            annotations=types.ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=True,
+            ),
+        ),
+        types.Tool(
             name="draft_operations",
             description="Draft workbench operations: arrays, clones, text annotations, and ShapeString (extrudable 3D text)",
             inputSchema={
