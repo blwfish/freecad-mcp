@@ -37,8 +37,15 @@ def _property_value_for_json(raw_value):
     json.dumps can serialize, returning (value, unit_string).
 
     Quantity-derived values (Length, Angle, Volume, ...) expose
-    getValueAs/UserString; Link-typed values expose Name. Plain
-    str/int/float/bool/None pass through unchanged with no unit string.
+    getValueAs/UserString; Link-typed values expose Name; Vector-like
+    values (App::PropertyVector, and elements of PropertyVectorList) expose
+    x/y/z; Placement-like values expose Base/Rotation. List/tuple-typed
+    values (PropertyVectorList, PropertyFloatList, PropertyLinkList, a
+    Color's (r,g,b,a) tuple, ...) recurse per-element rather than falling
+    through to a single opaque repr() string -- add_property accepts any
+    type in FreeCAD's supportedProperties(), so these are real, reachable
+    shapes, not hypothetical ones. Plain str/int/float/bool/None pass
+    through unchanged with no unit string.
     """
     if isinstance(raw_value, (str, int, float, bool, type(None))):
         return raw_value, None
@@ -47,8 +54,21 @@ def _property_value_for_json(raw_value):
             return float(raw_value.Value), getattr(raw_value, 'UserString', str(raw_value))
         except Exception:
             return str(raw_value), None
+    if hasattr(raw_value, 'x') and hasattr(raw_value, 'y') and hasattr(raw_value, 'z'):
+        return {"x": raw_value.x, "y": raw_value.y, "z": raw_value.z}, None
+    if hasattr(raw_value, 'Base') and hasattr(raw_value, 'Rotation'):
+        position, _ = _property_value_for_json(raw_value.Base)
+        rotation = raw_value.Rotation
+        axis = getattr(rotation, 'Axis', None)
+        return {
+            "position": position,
+            "axis": {"x": axis.x, "y": axis.y, "z": axis.z} if axis is not None else None,
+            "angle": getattr(rotation, 'Angle', None),
+        }, None
     if hasattr(raw_value, 'Name'):
         return raw_value.Name, None
+    if isinstance(raw_value, (list, tuple)):
+        return [_property_value_for_json(v)[0] for v in raw_value], None
     return str(raw_value), None
 
 
@@ -161,6 +181,8 @@ class VarSetOpsHandler(BaseHandler):
                 return "Property name is required"
             if name not in varset.PropertiesList:
                 return f"Property not found: {name}"
+            if value is None:
+                return "value is required"
 
             type_id = varset.getTypeIdOfProperty(name)
             if type_id == 'App::PropertyEnumeration':
@@ -274,9 +296,19 @@ class VarSetOpsHandler(BaseHandler):
 
     def list_properties(self, args: Dict[str, Any]) -> str:
         """List a VarSet's dynamic properties (built-in DocumentObject
-        properties like Placement/Label are excluded)."""
+        properties like Placement/Label are excluded).
+
+        limit/offset paginate like document_ops.list_objects -- "total" and
+        "truncated" let the caller detect an elided page instead of a
+        response that just silently stops (and could otherwise exceed the
+        bridge's 50KB message cap on a VarSet with very many properties).
+        """
         try:
             varset_name = args.get('varset_name', '')
+            raw_limit = args.get('limit', 200)
+            limit = max(0, min(int(200 if raw_limit is None else raw_limit), 1000))
+            raw_offset = args.get('offset', 0)
+            offset = max(0, int(0 if raw_offset is None else raw_offset))
 
             doc, varset, err = self.resolve_object(varset_name, noun='VarSet')
             if err:
@@ -284,12 +316,13 @@ class VarSetOpsHandler(BaseHandler):
             if varset.TypeId != 'App::VarSet':
                 return f"Object {varset_name} is not a VarSet"
 
-            properties = []
-            for name in varset.PropertiesList:
-                status = varset.getPropertyStatus(name)
-                if _PROP_DYNAMIC_BIT not in status:
-                    continue
+            dynamic = [(n, varset.getPropertyStatus(n)) for n in varset.PropertiesList]
+            dynamic = [(n, s) for n, s in dynamic if _PROP_DYNAMIC_BIT in s]
+            total = len(dynamic)
+            page = dynamic[offset:offset + limit]
 
+            properties = []
+            for name, status in page:
                 raw_value = getattr(varset, name)
                 value, unit_string = _property_value_for_json(raw_value)
 
@@ -304,9 +337,19 @@ class VarSetOpsHandler(BaseHandler):
                 }
                 if unit_string is not None:
                     entry["unit_string"] = unit_string
+                if varset.getTypeIdOfProperty(name) == 'App::PropertyEnumeration':
+                    try:
+                        entry["options"] = list(varset.getEnumerationsOfProperty(name) or [])
+                    except Exception:
+                        pass
                 properties.append(entry)
 
-            return json.dumps({"varset": varset_name, "properties": properties})
+            return json.dumps({
+                "varset": varset_name,
+                "properties": properties,
+                "total": total,
+                "truncated": offset + len(page) < total,
+            })
 
         except Exception as e:
             return f"Error listing properties: {e}"
@@ -348,7 +391,10 @@ class VarSetOpsHandler(BaseHandler):
                 refs = {"available": False, "references": [], "message": refs_raw}
 
             available = refs.get("available", False)
-            ref_count = len(refs.get("references", []))
+            # Use "total" (the actual reference count), not len(references) --
+            # list_references paginates, so a page smaller than the real count
+            # would otherwise understate how many references actually exist.
+            ref_count = refs.get("total", len(refs.get("references", [])))
 
             if not force and (not available or ref_count > 0):
                 if available:
@@ -376,9 +422,20 @@ class VarSetOpsHandler(BaseHandler):
             if not removed:
                 return f"Failed to remove '{name}' (FreeCAD refused; reason unknown)."
 
-            self.recompute(doc)
+            # removeProperty() already succeeded at this point -- a recompute
+            # failure here must not be reported as "Error removing property",
+            # which would be indistinguishable from removal itself failing
+            # when the property is actually already gone.
+            recompute_error = None
+            try:
+                self.recompute(doc)
+            except Exception as e:
+                recompute_error = str(e)
 
-            return json.dumps({"removed": name, "varset": varset_name, "references": refs})
+            result = {"removed": name, "varset": varset_name, "references": refs}
+            if recompute_error is not None:
+                result["recompute_error"] = recompute_error
+            return json.dumps(result)
 
         except Exception as e:
             return f"Error removing property: {e}"
@@ -433,10 +490,20 @@ class VarSetOpsHandler(BaseHandler):
         Feature-detects rather than crashing; an empty "references" list
         always means "checked, found nothing" -- never "couldn't check"
         (that case sets available=False instead).
+
+        limit/offset paginate like list_properties -- "total" and
+        "truncated" let the caller detect an elided page. remove_property
+        uses "total" (not len(references)) for its blocking decision, so a
+        truncated page never undercounts how many references actually
+        exist.
         """
         try:
             varset_name = args.get('varset_name', '')
             property_name = args.get('property_name')
+            raw_limit = args.get('limit', 200)
+            limit = max(0, min(int(200 if raw_limit is None else raw_limit), 1000))
+            raw_offset = args.get('offset', 0)
+            offset = max(0, int(0 if raw_offset is None else raw_offset))
 
             doc, varset, err = self.resolve_object(varset_name, noun='VarSet')
             if err:
@@ -450,6 +517,8 @@ class VarSetOpsHandler(BaseHandler):
                     "property_name": property_name,
                     "available": False,
                     "references": [],
+                    "total": 0,
+                    "truncated": False,
                     "message": (
                         "Dependency-edge tracking (getInListProp) is not available on "
                         "this FreeCAD build. It requires FreeCAD's DepEdge API, first "
@@ -458,12 +527,16 @@ class VarSetOpsHandler(BaseHandler):
                     ),
                 })
 
-            references = []
-            for edge in varset.getInListProp():
-                to_prop = getattr(edge, 'ToProp', None)
-                if property_name and to_prop != property_name:
-                    continue
+            all_edges = [
+                edge for edge in varset.getInListProp()
+                if not property_name or getattr(edge, 'ToProp', None) == property_name
+            ]
+            total = len(all_edges)
+            page = all_edges[offset:offset + limit]
 
+            references = []
+            for edge in page:
+                to_prop = getattr(edge, 'ToProp', None)
                 from_obj = getattr(edge, 'FromObj', None)
                 from_prop_raw = getattr(edge, 'FromProp', None)
 
@@ -495,6 +568,8 @@ class VarSetOpsHandler(BaseHandler):
                 "property_name": property_name,
                 "available": True,
                 "references": references,
+                "total": total,
+                "truncated": offset + len(page) < total,
             })
 
         except Exception as e:
