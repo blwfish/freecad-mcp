@@ -1214,29 +1214,73 @@ class FreeCADSocketServer:
     def _execute_tool_inner(self, tool_name: str, args: Dict[str, Any]) -> str:
         """Internal dispatch (called by _execute_tool after op tracking setup)."""
 
-        # Direct handler method map (GUI-safe — runs on Qt thread)
-        direct_map = {
-            "create_box": self.primitives.create_box,
-            "create_cylinder": self.primitives.create_cylinder,
-            "create_sphere": self.primitives.create_sphere,
-            "create_cone": self.primitives.create_cone,
-            "create_torus": self.primitives.create_torus,
-            "create_wedge": self.primitives.create_wedge,
-            "move_object": self.transforms.move_object,
-            "rotate_object": self.transforms.rotate_object,
-            "copy_object": self.transforms.copy_object,
-            "array_object": self.transforms.array_object,
-            "create_sketch": self.sketch_ops.create_sketch,
-            "sketch_verify": self.sketch_ops.verify_sketch,
-        }
+        # These dispatch-table dict LITERALS all evaluate `self.<handler>` for
+        # every entry unconditionally, regardless of which tool_name is
+        # actually being routed -- Python builds the whole dict before any
+        # `tool_name in ...` check runs. If a handler attribute is missing
+        # (most likely: a hot-reload ran after a new handler was added to
+        # handler_registry.py without correctly re-instantiating it -- see
+        # _reload_handlers' handler_registry-reload step), the AttributeError
+        # here breaks EVERY tool call, not just the ones routed through the
+        # affected map, and gives no indication that a restart would fix it.
+        # Catching it here once, at construction time, turns that into one
+        # clear, actionable error instead of an opaque crash on whichever
+        # tool happened to be called next. Reproduced live 2026-08-31 adding
+        # VarSetOpsHandler; see full-review task_fb07efed.
+        try:
+            # Direct handler method map (GUI-safe — runs on Qt thread)
+            direct_map = {
+                "create_box": self.primitives.create_box,
+                "create_cylinder": self.primitives.create_cylinder,
+                "create_sphere": self.primitives.create_sphere,
+                "create_cone": self.primitives.create_cone,
+                "create_torus": self.primitives.create_torus,
+                "create_wedge": self.primitives.create_wedge,
+                "move_object": self.transforms.move_object,
+                "rotate_object": self.transforms.rotate_object,
+                "copy_object": self.transforms.copy_object,
+                "array_object": self.transforms.array_object,
+                "create_sketch": self.sketch_ops.create_sketch,
+                "sketch_verify": self.sketch_ops.verify_sketch,
+            }
 
-        # Boolean ops use the async path — they can run arbitrarily long on complex
-        # geometry and must not be subject to the sync GUI-thread timeout.
-        async_boolean_map = {
-            "fuse_objects": self.boolean_ops.fuse_objects,
-            "cut_objects": self.boolean_ops.cut_objects,
-            "common_objects": self.boolean_ops.common_objects,
-        }
+            # Boolean ops use the async path — they can run arbitrarily long on
+            # complex geometry and must not be subject to the sync GUI-thread
+            # timeout.
+            async_boolean_map = {
+                "fuse_objects": self.boolean_ops.fuse_objects,
+                "cut_objects": self.boolean_ops.cut_objects,
+                "common_objects": self.boolean_ops.common_objects,
+            }
+
+            # Generic dispatchers — operation name matches handler method name.
+            # Built here (not at its original point of use further down) so
+            # it's covered by this same try/except.
+            generic_dispatch_map = {
+                "cam_operations": self.cam_ops,
+                "cam_tools": self.cam_tools,
+                "cam_tool_controllers": self.cam_tool_controllers,
+                "draft_operations": self.draft_ops,
+                "mesh_operations": self.mesh_ops,
+                "spreadsheet_operations": self.spreadsheet_ops,
+                "measurement_operations": self.measurement_ops,
+                "spatial_query": self.spatial_ops,
+                "macro_operations": self.macro_ops,
+                "api_introspection": self.introspection_ops,
+                "geometric_verification": self.verification_ops,
+                "fixture_operations": self.fixture_ops,
+                "assembly_operations": self.assembly_ops,
+                "varset_operations": self.varset_ops,
+            }
+        except AttributeError as e:
+            return json.dumps({
+                "error": (
+                    f"Handler not loaded ({e}). This usually means reload_modules "
+                    "ran after a new handler was added and didn't pick it up "
+                    "correctly. Restart FreeCAD to get a clean state."
+                )
+            })
+
         if tool_name in async_boolean_map:
             return self._call_on_gui_thread_async(async_boolean_map[tool_name], args, tool_name)
 
@@ -1269,24 +1313,6 @@ class FreeCADSocketServer:
                     f"Use a recent FreeCAD weekly build for CAM support."
                 )
             })
-
-        # Generic dispatchers — operation name matches handler method name
-        generic_dispatch_map = {
-            "cam_operations": self.cam_ops,
-            "cam_tools": self.cam_tools,
-            "cam_tool_controllers": self.cam_tool_controllers,
-            "draft_operations": self.draft_ops,
-            "mesh_operations": self.mesh_ops,
-            "spreadsheet_operations": self.spreadsheet_ops,
-            "measurement_operations": self.measurement_ops,
-            "spatial_query": self.spatial_ops,
-            "macro_operations": self.macro_ops,
-            "api_introspection": self.introspection_ops,
-            "geometric_verification": self.verification_ops,
-            "fixture_operations": self.fixture_ops,
-            "assembly_operations": self.assembly_ops,
-            "varset_operations": self.varset_ops,
-        }
 
         # run_inspector is a direct-dispatch tool (no 'operation' sub-field)
         if tool_name == "run_inspector":
@@ -1730,6 +1756,29 @@ class FreeCADSocketServer:
             # Reload base first (other handlers inherit from it)
             import handlers.base as _base
             _reload('handlers.base', _base)
+
+            # Reload handler_registry itself and rebind this module's global
+            # _HANDLER_CLASS_NAMES to the fresh dict, BEFORE it's used below.
+            # Without this, a brand-new handler added to handler_registry.py
+            # (a new key in _HANDLER_CLASS_NAMES) is invisible to this whole
+            # method -- `handler_modules` and `_build_handler_class_map` both
+            # read the *stale* dict captured at this module's original
+            # `from handler_registry import _HANDLER_CLASS_NAMES` (line 217),
+            # since plain `import`/`from import` returns whatever's already
+            # in sys.modules rather than re-reading from disk. The new
+            # handler's class then never gets instantiated
+            # (_instantiate_handlers only sees the old key set), while the
+            # freshly-reloaded freecad_mcp_handler.py's dispatch code (e.g.
+            # generic_dispatch_map, a dict LITERAL evaluated unconditionally
+            # on every call) already references `self.<new_handler>` by name
+            # -- crashing EVERY tool call, not just the new handler's, with
+            # `AttributeError: '...' object has no attribute '<new_handler>'`
+            # until FreeCAD is restarted. Reproduced live 2026-08-31 adding
+            # VarSetOpsHandler; see full-review task_fb07efed.
+            global _HANDLER_CLASS_NAMES
+            import handler_registry as _handler_registry_mod
+            _handler_registry_mod = _reload('handler_registry', _handler_registry_mod)
+            _HANDLER_CLASS_NAMES = _handler_registry_mod._HANDLER_CLASS_NAMES
 
             # Reload each handler module. Derived from the same
             # _HANDLER_CLASS_NAMES dict __init__ uses -- attr_name maps
