@@ -70,8 +70,25 @@
 #                   floor bumped to 2.1.1 (was 2.0.0), synced across
 #                   pyproject.toml/requirements.txt/Dockerfile; pip bumped
 #                   for PYSEC-2026-3721.
+# Version: 7.4.1 - varset_ops.py cleanup pass from an independent code-review
+#                   (5 findings the full-review pass above didn't cover):
+#                   BaseHandler.resolve_object gained a type_id param,
+#                   collapsing 8 hand-copied "TypeId != 'App::VarSet'" checks
+#                   into the resolve call; new BaseHandler.bind_expression
+#                   shared by VarSet and Spreadsheet bind_property, which had
+#                   drifted into near-duplicates (Spreadsheet bindings now
+#                   get the same post-recompute Invalid-state check VarSet's
+#                   already had); remove_property no longer round-trips
+#                   through list_references' JSON string or re-resolves the
+#                   VarSet a second time; _PROP_DYNAMIC_BIT (a hardcoded
+#                   FreeCAD-internal bit index) gets a one-time runtime
+#                   sanity check that fails loudly instead of silently
+#                   misclassifying properties if a future FreeCAD build ever
+#                   renumbers it; set_property's MCP schema widened to accept
+#                   array values for list-typed properties. Also bumped the
+#                   dev-weekly CI pin to weekly-2026.08.26.
 
-__version__ = "7.4.0"
+__version__ = "7.4.1"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
