@@ -190,6 +190,22 @@ class VarSetOpsHandler(BaseHandler):
                     f"'{name}' is an App::PropertyEnumeration -- use set_enum_options "
                     "to set its allowed values and/or current value."
                 )
+            if type_id == 'App::PropertyLink':
+                # A Link property expects an actual DocumentObject, not a
+                # JSON-serializable value -- the MCP schema's "value" field
+                # (string/number/boolean) can't carry one directly, so this
+                # resolves a string object name to the real object first,
+                # same as bind_property/resolve_object do elsewhere in this
+                # file. Previously this type was advertised as supported but
+                # setattr(varset, name, value) could never succeed for it.
+                if not isinstance(value, str):
+                    return "value must be an object name (string) for App::PropertyLink"
+                target = doc.getObject(value)
+                if target is None:
+                    return f"Error setting property: object not found: {value}"
+                setattr(varset, name, target)
+                self.recompute(doc)
+                return f"Set {varset_name}.{name} = {value}"
 
             # Unit-bearing types (Length, Angle, Volume, ...) accept a bare
             # number or a unit string ("10 in") the same way FreeCAD's own
