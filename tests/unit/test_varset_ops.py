@@ -68,6 +68,40 @@ class TestPropertyValueForJson(unittest.TestCase):
         self.assertEqual(value, "Box001")
         self.assertIsNone(unit_string)
 
+    def test_vector_like_value_returns_structured_dict(self):
+        """Pins the review finding: PropertyVector (and PropertyVectorList
+        elements) used to fall through to str(raw_value) -- an opaque repr
+        string indistinguishable from a real string-typed property."""
+        class FakeVector:
+            x, y, z = 1.0, 2.0, 3.0
+        value, unit_string = _property_value_for_json(FakeVector())
+        self.assertEqual(value, {"x": 1.0, "y": 2.0, "z": 3.0})
+        self.assertIsNone(unit_string)
+
+    def test_placement_like_value_returns_structured_dict(self):
+        class FakeVector:
+            x, y, z = 1.0, 2.0, 3.0
+        class FakeAxis:
+            x, y, z = 0.0, 0.0, 1.0
+        class FakeRotation:
+            Axis = FakeAxis()
+            Angle = 0.5
+        class FakePlacement:
+            Base = FakeVector()
+            Rotation = FakeRotation()
+        value, unit_string = _property_value_for_json(FakePlacement())
+        self.assertEqual(value["position"], {"x": 1.0, "y": 2.0, "z": 3.0})
+        self.assertEqual(value["axis"], {"x": 0.0, "y": 0.0, "z": 1.0})
+        self.assertEqual(value["angle"], 0.5)
+
+    def test_list_typed_value_recurses_per_element(self):
+        """A Color property's (r, g, b, a) tuple must serialize as a
+        structured JSON array of numbers, not a single "(1.0, 0.0, ...)"
+        repr string."""
+        value, unit_string = _property_value_for_json((1.0, 0.0, 0.0, 1.0))
+        self.assertEqual(value, [1.0, 0.0, 0.0, 1.0])
+        self.assertIsNone(unit_string)
+
 
 class TestCreateVarSet(unittest.TestCase):
     def setUp(self):
@@ -270,6 +304,41 @@ class TestSetProperty(unittest.TestCase):
             'varset_name': 'Params', 'name': 'Grade', 'value': 'B',
         })
         assert_error_contains(self, result, "set_enum_options")
+
+    def test_missing_value_rejected(self):
+        """Pins the review finding: `value` is optional in the MCP schema,
+        so an omitted value previously fell through to `setattr(varset,
+        name, None)` and reported success, silently storing None on a
+        typed property."""
+        vs = self._varset_with_length()
+        doc = make_mock_doc([vs])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.set_property({'varset_name': 'Params', 'name': 'Width'})
+        assert_error_contains(self, result, "value is required")
+        self.assertEqual(vs._values['Width'], 0.0)  # unchanged from default, not set to None
+
+    def test_none_value_rejected(self):
+        vs = self._varset_with_length()
+        doc = make_mock_doc([vs])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.set_property({
+            'varset_name': 'Params', 'name': 'Width', 'value': None,
+        })
+        assert_error_contains(self, result, "value is required")
+
+    def test_type_mismatched_value_rejected(self):
+        """A string into a PropertyInteger -- pins the SPEC's own testing
+        requirement (SPEC-varset-operations.md's Testing section) via the
+        mock's type-checking __setattr__."""
+        vs = make_varset("Params")
+        vs.addProperty('App::PropertyInteger', 'Count')
+        doc = make_mock_doc([vs])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.set_property({
+            'varset_name': 'Params', 'name': 'Count', 'value': 'not a number',
+        })
+        assert_error_contains(self, result, "must be int")
+        self.assertEqual(vs._values['Count'], 0)  # unchanged from default
 
 
 class TestGetProperty(unittest.TestCase):
@@ -494,6 +563,40 @@ class TestListProperties(unittest.TestCase):
         self.assertFalse(parsed['Open']['hidden'])
         self.assertFalse(parsed['Open']['read_only'])
 
+    def test_enumeration_includes_options(self):
+        """Pins the review finding: list_properties omitted the "options"
+        field that get_property includes for the same type, forcing an
+        extra per-property call to discover an enum's allowed values."""
+        vs = make_varset("Params")
+        vs.addProperty('App::PropertyEnumeration', 'Grade', enum_vals=['A', 'B', 'C'])
+        doc = make_mock_doc([vs])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.list_properties({'varset_name': 'Params'})
+        parsed = {p['name']: p for p in json.loads(result)['properties']}
+        self.assertEqual(parsed['Grade']['options'], ['A', 'B', 'C'])
+
+    def test_pagination_reports_total_and_truncated(self):
+        vs = make_varset("Params")
+        vs.addProperty('App::PropertyLength', 'Width')
+        vs.addProperty('App::PropertyLength', 'Height')
+        doc = make_mock_doc([vs])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.list_properties({'varset_name': 'Params', 'limit': 1})
+        parsed = json.loads(result)
+        self.assertEqual(len(parsed['properties']), 1)
+        self.assertEqual(parsed['total'], 2)
+        self.assertTrue(parsed['truncated'])
+
+    def test_not_truncated_when_all_returned(self):
+        vs = make_varset("Params")
+        vs.addProperty('App::PropertyLength', 'Width')
+        doc = make_mock_doc([vs])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.list_properties({'varset_name': 'Params'})
+        parsed = json.loads(result)
+        self.assertEqual(parsed['total'], 1)
+        self.assertFalse(parsed['truncated'])
+
 
 class TestRemoveProperty(unittest.TestCase):
     def setUp(self):
@@ -590,6 +693,23 @@ class TestRemoveProperty(unittest.TestCase):
         result = self.handler.remove_property({'varset_name': 'Params', 'name': 'Width'})
         parsed = json.loads(result)
         self.assertEqual(parsed['removed'], 'Width')
+
+    def test_recompute_failure_after_successful_removal_is_distinguishable(self):
+        """Pins the review finding: removeProperty() had already succeeded
+        (property is actually gone) when a subsequent recompute() failure
+        used to be reported as "Error removing property: ...", making it
+        indistinguishable from removal itself having failed."""
+        vs = make_varset("Params")
+        vs.addProperty('App::PropertyLength', 'Width')
+        vs.getInListProp = lambda: []
+        doc = make_mock_doc([vs])
+        doc.recompute.side_effect = RuntimeError("recompute blew up")
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.remove_property({'varset_name': 'Params', 'name': 'Width'})
+        parsed = json.loads(result)
+        self.assertEqual(parsed['removed'], 'Width')
+        self.assertIn('recompute blew up', parsed['recompute_error'])
+        self.assertNotIn('Width', vs.PropertiesList)  # actually removed
 
 
 class TestBindProperty(unittest.TestCase):
@@ -754,6 +874,24 @@ class TestListReferences(unittest.TestCase):
         parsed = json.loads(result)
         self.assertEqual(len(parsed['references']), 1)
         self.assertEqual(parsed['references'][0]['from_property'], '.Height')
+
+    def test_pagination_reports_total_and_truncated(self):
+        vs = make_varset("Params")
+        cube = make_part_object("Cube")
+        cylinder = make_part_object("Cyl")
+        vs.getInListProp = lambda: [
+            make_dep_edge(cube, 'Width'),
+            make_dep_edge(cylinder, 'Width'),
+        ]
+        doc = make_mock_doc([vs, cube, cylinder])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.list_references({
+            'varset_name': 'Params', 'property_name': 'Width', 'limit': 1,
+        })
+        parsed = json.loads(result)
+        self.assertEqual(len(parsed['references']), 1)
+        self.assertEqual(parsed['total'], 2)
+        self.assertTrue(parsed['truncated'])
 
 
 class TestAllowedOperations(unittest.TestCase):

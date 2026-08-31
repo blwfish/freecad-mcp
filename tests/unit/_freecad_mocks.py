@@ -629,6 +629,30 @@ _VARSET_SUPPORTED_TYPES = sorted(set(_VARSET_DEFAULT_VALUES) | {
 })
 
 
+def _check_varset_value_type(type_, value):
+    """Raise VarSetPropError for a value real FreeCAD's C++ property
+    setters would reject -- e.g. None, or a str assigned to an Integer.
+    Only covers the scalar types this mock's __setattr__ actually
+    intercepts (quantity/int/string/bool); other types are left
+    unchecked, matching the rest of this mock's scoped-fidelity approach.
+    """
+    if type_ in _VARSET_QUANTITY_TYPES:
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise VarSetPropError(
+                f"value must be a Quantity, float, int, or unit string for "
+                f"{type_}, got {type(value).__name__}"
+            )
+    elif type_ == 'App::PropertyInteger':
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise VarSetPropError(f"value must be int for {type_}, got {type(value).__name__}")
+    elif type_ == 'App::PropertyString':
+        if not isinstance(value, str):
+            raise VarSetPropError(f"value must be str for {type_}, got {type(value).__name__}")
+    elif type_ == 'App::PropertyBool':
+        if not isinstance(value, bool):
+            raise VarSetPropError(f"value must be bool for {type_}, got {type(value).__name__}")
+
+
 class MockQuantity:
     """Minimal stand-in for FreeCAD.Units.Quantity — just enough surface
     (.Value, .getValueAs, .UserString) for varset_ops._property_value_for_json's
@@ -767,6 +791,7 @@ class MockVarSet:
                 elif isinstance(value, int):
                     pass  # silent no-op — matches PropertyStandard.cpp's real behavior
                 return
+            _check_varset_value_type(info['type'], value)
             self.__dict__['_values'][name] = value
             return
         object.__setattr__(self, name, value)

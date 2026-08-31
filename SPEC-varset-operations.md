@@ -72,7 +72,7 @@ Follows `spreadsheet_ops.py`'s structure: a `VarSetOpsHandler(BaseHandler)` clas
 
 6. **`list_properties(varset_name)`** — enumerates dynamic properties only (filters out base `DocumentObject` properties like `Placement`/`Label`/`Visibility` — a VarSet has no dynamic properties by default). Reports name, `TypeId`, group, current value, and `locked`/`hidden`/`read_only` status per entry.
 
-7. **`remove_property(varset_name, name, force=False)`** — calls `list_references` internally first (see #9) and includes what it finds in the response as a warning. Does **not** block on non-empty references by default (matches FreeCAD's own non-blocking GUI behavior — see open question #2) — but does propagate FreeCAD's own `RuntimeError`s for locked/non-dynamic properties, mapped to clear messages per fact #3.
+7. **`remove_property(varset_name, name, force=False)`** — calls `list_references` internally first (see #9) and includes what it finds in the response. Blocks by default when references are found, or when reference detection itself is unavailable — `force=true` overrides (see "Review status" below: open question #2 resolved as block-by-default, not the warn-and-proceed originally proposed here). Detects the locked/non-dynamic cases via a `getPropertyStatus()` pre-check, not by catching a `RuntimeError` — `removeProperty()` never raises for either case (see "Review status" below and `freecad-mcp/CLAUDE.md`'s VarSet API-gotchas note).
 
 8. **`bind_property(object_name, property_name, varset_name, varset_property)`** — identical expression-binding pattern to spreadsheet's `bind_property`: `obj.setExpression(property_name, f"{varset_name}.{varset_property}")`, then `recompute()`.
 
