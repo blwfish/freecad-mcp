@@ -18,6 +18,7 @@
     "LinkedObject": "App::PropertyXLink",
     "Placement": "App::PropertyPlacement"
   },
+  "App::VarSet": {},
   "Assembly::AssemblyLink": {
     "LinkedObject": "App::PropertyXLink",
     "Placement": "App::PropertyPlacement"
@@ -252,12 +253,12 @@
       "26",
       "3",
       "0",
-      "48135 +15 (Git)",
+      "20260825 (Git shallow)",
       "Unknown",
-      "2026/08/21 00:39:22",
-      "blw-fixes-v7",
-      "d4f5f7bc5f8f58029b0f681224562efecf5e7fe9"
+      "2026/08/25 17:50:34",
+      "(HEAD detached at 964fce2ed)",
+      "964fce2edc9a7e1905c2fd3fcd6e7be90afc8375"
     ],
-    "generated_at": "2026-08-21T06:46:58.632601+00:00"
+    "generated_at": "2026-08-31T14:18:13.640416+00:00"
   }
 }
