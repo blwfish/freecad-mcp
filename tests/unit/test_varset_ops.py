@@ -571,17 +571,20 @@ class TestListProperties(unittest.TestCase):
         self.assertEqual(parsed['properties'], [])
 
     def test_builtin_properties_filtered_out(self):
-        """A VarSet has no dynamic properties by default -- Placement/Label/
-        Visibility must never appear, confirming the PropDynamic-bit filter
-        (not a hand-maintained exclude-list) does its job."""
+        """A VarSet has no dynamic properties by default -- its real
+        built-ins (confirmed live: ExpressionEngine/Label/Label2/
+        Visibility -- a bare App::VarSet has no Placement, unlike most
+        DocumentObjects) must never appear, confirming the PropDynamic-bit
+        filter (not a hand-maintained exclude-list) does its job."""
         vs = make_varset("Params")
         doc = make_mock_doc([vs])
         mock_FreeCAD.ActiveDocument = doc
         result = self.handler.list_properties({'varset_name': 'Params'})
         parsed = json.loads(result)
         names = [p['name'] for p in parsed['properties']]
-        self.assertNotIn('Placement', names)
+        self.assertNotIn('ExpressionEngine', names)
         self.assertNotIn('Label', names)
+        self.assertNotIn('Label2', names)
         self.assertNotIn('Visibility', names)
 
     def test_reports_locked_hidden_readonly_flags(self):
@@ -650,11 +653,14 @@ class TestRemoveProperty(unittest.TestCase):
         """Pins the review finding: removeProperty() never raises
         RuntimeError('property is not dynamic') through Python -- the
         handler must detect this via getPropertyStatus's PropDynamic bit
-        BEFORE calling removeProperty, not by catching an exception after."""
+        BEFORE calling removeProperty, not by catching an exception after.
+        Uses 'Label' -- a real App::VarSet built-in (confirmed live); an
+        earlier version of this test used 'Placement', which a live
+        integration test caught isn't actually a VarSet property at all."""
         vs = make_varset("Params")
         doc = make_mock_doc([vs])
         mock_FreeCAD.ActiveDocument = doc
-        result = self.handler.remove_property({'varset_name': 'Params', 'name': 'Placement'})
+        result = self.handler.remove_property({'varset_name': 'Params', 'name': 'Label'})
         assert_error_contains(self, result, "not a dynamic property")
 
     def test_locked_property_rejected_via_status_not_exception(self):

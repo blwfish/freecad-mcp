@@ -688,13 +688,20 @@ class MockVarSet:
         for dynamic properties (it has no name in FreeCAD's status-name
         table) plus named strings (LockDynamic, Hidden, ReadOnly) for
         whichever flags addProperty set.
+      * PropertiesList on a bare VarSet is ['ExpressionEngine', 'Label',
+        'Label2', 'Visibility'] -- NOT ['Placement', 'Label', 'Visibility'].
+        Confirmed live (2026-08-31, full-review task_fb07efed's follow-up
+        integration-test run): App::VarSet has no Placement property at
+        all, unlike most DocumentObjects -- an earlier version of this mock
+        assumed it did, and a live-only integration test caught it (a unit
+        test against this same fictitious mock could not have).
     """
 
     def __init__(self, name="VarSet"):
         self.Name = name
         self.Label = name
+        self.Label2 = ""
         self.TypeId = "App::VarSet"
-        self.Placement = _Placement()
         self._props = {}
         self._values = {}
         self._enum_options = {}
@@ -705,7 +712,7 @@ class MockVarSet:
 
     @property
     def PropertiesList(self):
-        return ['Placement', 'Label', 'Visibility'] + list(self._props.keys())
+        return ['ExpressionEngine', 'Label', 'Label2', 'Visibility'] + list(self._props.keys())
 
     def supportedProperties(self):
         return list(_VARSET_SUPPORTED_TYPES)
@@ -735,8 +742,8 @@ class MockVarSet:
         return True
 
     def getTypeIdOfProperty(self, name):
-        builtin = {'Placement': 'App::PropertyPlacement', 'Label': 'App::PropertyString',
-                   'Visibility': 'App::PropertyBool'}
+        builtin = {'Label': 'App::PropertyString', 'Label2': 'App::PropertyString',
+                   'Visibility': 'App::PropertyBool', 'ExpressionEngine': 'App::PropertyExpressionEngine'}
         if name in builtin:
             return builtin[name]
         return self._props[name]['type']
