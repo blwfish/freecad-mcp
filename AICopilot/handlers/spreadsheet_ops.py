@@ -291,21 +291,10 @@ class SpreadsheetOpsHandler(BaseHandler):
             spreadsheet_name = args.get('spreadsheet_name', '')
             cell_or_alias = args.get('cell', '')
 
-            doc, obj, err = self.resolve_object(object_name)
-            if err:
-                return err
-
-            _, spreadsheet, err = self.resolve_object(spreadsheet_name, doc, noun='Spreadsheet')
-            if err:
-                return err
-
-            # Set expression binding
-            expression = f"{spreadsheet_name}.{cell_or_alias}"
-            obj.setExpression(property_name, expression)
-
-            self.recompute(doc)
-
-            return f"Bound {object_name}.{property_name} to {expression}"
+            return self.bind_expression(
+                object_name, property_name, spreadsheet_name, cell_or_alias,
+                target_noun='Spreadsheet',
+            )
 
         except Exception as e:
             return f"Error binding property: {e}"

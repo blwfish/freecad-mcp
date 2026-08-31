@@ -64,6 +64,34 @@ def _extract_enum_after(src: str, description_substring: str) -> list:
     return ast.literal_eval(list_text)
 
 
+def _extract_type_after(src: str, description_substring: str) -> list:
+    """Same shape as _extract_enum_after, but for a `"type": [...]` list
+    instead of `"enum": [...]` -- used to check the JSON-schema type array
+    declared for a given property (e.g. "value")."""
+    tool_start = src.index('name="varset_operations"')
+    tool_end = src.index('types.Tool(', tool_start + 1) if 'types.Tool(' in src[tool_start + 1:] else len(src)
+    block = src[tool_start:tool_end]
+
+    marker = block.index(description_substring)
+    # Search backward from the description to the *preceding* "type": key,
+    # since (unlike the enum case) "type" appears before "description" in
+    # this schema's property ordering.
+    type_start = block.rindex('"type":', 0, marker)
+    list_start = block.index('[', type_start)
+    depth = 0
+    i = list_start
+    while i < len(block):
+        if block[i] == '[':
+            depth += 1
+        elif block[i] == ']':
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    list_text = block[list_start:i + 1]
+    return ast.literal_eval(list_text)
+
+
 class TestVarSetEnumParity(unittest.TestCase):
     """Fail fast if the bridge schema's copy of the operation enum drifts
     from the FreeCAD-side handler's real constant."""
@@ -85,6 +113,20 @@ class TestVarSetEnumParity(unittest.TestCase):
         # caught by the set-equality check above.
         self.assertEqual(len(schema_operations), len(set(schema_operations)),
                           "Duplicate entry in the schema's operation enum")
+
+    def test_value_schema_allows_array_for_list_typed_properties(self):
+        """Review finding: add_property's `type` field openly accepts any
+        FreeCAD supportedProperties() type, including list types (e.g.
+        App::PropertyStringList, App::PropertyLinkList) whose natural value
+        shape is a JSON array -- but set_property's `value` field was typed
+        as string/number/boolean only, so a caller could create such a
+        property and then have no schema-valid way to set it. "array" must
+        be included."""
+        value_types = _extract_type_after(self.server_src, 'Value to assign to the property (set_property)')
+        self.assertIn("array", value_types)
+        self.assertIn("string", value_types)
+        self.assertIn("number", value_types)
+        self.assertIn("boolean", value_types)
 
 
 if __name__ == "__main__":
