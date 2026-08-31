@@ -20,6 +20,12 @@ from unittest.mock import MagicMock, create_autospec, patch, PropertyMock
 AICOPILOT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot")
 sys.path.insert(0, AICOPILOT_DIR)
 
+# Zero-dependency registry (no FreeCAD/handlers imports of its own) — the
+# mock_handlers fixture below builds its stub module from this instead of
+# hand-typing its own copy of the class-name list, so a handler added to
+# the real registry can't silently go missing here.
+from handler_registry import _HANDLER_CLASS_NAMES
+
 # Grab the real module now, before the mock_handlers fixture (below) replaces
 # sys.modules["freecad_health"] with an import-blocking stub for the duration
 # of each test that uses it.
@@ -41,17 +47,7 @@ from handlers.partdesign_ops import PartDesignOpsHandler
 @pytest.fixture
 def mock_handlers(monkeypatch):
     """Mock out the handler imports so freecad_mcp_handler.py can load."""
-    handler_classes = [
-        "PrimitivesHandler", "BooleanOpsHandler", "TransformsHandler",
-        "SketchOpsHandler", "PartDesignOpsHandler", "PartOpsHandler",
-        "CAMOpsHandler", "CAMToolsHandler", "CAMToolControllersHandler",
-        "DraftOpsHandler", "ViewOpsHandler", "DocumentOpsHandler",
-        "MeasurementOpsHandler", "SpreadsheetOpsHandler", "MeshOpsHandler",
-        "SpatialOpsHandler", "InspectorOpsHandler",
-        "MacroOpsHandler", "IntrospectionOpsHandler", "SketchBuilderOpsHandler",
-        "VerificationOpsHandler", "FixtureOpsHandler", "DiagnosticsOpsHandler",
-        "ExecutePythonOpsHandler", "AssemblyOpsHandler", "VarSetOpsHandler",
-    ]
+    handler_classes = list(_HANDLER_CLASS_NAMES.values())
 
     handlers_mod = types.ModuleType("handlers")
     for cls_name in handler_classes:

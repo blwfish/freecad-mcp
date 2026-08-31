@@ -365,18 +365,11 @@ class TestRunOnGuiThreadHeadless:
         )
         monkeypatch.setitem(sys.modules, "FreeCAD", fc)
 
-        # Handler stubs
-        handler_names = [
-            "PrimitivesHandler", "BooleanOpsHandler", "TransformsHandler",
-            "SketchOpsHandler", "PartDesignOpsHandler", "PartOpsHandler",
-            "CAMOpsHandler", "CAMToolsHandler", "CAMToolControllersHandler",
-            "DraftOpsHandler", "ViewOpsHandler", "DocumentOpsHandler",
-            "MeasurementOpsHandler", "SpreadsheetOpsHandler", "MeshOpsHandler",
-            "SpatialOpsHandler", "InspectorOpsHandler",
-            "MacroOpsHandler", "IntrospectionOpsHandler", "SketchBuilderOpsHandler",
-            "VerificationOpsHandler", "FixtureOpsHandler", "DiagnosticsOpsHandler",
-            "ExecutePythonOpsHandler", "AssemblyOpsHandler", "VarSetOpsHandler",
-        ]
+        # Handler stubs -- built from the same zero-dependency registry
+        # freecad_mcp_handler.py itself uses, so a handler added there
+        # can't silently go missing from this stub list.
+        from handler_registry import _HANDLER_CLASS_NAMES
+        handler_names = list(_HANDLER_CLASS_NAMES.values())
         hmod = _t.ModuleType("handlers")
         for n in handler_names:
             cls = MagicMock(return_value=MagicMock())
