@@ -40,8 +40,38 @@
 #                   continue_selection, and other previously-uncovered
 #                   tools); fixed a real pipe-full deadlock in the CI test
 #                   harness itself.
+# Version: 7.4.0 - New varset_operations MCP tool: App::VarSet parametric
+#                   variable containers (create/add/set/get property,
+#                   enum options, list/remove property, bind_property,
+#                   list_references), plus a full-review remediation pass
+#                   on the new handler (a substring-match bug that could
+#                   misattribute expression bindings between similarly-
+#                   named properties; bind_property now validates the
+#                   target property exists before binding; enum/list input
+#                   validation; response pagination). list_references/
+#                   remove_property's dependency-edge tracking is now
+#                   actually functional against real FreeCAD -- it called
+#                   getInListProp() as a method, but FreeCAD's binding
+#                   exposes it as the InListProp property, so this had
+#                   silently never worked on any FreeCAD build since it
+#                   shipped. handler_registry.py extracted as the single
+#                   source of truth for the handler class list (was
+#                   hand-duplicated at 3 call sites); its hot-reload path
+#                   fixed to re-import that registry too, so adding a new
+#                   handler and hot-reloading no longer breaks every MCP
+#                   command until FreeCAD is restarted. Closed out a batch
+#                   of 29 Medium/Low findings deferred since 2026-07-18
+#                   (most already fixed by unrelated commits; real fixes
+#                   this pass: an api_introspection module-import allowlist
+#                   closing a real path to introspecting arbitrary Python
+#                   modules, spreadsheet cell-reference parsing/CSV BOM
+#                   handling, torus self-intersection validation, and a
+#                   test-mock rotation-composition fix). mcp dependency
+#                   floor bumped to 2.1.1 (was 2.0.0), synced across
+#                   pyproject.toml/requirements.txt/Dockerfile; pip bumped
+#                   for PYSEC-2026-3721.
 
-__version__ = "7.3.0"
+__version__ = "7.4.0"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
