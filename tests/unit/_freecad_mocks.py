@@ -300,8 +300,48 @@ class _Rotation:
             self.axis = _Vec(0, 0, 1)
             self.angle = 0
 
+    def _to_quaternion(self):
+        """(w, x, y, z), where w = cos(theta/2) and (x,y,z) = axis*sin(theta/2)."""
+        length = self.axis.Length
+        if length == 0:
+            return 1.0, 0.0, 0.0, 0.0
+        k = _Vec(self.axis.x / length, self.axis.y / length, self.axis.z / length)
+        half = math.radians(self.angle) / 2.0
+        s = math.sin(half)
+        return math.cos(half), k.x * s, k.y * s, k.z * s
+
+    @staticmethod
+    def _from_quaternion(w, x, y, z):
+        w = max(-1.0, min(1.0, w))  # clamp -- guards acos against fp drift past +-1
+        theta = 2.0 * math.acos(w)
+        s = math.sin(theta / 2.0)
+        if abs(s) < 1e-12:
+            # theta ~ 0 (or ~360): axis is undefined for an identity rotation,
+            # matching this class's own default-constructor convention.
+            return _Rotation(_Vec(0, 0, 1), 0)
+        return _Rotation(_Vec(x / s, y / s, z / s), math.degrees(theta))
+
     def multiply(self, other):
-        return _Rotation(self.axis, self.angle + other.angle)
+        """Compose two axis-angle rotations via quaternion multiplication.
+
+        Real rotation composition is NOT the same as adding angles except
+        when both rotations share a common axis -- self.angle + other.angle
+        (the previous implementation) silently gave the wrong answer for
+        any other combination, undetected because nothing in this suite
+        exercised .multiply() with non-coincident axes.
+
+        Order matches FreeCAD's documented `this = this * rot` semantics:
+        result.multVec(v) == self.multVec(other.multVec(v)) -- other is
+        applied first, self second, standard quaternion/function-composition
+        convention (self ∘ other).
+        """
+        w1, x1, y1, z1 = self._to_quaternion()
+        w2, x2, y2, z2 = other._to_quaternion()
+        w = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
+        x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
+        y = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
+        z = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
+        return self._from_quaternion(w, x, y, z)
 
     def inverted(self):
         """Inverse of an axis-angle rotation: same axis, negated angle."""

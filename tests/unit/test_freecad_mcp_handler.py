@@ -218,38 +218,32 @@ class TestServerFraming:
 # ---------------------------------------------------------------------------
 
 class TestRunOnGuiThread:
-    def _simulate_gui_thread(self, server):
-        """Simulate the GUI timer draining the task queue with tagged request IDs."""
-        def process():
-            time.sleep(0.05)
-            req_id, task = server._gui_task_queue.get(timeout=1)
-            result = task()
-            server._gui_response_queue.put((req_id, result))
-        return process
-
     def test_success_result(self, server):
-        """A task returning {success: True, result: X} should produce {"result": X}."""
+        """A task returning {success: True, result: X} should produce {"result": X}.
+
+        No background thread needed -- QtCore is None in this test
+        environment (see test_timeout below), so _run_on_gui_thread always
+        takes the inline path and never touches _gui_task_queue at all. A
+        thread simulating a GUI-mode consumer here was pure dead weight: it
+        always timed out waiting on a queue nothing ever fed, producing an
+        unhandled PytestUnhandledThreadExceptionWarning (queue.Empty) after
+        every run. Removed rather than "fixed" -- there's nothing this
+        thread was ever actually verifying."""
         def fake_task():
             return {"success": True, "result": "Box created"}
 
-        t = threading.Thread(target=self._simulate_gui_thread(server))
-        t.start()
-
         response = server._run_on_gui_thread(fake_task)
-        t.join()
         parsed = json.loads(response)
         assert parsed["result"] == "Box created"
 
     def test_error_result(self, server):
-        """A task returning {error: X} should produce {"error": X}."""
+        """A task returning {error: X} should produce {"error": X}.
+
+        See test_success_result above -- no background thread needed."""
         def fake_task():
             return {"error": "Something broke"}
 
-        t = threading.Thread(target=self._simulate_gui_thread(server))
-        t.start()
-
         response = server._run_on_gui_thread(fake_task)
-        t.join()
         parsed = json.loads(response)
         assert "Something broke" in parsed["error"]
 
@@ -271,15 +265,13 @@ class TestRunOnGuiThread:
         assert "ran inline" in parsed.get("result", "")
 
     def test_non_dict_result(self, server):
-        """A task returning a plain value should be stringified."""
+        """A task returning a plain value should be stringified.
+
+        See test_success_result above -- no background thread needed."""
         def fake_task():
             return 42
 
-        t = threading.Thread(target=self._simulate_gui_thread(server))
-        t.start()
-
         response = server._run_on_gui_thread(fake_task)
-        t.join()
         parsed = json.loads(response)
         assert parsed["result"] == "42"
 

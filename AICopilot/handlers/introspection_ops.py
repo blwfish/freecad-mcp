@@ -121,11 +121,25 @@ def _resolve_path(path: str) -> Tuple[Optional[Any], Optional[str]]:
     """Resolve a dotted path like 'Part.makeBox' to a live object.
 
     Returns (obj, error). On success error is None; on failure obj is None.
+
+    The top-level module (`head`) is restricted to DEFAULT_MODULES -- the
+    intended FreeCAD introspection surface -- not any installed module.
+    Without this, a caller-supplied path like "os.system" or "subprocess"
+    could resolve (and, via sys.modules.get, succeed even without an
+    explicit import -- os/sys/etc. are always already loaded) to an
+    unrelated part of the Python standard library this tool was never
+    meant to expose.
     """
     if not path:
         return None, "empty path"
     parts = path.split(".")
     head = parts[0]
+
+    if head not in DEFAULT_MODULES:
+        return None, (
+            f"'{head}' is not an introspectable module. Allowed top-level "
+            f"modules: {', '.join(DEFAULT_MODULES)}."
+        )
 
     obj = sys.modules.get(head)
     if obj is None:
