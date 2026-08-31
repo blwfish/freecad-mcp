@@ -496,6 +496,30 @@ class TestExecuteTool:
         parsed = json.loads(result)
         assert "Unknown tool" in parsed["error"]
 
+    def test_missing_handler_gives_clear_error_not_a_crash_on_unrelated_tools(self, server):
+        """Defense in depth (full-review 2026-08-31, task_fb07efed):
+        direct_map/async_boolean_map/generic_dispatch_map are dict LITERALS
+        built unconditionally at the top of _execute_tool_inner, evaluating
+        every `self.<handler>` regardless of which tool_name is actually
+        being routed. If a handler attribute is ever missing for any reason
+        (the reload-ordering bug this task fixed, or any future variant of
+        it), that used to be an unhandled AttributeError that broke EVERY
+        tool call, not just the ones touching the missing handler --
+        including totally unrelated tools like get_debug_logs. Confirms it's
+        now caught once, at construction time, and reported as a clear,
+        actionable error instead."""
+        del server.varset_ops
+        server.diagnostics_ops.get_debug_logs = MagicMock(
+            return_value=json.dumps({"result": "should not be reached"})
+        )
+
+        result = json.loads(server._execute_tool("get_debug_logs", {"count": 10}))
+
+        assert "error" in result, result
+        assert "varset_ops" in result["error"]
+        assert "restart" in result["error"].lower()
+        server.diagnostics_ops.get_debug_logs.assert_not_called()
+
     def test_all_direct_map_tools(self, server):
         """Every tool in the direct_map should route without error."""
         direct_tools = [
@@ -1738,6 +1762,61 @@ class TestReloadHandlersPreservesState:
             "test is meaningless unless the instance was actually replaced"
         )
         assert server.execute_python_ops._python_namespace["persisted_var"] == 99
+
+    def test_stale_in_memory_registry_does_not_hide_a_newly_added_handler(self, server):
+        """Regression test (full-review 2026-08-31, task_fb07efed):
+        _reload_handlers used to build handler_modules/fresh_handler_classes
+        from this module's `_HANDLER_CLASS_NAMES` global exactly as it was
+        captured at freecad_mcp_handler.py's original module-level import
+        (line ~217) -- which goes stale the instant a NEW handler is added
+        to handler_registry.py after the server process started (the
+        deploy-then-hot-reload path, not a restart). The new handler's
+        class then never got instantiated by _instantiate_handlers, while
+        the freshly-reloaded dispatch code's `generic_dispatch_map` (a dict
+        literal that evaluates `self.<handler>` for every entry
+        unconditionally) already referenced the new handler by name --
+        crashing EVERY tool call, not just the new handler's, with
+        AttributeError until FreeCAD was restarted. Reproduced live adding
+        VarSetOpsHandler.
+
+        Simulates the stale-import state by truncating the module's own
+        _HANDLER_CLASS_NAMES global to omit a real, currently-registered
+        handler (varset_ops) right before reloading -- the fix must
+        re-read the real handler_registry.py from disk during
+        _reload_handlers (it does have the key), not trust the stale
+        in-memory copy.
+        """
+        import freecad_mcp_handler as ss_mod
+        assert 'varset_ops' in ss_mod._HANDLER_CLASS_NAMES, (
+            "test assumes varset_ops is a real registered handler -- if "
+            "it's ever removed, swap this test to use a different real key"
+        )
+        original_names = ss_mod._HANDLER_CLASS_NAMES
+        stale_names = {k: v for k, v in original_names.items() if k != 'varset_ops'}
+        ss_mod._HANDLER_CLASS_NAMES = stale_names
+        del server.varset_ops  # simulate: never instantiated, per the stale registry
+
+        snapshot = dict(sys.modules)
+        try:
+            self._drop_fake_handlers_package()
+            result = json.loads(server._reload_handlers())
+        finally:
+            sys.modules.clear()
+            sys.modules.update(snapshot)
+
+        assert "error" not in result, result
+        assert hasattr(server, 'varset_ops'), (
+            "_reload_handlers must re-read handler_registry.py from disk, "
+            "not trust a stale in-memory _HANDLER_CLASS_NAMES -- otherwise "
+            "a newly-added handler stays missing after hot-reload, and the "
+            "next dispatch-map construction (which already expects it) "
+            "crashes every subsequent tool call"
+        )
+        assert 'varset_ops' in ss_mod._HANDLER_CLASS_NAMES, (
+            "the module-level global must be updated too, not just used "
+            "locally inside _reload_handlers -- _build_handler_class_map "
+            "(and any future reload) reads this same global"
+        )
 
 
 # ---------------------------------------------------------------------------
