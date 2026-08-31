@@ -983,8 +983,7 @@ async def main():
                     "offset_z": {"type": "number", "description": "Z offset / normal offset", "default": 0},
                     # Direction control
                     "reversed": {"type": "boolean", "description": "Reverse pocket/pad direction (cut/extrude opposite to sketch normal)"},
-                    # datum_from_face parameters
-                    "face_index": {"type": "integer", "description": "1-based face index (from list_faces output)"},
+                    # datum_from_face parameters (face_index declared above, shared with the pattern-feature group)
                     "offset": {"type": "number", "description": "Offset along face normal in mm", "default": 0},
                     # Advanced parameters
                     "name": {"type": "string", "description": "Name for result feature"}

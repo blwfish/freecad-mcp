@@ -85,6 +85,12 @@ def install_fakecad(monkeypatch):
     fc = _build_fakecad()
     monkeypatch.setitem(sys.modules, "fakecad", fc)
     monkeypatch.setitem(sys.modules, "fakecad.sketcher", fc.sketcher)
+    # _resolve_path restricts the top-level module to DEFAULT_MODULES (the
+    # real FreeCAD introspection surface) -- add the synthetic test module
+    # so these tests can keep using an isolated fake rather than coupling to
+    # real FreeCAD module names.
+    from handlers import introspection_ops as _iops
+    monkeypatch.setattr(_iops, "DEFAULT_MODULES", _iops.DEFAULT_MODULES + ("fakecad",))
     yield
 
 
@@ -221,6 +227,22 @@ class TestInspect:
     def test_inspect_missing_path(self, handler):
         result = json.loads(handler.inspect({}))
         assert "error" in result
+
+    def test_inspect_rejects_modules_outside_freecad_surface(self, handler):
+        """Pins the review finding: _resolve_path used to import ANY
+        installed module, not just the intended FreeCAD surface. `os` is
+        always already present in sys.modules (every Python process imports
+        it), so this must be rejected by an explicit allowlist check --
+        sys.modules.get('os') succeeding is exactly the bypass a naive
+        "only block __import__" fix would have missed."""
+        result = json.loads(handler.inspect({"path": "os.system"}))
+        assert "error" in result
+        assert "not an introspectable module" in result["error"]
+
+    def test_inspect_rejects_subprocess(self, handler):
+        result = json.loads(handler.inspect({"path": "subprocess.Popen"}))
+        assert "error" in result
+        assert "not an introspectable module" in result["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -411,9 +433,16 @@ class TestMaxMembersBoundary:
             setattr(mod, f"fn_{i:04d}", fn)
         return mod
 
+    def _allow(self, monkeypatch, name):
+        """_resolve_path restricts the top-level module to DEFAULT_MODULES --
+        allow this test's synthetic module name too."""
+        from handlers import introspection_ops as _iops
+        monkeypatch.setattr(_iops, "DEFAULT_MODULES", _iops.DEFAULT_MODULES + (name,))
+
     def test_exactly_200_members_not_truncated(self, handler, monkeypatch):
         mod = self._make_module_with_n_public_functions(200, "big_mod_200")
         monkeypatch.setitem(sys.modules, "big_mod_200", mod)
+        self._allow(monkeypatch, "big_mod_200")
         result = json.loads(handler.inspect({"path": "big_mod_200"}))
         assert len(result["members"]) == 200
         assert "members_truncated" not in result
@@ -421,6 +450,7 @@ class TestMaxMembersBoundary:
     def test_201_members_truncated(self, handler, monkeypatch):
         mod = self._make_module_with_n_public_functions(201, "big_mod_201")
         monkeypatch.setitem(sys.modules, "big_mod_201", mod)
+        self._allow(monkeypatch, "big_mod_201")
         result = json.loads(handler.inspect({"path": "big_mod_201"}))
         assert len(result["members"]) == 200
         assert result["members_truncated"] is True
@@ -429,6 +459,7 @@ class TestMaxMembersBoundary:
     def test_199_members_not_truncated(self, handler, monkeypatch):
         mod = self._make_module_with_n_public_functions(199, "big_mod_199")
         monkeypatch.setitem(sys.modules, "big_mod_199", mod)
+        self._allow(monkeypatch, "big_mod_199")
         result = json.loads(handler.inspect({"path": "big_mod_199"}))
         assert len(result["members"]) == 199
         assert "members_truncated" not in result

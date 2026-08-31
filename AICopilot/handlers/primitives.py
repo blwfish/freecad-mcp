@@ -236,6 +236,12 @@ class PrimitivesHandler(BaseHandler):
             err = _validate_positive('torus', radius1=radius1, radius2=radius2)
             if err:
                 return err
+            if float(radius2) >= float(radius1):
+                return (
+                    f"Error creating torus: radius2 ({radius2}) must be less than "
+                    f"radius1 ({radius1}) -- radius2 >= radius1 produces a "
+                    "self-intersecting spindle torus, a known OCCT Boolean risk."
+                )
 
             doc = self.get_document()
             if not doc:

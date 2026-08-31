@@ -3,7 +3,7 @@ MCP Bridge Message Framing Adapter
 ===================================
 
 This module provides the client-side message framing functions that match
-the freecad_mcp_handler v2.1.0 protocol.
+the freecad_mcp_handler v2.1.2 protocol.
 
 Use this in your MCP bridge (freecad_mcp_server.py or similar) to communicate
 with the updated FreeCAD socket server.
@@ -35,7 +35,7 @@ def _log(msg: str) -> None:
 def send_message(sock: socket.socket, message_str: str) -> bool:
     """Send a length-prefixed message over socket (client-side).
     
-    Must match the protocol used by freecad_mcp_handler v2.1.0.
+    Must match the protocol used by freecad_mcp_handler v2.1.2.
     
     Protocol:
         [4 bytes: message length as uint32 big-endian][message bytes]
@@ -82,7 +82,7 @@ def send_message(sock: socket.socket, message_str: str) -> bool:
 def receive_message(sock: socket.socket, timeout: float = 30.0) -> Optional[str]:
     """Receive a length-prefixed message from socket (client-side).
     
-    Must match the protocol used by freecad_mcp_handler v2.1.0.
+    Must match the protocol used by freecad_mcp_handler v2.1.2.
     
     Args:
         sock: Connected socket to FreeCAD server

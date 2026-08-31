@@ -523,5 +523,69 @@ class TestCsvRoundTrip(unittest.TestCase):
         self.assertNotIn('truncation_check_error', payload)
 
 
+class TestCellRefParsing(unittest.TestCase):
+    """Pins the review finding: re.match (not fullmatch) let 'A1extra'
+    silently parse as 'A1', dropping the trailing junk instead of
+    rejecting it -- this was the same unanchored pattern duplicated at
+    7 call sites, now consolidated into _parse_cell_ref."""
+
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(SpreadsheetOpsHandler)
+
+    def test_trailing_junk_after_valid_reference_rejected(self):
+        sheet = make_spreadsheet("S")
+        doc = make_mock_doc([sheet])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.set_cell_range({
+            'spreadsheet_name': 'S', 'start_cell': 'A1extra', 'values': [[1]],
+        })
+        assert_error_contains(self, result, "invalid cell reference")
+
+    def test_valid_reference_still_accepted(self):
+        sheet = make_spreadsheet("S")
+        doc = make_mock_doc([sheet])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.set_cell_range({
+            'spreadsheet_name': 'S', 'start_cell': 'A1', 'values': [[1]],
+        })
+        assert_success_contains(self, result, "1 cells")
+
+
+class TestCsvBomStripping(unittest.TestCase):
+    """Pins the review finding: no UTF-8 BOM stripping on CSV import,
+    common in Excel-exported CSV files."""
+
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(SpreadsheetOpsHandler)
+
+    def test_leading_bom_stripped_before_parsing(self):
+        sheet = make_spreadsheet("S")
+        doc = make_mock_doc([sheet])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.import_csv({
+            'spreadsheet_name': 'S', 'start_cell': 'A1',
+            'csv_data': '﻿name,age\n',
+        })
+        assert_success_contains(self, result, "2 cells")
+        self.assertEqual(sheet._cells_data.get('A1'), 'name')
+        self.assertNotIn('﻿', sheet._cells_data.get('A1', ''))
+
+    def test_no_bom_unaffected(self):
+        sheet = make_spreadsheet("S")
+        doc = make_mock_doc([sheet])
+        mock_FreeCAD.ActiveDocument = doc
+
+        self.handler.import_csv({
+            'spreadsheet_name': 'S', 'start_cell': 'A1',
+            'csv_data': 'name,age\n',
+        })
+        self.assertEqual(sheet._cells_data.get('A1'), 'name')
+
+
 if __name__ == '__main__':
     unittest.main()

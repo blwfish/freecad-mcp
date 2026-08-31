@@ -1,8 +1,9 @@
 # Spreadsheet workbench operation handlers for FreeCAD MCP
 
 import json
+import re
 import FreeCAD
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Tuple
 from .base import BaseHandler
 
 
@@ -29,6 +30,25 @@ def _num_to_col(num):
         col = chr(num % 26 + ord('A')) + col
         num //= 26
     return col
+
+
+_CELL_REF_RE = re.compile(r'([A-Z]+)(\d+)')
+
+
+def _parse_cell_ref(cell: str) -> Optional[Tuple[str, int]]:
+    """Parse a spreadsheet cell reference like "A1" into (col_letters, row).
+
+    Single source of truth for this pattern -- previously re-declared
+    identically as an inline `re.match(r'([A-Z]+)(\\d+)', ...)` at 7 call
+    sites in this file. Uses fullmatch (not match), so trailing junk after
+    a valid reference -- "A1extra" -- is rejected rather than silently
+    accepted as "A1"; `re.match` only anchors the start of the string.
+    Returns None on no match.
+    """
+    m = _CELL_REF_RE.fullmatch(cell.upper())
+    if not m:
+        return None
+    return m.group(1), int(m.group(2))
 
 
 class SpreadsheetOpsHandler(BaseHandler):
@@ -196,13 +216,10 @@ class SpreadsheetOpsHandler(BaseHandler):
                 return "No values provided"
 
             # Parse start cell (e.g., "A1" -> col='A', row=1)
-            import re
-            match = re.match(r'([A-Z]+)(\d+)', start_cell.upper())
-            if not match:
+            parsed = _parse_cell_ref(start_cell)
+            if parsed is None:
                 return f"Invalid cell reference: {start_cell}"
-
-            start_col = match.group(1)
-            start_row = int(match.group(2))
+            start_col, start_row = parsed
 
             cells_set = 0
             for row_idx, row_values in enumerate(values):
@@ -235,19 +252,16 @@ class SpreadsheetOpsHandler(BaseHandler):
             if spreadsheet.TypeId != 'Spreadsheet::Sheet':
                 return f"Object {spreadsheet_name} is not a spreadsheet"
 
-            import re
-
-            # Parse start cell
-            match_start = re.match(r'([A-Z]+)(\d+)', start_cell.upper())
-            match_end = re.match(r'([A-Z]+)(\d+)', end_cell.upper())
-
-            if not match_start or not match_end:
+            # Parse start/end cells
+            parsed_start = _parse_cell_ref(start_cell)
+            parsed_end = _parse_cell_ref(end_cell)
+            if parsed_start is None or parsed_end is None:
                 return f"Invalid cell reference: {start_cell} or {end_cell}"
 
-            start_col_num = _col_to_num(match_start.group(1))
-            end_col_num = _col_to_num(match_end.group(1))
-            start_row = int(match_start.group(2))
-            end_row = int(match_end.group(2))
+            start_col_num = _col_to_num(parsed_start[0])
+            end_col_num = _col_to_num(parsed_end[0])
+            start_row = parsed_start[1]
+            end_row = parsed_end[1]
 
             values = []
             for row in range(start_row, end_row + 1):
@@ -366,13 +380,19 @@ class SpreadsheetOpsHandler(BaseHandler):
             if not csv_data:
                 return "No CSV data provided"
 
-            import re
-            match = re.match(r'([A-Z]+)(\d+)', start_cell.upper())
-            if not match:
-                return f"Invalid cell reference: {start_cell}"
+            # Excel's CSV export prepends a UTF-8 BOM (U+FEFF) to signal
+            # encoding; left in place it silently glues onto the first
+            # header/cell value -- a BOM'd first column header/cell gains an
+            # invisible leading character that breaks equality comparisons
+            # and (if the first field happens to be the start cell's own
+            # reference) parsing.
+            if csv_data.startswith('\ufeff'):
+                csv_data = csv_data[1:]
 
-            start_col = match.group(1)
-            start_row = int(match.group(2))
+            parsed = _parse_cell_ref(start_cell)
+            if parsed is None:
+                return f"Invalid cell reference: {start_cell}"
+            start_col, start_row = parsed
 
             start_col_num = _col_to_num(start_col)
 
@@ -411,8 +431,6 @@ class SpreadsheetOpsHandler(BaseHandler):
             if spreadsheet.TypeId != 'Spreadsheet::Sheet':
                 return f"Object {spreadsheet_name} is not a spreadsheet"
 
-            import re
-
             # Default to the sheet's actual used range, not a hardcoded J100 box
             # that silently drops any data beyond column J / row 100.
             if not end_cell:
@@ -425,16 +443,15 @@ class SpreadsheetOpsHandler(BaseHandler):
                 except Exception:
                     pass
 
-            match_start = re.match(r'([A-Z]+)(\d+)', start_cell.upper())
-            match_end = re.match(r'([A-Z]+)(\d+)', end_cell.upper())
-
-            if not match_start or not match_end:
+            parsed_start = _parse_cell_ref(start_cell)
+            parsed_end = _parse_cell_ref(end_cell)
+            if parsed_start is None or parsed_end is None:
                 return f"Invalid cell reference"
 
-            start_col_num = _col_to_num(match_start.group(1))
-            end_col_num = _col_to_num(match_end.group(1))
-            start_row = int(match_start.group(2))
-            end_row = int(match_end.group(2))
+            start_col_num = _col_to_num(parsed_start[0])
+            end_col_num = _col_to_num(parsed_end[0])
+            start_row = parsed_start[1]
+            end_row = parsed_end[1]
 
             # csv.writer quotes/escapes fields containing the delimiter, quotes or
             # newlines; the old delimiter.join produced structurally broken CSV.
@@ -468,9 +485,9 @@ class SpreadsheetOpsHandler(BaseHandler):
                 if callable(getattr(spreadsheet, 'getUsedRange', None)):
                     ur = spreadsheet.getUsedRange()
                     if ur and len(ur) == 2 and ur[1]:
-                        m = re.match(r'([A-Z]+)(\d+)', ur[1].upper())
-                        if m and (_col_to_num(m.group(1)) > end_col_num
-                                  or int(m.group(2)) > end_row):
+                        parsed_ur = _parse_cell_ref(ur[1])
+                        if parsed_ur and (_col_to_num(parsed_ur[0]) > end_col_num
+                                          or parsed_ur[1] > end_row):
                             truncated = True
             except Exception as e:
                 truncation_check_error = str(e)
