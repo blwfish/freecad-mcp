@@ -810,8 +810,10 @@ def make_varset(name="VarSet"):
 
 
 def make_dep_edge(from_obj, to_prop, from_prop="ExpressionEngine"):
-    """Mock App::DepEdge — FromObj/FromProp/ToObj/ToProp, as returned by
-    getInListProp() on FreeCAD builds >= weekly-2026.06.24. FromProp is
+    """Mock App::DepEdge — FromObj/FromProp/ToObj/ToProp, as found in the
+    InListProp property (a plain attribute, not a method call despite the
+    underlying C++ name DocumentObjectPy::getInListProp — confirmed live
+    2026-08-31) on FreeCAD builds >= weekly-2026.06.24. FromProp is
     hardcoded to the literal "ExpressionEngine" for expression-derived
     edges in real FreeCAD (DocumentObject.cpp) — that's the default here too.
     """

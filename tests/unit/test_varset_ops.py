@@ -679,7 +679,7 @@ class TestRemoveProperty(unittest.TestCase):
         vs.addProperty('App::PropertyLength', 'Width')
         doc = make_mock_doc([vs])
         mock_FreeCAD.ActiveDocument = doc
-        # No getInListProp on this mock varset by default -> list_references
+        # No InListProp on this mock varset by default -> list_references
         # reports available=False, so this also exercises the "can't verify,
         # block unless forced" path when there ARE no real references.
         result = self.handler.remove_property({
@@ -703,7 +703,7 @@ class TestRemoveProperty(unittest.TestCase):
         vs = make_varset("Params")
         vs.addProperty('App::PropertyLength', 'Width')
         consumer = make_part_object("Cube")
-        vs.getInListProp = lambda: [make_dep_edge(consumer, 'Width')]
+        vs.InListProp = [make_dep_edge(consumer, 'Width')]
         doc = make_mock_doc([vs, consumer])
         mock_FreeCAD.ActiveDocument = doc
         result = self.handler.remove_property({'varset_name': 'Params', 'name': 'Width'})
@@ -716,7 +716,7 @@ class TestRemoveProperty(unittest.TestCase):
         vs = make_varset("Params")
         vs.addProperty('App::PropertyLength', 'Width')
         consumer = make_part_object("Cube")
-        vs.getInListProp = lambda: [make_dep_edge(consumer, 'Width')]
+        vs.InListProp = [make_dep_edge(consumer, 'Width')]
         doc = make_mock_doc([vs, consumer])
         mock_FreeCAD.ActiveDocument = doc
         result = self.handler.remove_property({
@@ -729,7 +729,7 @@ class TestRemoveProperty(unittest.TestCase):
     def test_zero_references_with_detection_available_removes_without_force(self):
         vs = make_varset("Params")
         vs.addProperty('App::PropertyLength', 'Width')
-        vs.getInListProp = lambda: []
+        vs.InListProp = []
         doc = make_mock_doc([vs])
         mock_FreeCAD.ActiveDocument = doc
         result = self.handler.remove_property({'varset_name': 'Params', 'name': 'Width'})
@@ -743,7 +743,7 @@ class TestRemoveProperty(unittest.TestCase):
         indistinguishable from removal itself having failed."""
         vs = make_varset("Params")
         vs.addProperty('App::PropertyLength', 'Width')
-        vs.getInListProp = lambda: []
+        vs.InListProp = []
         doc = make_mock_doc([vs])
         doc.recompute.side_effect = RuntimeError("recompute blew up")
         mock_FreeCAD.ActiveDocument = doc
@@ -855,7 +855,7 @@ class TestListReferences(unittest.TestCase):
         self.handler = make_handler(VarSetOpsHandler)
 
     def test_unavailable_on_older_freecad(self):
-        vs = make_varset("Params")  # no getInListProp -- default state
+        vs = make_varset("Params")  # no InListProp -- default state
         doc = make_mock_doc([vs])
         mock_FreeCAD.ActiveDocument = doc
         result = self.handler.list_references({'varset_name': 'Params'})
@@ -866,7 +866,7 @@ class TestListReferences(unittest.TestCase):
 
     def test_zero_references(self):
         vs = make_varset("Params")
-        vs.getInListProp = lambda: []
+        vs.InListProp = []
         doc = make_mock_doc([vs])
         mock_FreeCAD.ActiveDocument = doc
         result = self.handler.list_references({'varset_name': 'Params'})
@@ -880,7 +880,7 @@ class TestListReferences(unittest.TestCase):
         cube.ExpressionEngine = [('.Length', 'Params.Width')]
         cylinder = make_part_object("Cyl")
         cylinder.ExpressionEngine = [('.Height', 'Params.Depth')]
-        vs.getInListProp = lambda: [
+        vs.InListProp = [
             make_dep_edge(cube, 'Width'),
             make_dep_edge(cylinder, 'Depth'),
         ]
@@ -897,7 +897,7 @@ class TestListReferences(unittest.TestCase):
         vs = make_varset("Params")
         cube = make_part_object("Cube")
         cylinder = make_part_object("Cyl")
-        vs.getInListProp = lambda: [
+        vs.InListProp = [
             make_dep_edge(cube, 'Width'),
             make_dep_edge(cylinder, 'Depth'),
         ]
@@ -923,7 +923,7 @@ class TestListReferences(unittest.TestCase):
             ('.Length', 'Params.Width2 * 2'),
             ('.Height', 'Params.Width + 1'),
         ]
-        vs.getInListProp = lambda: [make_dep_edge(cube, 'Width')]
+        vs.InListProp = [make_dep_edge(cube, 'Width')]
         doc = make_mock_doc([vs, cube])
         mock_FreeCAD.ActiveDocument = doc
         result = self.handler.list_references({
@@ -937,7 +937,7 @@ class TestListReferences(unittest.TestCase):
         vs = make_varset("Params")
         cube = make_part_object("Cube")
         cylinder = make_part_object("Cyl")
-        vs.getInListProp = lambda: [
+        vs.InListProp = [
             make_dep_edge(cube, 'Width'),
             make_dep_edge(cylinder, 'Width'),
         ]

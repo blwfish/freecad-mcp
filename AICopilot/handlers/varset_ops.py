@@ -501,11 +501,22 @@ class VarSetOpsHandler(BaseHandler):
         """List objects/properties bound to a VarSet (or one of its
         properties) via expressions.
 
-        Wraps DepEdge/getInListProp, which is absent from FreeCAD builds
-        older than weekly-2026.06.24 (including all 1.1.x stable releases).
+        Wraps DepEdge/InListProp, which is absent from FreeCAD builds older
+        than weekly-2026.06.24 (including all 1.1.x stable releases).
         Feature-detects rather than crashing; an empty "references" list
         always means "checked, found nothing" -- never "couldn't check"
         (that case sets available=False instead).
+
+        InListProp is a Python PROPERTY (plain attribute access, not a
+        method call) despite the underlying C++ implementation being named
+        DocumentObjectPy::getInListProp -- FreeCAD's binding generator
+        strips the "get" prefix for this one. Confirmed live 2026-08-31
+        (full-review follow-up): `hasattr(varset, 'getInListProp')` was
+        always False on real FreeCAD regardless of build, silently forcing
+        this method into its "unavailable" branch on every environment,
+        including ones that fully support dependency-edge tracking. Do not
+        revert this to `getInListProp()` without re-confirming the real
+        binding name via `dir(obj)` against a live instance first.
 
         limit/offset paginate like list_properties -- "total" and
         "truncated" let the caller detect an elided page. remove_property
@@ -527,7 +538,7 @@ class VarSetOpsHandler(BaseHandler):
             if varset.TypeId != 'App::VarSet':
                 return f"Object {varset_name} is not a VarSet"
 
-            if not hasattr(varset, 'getInListProp'):
+            if not hasattr(varset, 'InListProp'):
                 return json.dumps({
                     "varset": varset_name,
                     "property_name": property_name,
@@ -536,7 +547,7 @@ class VarSetOpsHandler(BaseHandler):
                     "total": 0,
                     "truncated": False,
                     "message": (
-                        "Dependency-edge tracking (getInListProp) is not available on "
+                        "Dependency-edge tracking (InListProp) is not available on "
                         "this FreeCAD build. It requires FreeCAD's DepEdge API, first "
                         "shipped in weekly-2026.06.24; it is absent from all 1.1.x "
                         "stable releases."
@@ -544,7 +555,7 @@ class VarSetOpsHandler(BaseHandler):
                 })
 
             all_edges = [
-                edge for edge in varset.getInListProp()
+                edge for edge in varset.InListProp
                 if not property_name or getattr(edge, 'ToProp', None) == property_name
             ]
             total = len(all_edges)
