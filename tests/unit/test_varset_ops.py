@@ -340,6 +340,42 @@ class TestSetProperty(unittest.TestCase):
         assert_error_contains(self, result, "must be int")
         self.assertEqual(vs._values['Count'], 0)  # unchanged from default
 
+    def test_link_property_resolves_object_name(self):
+        """Pins the review finding: App::PropertyLink was advertised as a
+        supported type but setattr(varset, name, value) could never succeed
+        for it, since a Link property expects a real DocumentObject, not a
+        JSON string/number/boolean. value is now resolved via doc.getObject."""
+        vs = make_varset("Params")
+        vs.addProperty('App::PropertyLink', 'Target')
+        target_obj = make_part_object("Cube")
+        doc = make_mock_doc([vs, target_obj])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.set_property({
+            'varset_name': 'Params', 'name': 'Target', 'value': 'Cube',
+        })
+        assert_success_contains(self, result, "Target", "Cube")
+        self.assertIs(vs._values['Target'], target_obj)
+
+    def test_link_property_nonexistent_object_rejected(self):
+        vs = make_varset("Params")
+        vs.addProperty('App::PropertyLink', 'Target')
+        doc = make_mock_doc([vs])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.set_property({
+            'varset_name': 'Params', 'name': 'Target', 'value': 'Ghost',
+        })
+        assert_error_contains(self, result, "not found", "ghost")
+
+    def test_link_property_non_string_value_rejected(self):
+        vs = make_varset("Params")
+        vs.addProperty('App::PropertyLink', 'Target')
+        doc = make_mock_doc([vs])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.set_property({
+            'varset_name': 'Params', 'name': 'Target', 'value': 5,
+        })
+        assert_error_contains(self, result, "must be an object name")
+
 
 class TestGetProperty(unittest.TestCase):
     def setUp(self):
@@ -710,6 +746,22 @@ class TestRemoveProperty(unittest.TestCase):
         self.assertEqual(parsed['removed'], 'Width')
         self.assertIn('recompute blew up', parsed['recompute_error'])
         self.assertNotIn('Width', vs.PropertiesList)  # actually removed
+
+    def test_list_references_failure_falls_back_gracefully(self):
+        """Pins the review finding: the internal list_references() call can
+        itself return a non-JSON error string (its own bare except path) --
+        confirms the json.loads(refs_raw) fallback (refs = {"available":
+        False, "references": [], "message": refs_raw}) is reachable and
+        produces a blocking response, not a crash."""
+        vs = make_varset("Params")
+        vs.addProperty('App::PropertyLength', 'Width')
+        doc = make_mock_doc([vs])
+        mock_FreeCAD.ActiveDocument = doc
+        self.handler.list_references = lambda args: "Error listing references: boom"
+        result = self.handler.remove_property({'varset_name': 'Params', 'name': 'Width'})
+        parsed = json.loads(result)
+        self.assertTrue(parsed['blocked'])
+        self.assertIn('Width', vs.PropertiesList)  # not removed
 
 
 class TestBindProperty(unittest.TestCase):
