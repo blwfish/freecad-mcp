@@ -21,7 +21,7 @@ jobs:
             # it belongs to the separate PR-only job below, on every push.
             pytest_args: "-m 'not cam and not real_document and not fc_tools'"
           - slot: "dev-weekly"
-            tag: "weekly-2026.08.20"
+            tag: "weekly-2026.08.26"
             appimage: ""  # resolved by glob below
             pytest_args: "-m 'not real_document and not fc_tools'"
 
