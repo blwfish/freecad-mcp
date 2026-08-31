@@ -205,46 +205,16 @@ except ImportError as e:
 # =============================================================================
 # Modular Handlers
 # =============================================================================
-# Single source of truth for {attr_name: HandlerClass} -- __init__ and
-# _reload_handlers each used to hand-maintain their own copy of this same
-# 25-entry mapping (plus their own copy of the flat `from handlers import
-# (...)` name list), so a handler added to one but not the other would
-# silently only work until the next hot-reload. Both now derive their
-# instantiation dict from this one dict via _build_handler_class_map,
-# which resolves against whatever `handlers` module object is current
-# (the module-level import at startup, or the freshly-reloaded package
-# object _reload_handlers builds).
-_HANDLER_CLASS_NAMES = {
-    'primitives': 'PrimitivesHandler',
-    'boolean_ops': 'BooleanOpsHandler',
-    'transforms': 'TransformsHandler',
-    'sketch_ops': 'SketchOpsHandler',
-    'partdesign_ops': 'PartDesignOpsHandler',
-    'part_ops': 'PartOpsHandler',
-    'cam_ops': 'CAMOpsHandler',
-    'cam_tools': 'CAMToolsHandler',
-    'cam_tool_controllers': 'CAMToolControllersHandler',
-    'draft_ops': 'DraftOpsHandler',
-    'measurement_ops': 'MeasurementOpsHandler',
-    'spreadsheet_ops': 'SpreadsheetOpsHandler',
-    'mesh_ops': 'MeshOpsHandler',
-    'spatial_ops': 'SpatialOpsHandler',
-    'inspector_ops': 'InspectorOpsHandler',
-    'macro_ops': 'MacroOpsHandler',
-    'introspection_ops': 'IntrospectionOpsHandler',
-    'sketch_builder_ops': 'SketchBuilderOpsHandler',
-    'verification_ops': 'VerificationOpsHandler',
-    'fixture_ops': 'FixtureOpsHandler',
-    'diagnostics_ops': 'DiagnosticsOpsHandler',
-    'execute_python_ops': 'ExecutePythonOpsHandler',
-    'assembly_ops': 'AssemblyOpsHandler',
-    'varset_ops': 'VarSetOpsHandler',
-    # GUI-sensitive handlers get the task queues for thread safety
-    # (see _instantiate_handlers) -- listed last only to mirror the
-    # historical dict order; position carries no behavioral meaning.
-    'view_ops': 'ViewOpsHandler',
-    'document_ops': 'DocumentOpsHandler',
-}
+# Single source of truth for {attr_name: HandlerClass} lives in
+# handler_registry.py, a zero-dependency module importable before this
+# file's own `import FreeCAD` / `import handlers` -- __init__ and
+# _reload_handlers both derive their instantiation dict from it via
+# _build_handler_class_map, which resolves against whatever `handlers`
+# module object is current (the module-level import at startup, or the
+# freshly-reloaded package object _reload_handlers builds). Test fixtures
+# that stub `handlers` as MagicMocks import the same registry, so a handler
+# added here can't silently go missing from those fixtures' stub list.
+from handler_registry import _HANDLER_CLASS_NAMES
 
 
 def _build_handler_class_map(handlers_module) -> Dict[str, type]:
