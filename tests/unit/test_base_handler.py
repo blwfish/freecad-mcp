@@ -330,6 +330,51 @@ class TestResolveObject:
         _, _, err = base_handler.resolve_object("M", doc, attr=("Mesh", "Shape"), noun="Object")
         assert err == "Object M has no Mesh or Shape property"
 
+    def test_type_id_check_passes_when_matching(self, base_handler):
+        obj = MagicMock(Label="Params", TypeId="App::VarSet")
+        doc = self._make_doc({"Params": obj})
+        got_doc, got_obj, err = base_handler.resolve_object(
+            "Params", doc, noun="VarSet", type_id="App::VarSet")
+        assert got_obj is obj
+        assert err is None
+
+    def test_type_id_check_fails_when_mismatched(self, base_handler):
+        """The wrong-type message reuses `noun` (a friendly name like
+        'VarSet'), not the raw TypeId string -- callers rely on this exact
+        wording (e.g. varset_ops.py's "is not a VarSet" tests)."""
+        obj = MagicMock(Label="Box1", TypeId="Part::Feature")
+        doc = self._make_doc({"Box1": obj})
+        got_doc, got_obj, err = base_handler.resolve_object(
+            "Box1", doc, noun="VarSet", type_id="App::VarSet")
+        assert got_obj is obj  # still returned, same convention as attr check
+        assert err == "Object Box1 is not a VarSet"
+
+    def test_type_id_check_or_semantics_with_tuple(self, base_handler):
+        obj = MagicMock(Label="Sheet1", TypeId="Spreadsheet::Sheet")
+        doc = self._make_doc({"Sheet1": obj})
+        _, _, err = base_handler.resolve_object(
+            "Sheet1", doc, noun="Container",
+            type_id=("App::VarSet", "Spreadsheet::Sheet"))
+        assert err is None
+
+    def test_type_id_check_runs_before_attr_check(self, base_handler):
+        """A wrong-type object that also lacks the checked attr should
+        report the type mismatch, not the missing-attribute error."""
+        obj = MagicMock(Label="Box1", TypeId="Part::Feature", spec=["Label", "TypeId"])
+        doc = self._make_doc({"Box1": obj})
+        _, _, err = base_handler.resolve_object(
+            "Box1", doc, noun="VarSet", type_id="App::VarSet", attr="Shape")
+        assert err == "Object Box1 is not a VarSet"
+
+    def test_type_id_none_skips_check(self, base_handler):
+        """type_id=None (the default) must not change behavior for any of
+        the ~200 existing call sites that don't pass it."""
+        obj = MagicMock(Label="Box1", TypeId="Part::Feature")
+        doc = self._make_doc({"Box1": obj})
+        _, got_obj, err = base_handler.resolve_object("Box1", doc)
+        assert got_obj is obj
+        assert err is None
+
     def test_ambiguous_label_propagates_valueerror(self, base_handler):
         """resolve_object must NOT swallow get_object's ambiguous-label
         ValueError -- it propagates to the caller's own try/except,
@@ -792,6 +837,112 @@ class TestCheckFeatureStateParity:
         directly inspects the class's own __dict__ instead)."""
         from handlers.partdesign_ops import PartDesignOpsHandler
         assert "_check_feature_state" not in PartDesignOpsHandler.__dict__
+
+
+class TestBindExpression:
+    """bind_expression() -- the resolve/setExpression/recompute/check-state
+    shape hoisted out of VarSetOpsHandler.bind_property and
+    SpreadsheetOpsHandler.bind_property, which used to each hand-copy it
+    (the review finding: a future fix to one had to be reapplied to the
+    other -- confirmed by the other session's full-review hardening
+    varset_ops.py's copy with a PropertiesList existence check and a
+    post-recompute state check that spreadsheet_ops.py's copy never got)."""
+
+    def _make_doc(self, objects_dict):
+        doc = MagicMock()
+        doc.getObject = lambda name: objects_dict.get(name)
+        doc.getObjectsByLabel = lambda label: [
+            o for o in objects_dict.values() if getattr(o, 'Label', None) == label
+        ]
+        return doc
+
+    def test_success_builds_expression_and_recomputes(self, base_handler, mock_freecad):
+        obj = MagicMock(Label="Cube", State=[])
+        target = MagicMock(Label="Params")
+        doc = self._make_doc({"Cube": obj, "Params": target})
+        mock_freecad.ActiveDocument = doc
+        result = base_handler.bind_expression(
+            "Cube", "Length", "Params", "Width", target_noun="VarSet")
+        assert result == "Bound Cube.Length to Params.Width"
+        obj.setExpression.assert_called_once_with("Length", "Params.Width")
+        doc.recompute.assert_called_once()
+
+    def test_object_not_found(self, base_handler, mock_freecad):
+        doc = self._make_doc({})
+        mock_freecad.ActiveDocument = doc
+        result = base_handler.bind_expression(
+            "Ghost", "Length", "Params", "Width", target_noun="VarSet")
+        assert result == "Object not found: Ghost"
+
+    def test_target_not_found_uses_target_noun(self, base_handler, mock_freecad):
+        obj = MagicMock(Label="Cube")
+        doc = self._make_doc({"Cube": obj})
+        mock_freecad.ActiveDocument = doc
+        result = base_handler.bind_expression(
+            "Cube", "Length", "Ghost", "Width", target_noun="VarSet")
+        assert result == "VarSet not found: Ghost"
+
+    def test_missing_property_name_rejected(self, base_handler, mock_freecad):
+        obj = MagicMock(Label="Cube")
+        target = MagicMock(Label="Params")
+        doc = self._make_doc({"Cube": obj, "Params": target})
+        mock_freecad.ActiveDocument = doc
+        result = base_handler.bind_expression(
+            "Cube", "", "Params", "Width", target_noun="VarSet")
+        assert result == "property_name is required"
+        obj.setExpression.assert_not_called()
+
+    def test_validate_target_rejection_short_circuits(self, base_handler, mock_freecad):
+        """A validate_target callback returning an error string must stop
+        before setExpression/recompute -- e.g. varset_ops.py's TypeId and
+        PropertiesList-existence checks."""
+        obj = MagicMock(Label="Cube")
+        target = MagicMock(Label="Params")
+        doc = self._make_doc({"Cube": obj, "Params": target})
+        mock_freecad.ActiveDocument = doc
+
+        result = base_handler.bind_expression(
+            "Cube", "Length", "Params", "DoesNotExist", target_noun="VarSet",
+            validate_target=lambda doc, t: "Property not found on VarSet Params: DoesNotExist",
+        )
+        assert result == "Property not found on VarSet Params: DoesNotExist"
+        obj.setExpression.assert_not_called()
+        doc.recompute.assert_not_called()
+
+    def test_validate_target_receives_doc_and_target(self, base_handler, mock_freecad):
+        obj = MagicMock(Label="Cube", State=[])
+        target = MagicMock(Label="Params")
+        doc = self._make_doc({"Cube": obj, "Params": target})
+        mock_freecad.ActiveDocument = doc
+        seen = {}
+
+        def _capture(d, t):
+            seen['doc'] = d
+            seen['target'] = t
+            return None
+
+        base_handler.bind_expression(
+            "Cube", "Length", "Params", "Width", target_noun="VarSet",
+            validate_target=_capture,
+        )
+        assert seen['doc'] is doc
+        assert seen['target'] is target
+
+    def test_invalid_state_after_recompute_reported_not_swallowed(self, base_handler, mock_freecad):
+        """setExpression() doesn't validate the reference until recompute,
+        and a failed recompute doesn't raise -- it marks State Invalid
+        instead. Without _check_feature_state, a bad target_ref would
+        report unconditional success (the exact bug the other session's
+        review found and fixed only in varset_ops.py's copy)."""
+        obj = MagicMock(Label="Cube", State=["Invalid"])
+        target = MagicMock(Label="Params")
+        doc = self._make_doc({"Cube": obj, "Params": target})
+        mock_freecad.ActiveDocument = doc
+        result = base_handler.bind_expression(
+            "Cube", "Length", "Params", "Wdith", target_noun="VarSet")
+        assert result.startswith("Error: expression bound but")
+        assert "Invalid" in result
+        obj.setExpression.assert_called_once()
 
 
 class TestFindGeoForPoint:

@@ -38,6 +38,7 @@ from tests.unit._freecad_mocks import (
     assert_success_contains,
 )
 
+import handlers.varset_ops as varset_ops_module
 from handlers.varset_ops import VarSetOpsHandler, _property_value_for_json, _PROP_DYNAMIC_BIT
 
 
@@ -637,6 +638,87 @@ class TestListProperties(unittest.TestCase):
         self.assertFalse(parsed['truncated'])
 
 
+class TestVerifyPropDynamicBit(unittest.TestCase):
+    """_PROP_DYNAMIC_BIT (21) has no name in FreeCAD's status-name table --
+    it's a hardcoded bit index with no version check. _verify_prop_dynamic_bit
+    is a one-time runtime sanity check (memoized module-globally) that
+    'Label', a guaranteed built-in on every App::DocumentObject, never
+    reports the dynamic bit. If it ever does, that means the bit-to-status
+    mapping changed on this FreeCAD build, and list_properties/remove_property
+    must refuse rather than silently misclassify which properties are safe
+    to remove."""
+
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(VarSetOpsHandler)
+        # Memoized at module scope -- reset so each test observes a fresh
+        # check instead of a previous test's (or import-time) cached pass.
+        varset_ops_module._dynamic_bit_verified = False
+
+    def tearDown(self):
+        # Leave the module in the same "unverified" state other test
+        # classes' setUp doesn't know to reset, so they still get a real
+        # (passing) check rather than silently trusting this class's mocks.
+        varset_ops_module._dynamic_bit_verified = False
+
+    def test_normal_build_passes_and_memoizes(self):
+        """MockVarSet.getPropertyStatus('Label') correctly returns []
+        (Label is never in self._props), so the check passes silently and
+        remove_property proceeds to its normal not-dynamic rejection."""
+        vs = make_varset("Params")
+        doc = make_mock_doc([vs])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.remove_property({'varset_name': 'Params', 'name': 'Label'})
+        assert_error_contains(self, result, "not a dynamic property")
+        self.assertTrue(varset_ops_module._dynamic_bit_verified)
+
+    def test_bit_mismatch_blocks_remove_property_loudly(self):
+        """Simulates a future FreeCAD renumbering the bit: Label reports
+        the dynamic bit too. Must refuse with a clear internal-check
+        error, not silently let 'Label' (or anything else) through the
+        not-dynamic gate."""
+        vs = make_varset("Params")
+        vs.addProperty('App::PropertyLength', 'Width')
+        vs.getPropertyStatus = lambda name='': (
+            [_PROP_DYNAMIC_BIT] if name == 'Label' else
+            ([_PROP_DYNAMIC_BIT] if name in vs._props else [])
+        )
+        doc = make_mock_doc([vs])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.remove_property({'varset_name': 'Params', 'name': 'Width'})
+        assert_error_contains(self, result, "internal check failed", "dynamic-property bit")
+        self.assertFalse(varset_ops_module._dynamic_bit_verified)
+
+    def test_bit_mismatch_blocks_list_properties_loudly(self):
+        vs = make_varset("Params")
+        vs.addProperty('App::PropertyLength', 'Width')
+        vs.getPropertyStatus = lambda name='': (
+            [_PROP_DYNAMIC_BIT] if name == 'Label' else
+            ([_PROP_DYNAMIC_BIT] if name in vs._props else [])
+        )
+        doc = make_mock_doc([vs])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.list_properties({'varset_name': 'Params'})
+        assert_error_contains(self, result, "internal check failed", "dynamic-property bit")
+
+    def test_check_only_runs_once_per_process(self):
+        """A second call after a passing check must short-circuit on the
+        memoized flag without touching the varset at all -- confirmed by
+        calling _verify_prop_dynamic_bit directly (list_properties/
+        remove_property also call getPropertyStatus('Label') themselves as
+        part of their own normal listing/lookup work, so spying via those
+        public methods can't isolate this helper's own memoization)."""
+        vs = make_varset("Params")
+        first = varset_ops_module._verify_prop_dynamic_bit(vs)
+        self.assertIsNone(first)
+        self.assertTrue(varset_ops_module._dynamic_bit_verified)
+
+        vs.getPropertyStatus = lambda name='': (_ for _ in ()).throw(
+            AssertionError("getPropertyStatus should not be called once memoized"))
+        second = varset_ops_module._verify_prop_dynamic_bit(vs)
+        self.assertIsNone(second)
+
+
 class TestRemoveProperty(unittest.TestCase):
     def setUp(self):
         reset_mocks()
@@ -648,6 +730,32 @@ class TestRemoveProperty(unittest.TestCase):
         mock_FreeCAD.ActiveDocument = doc
         result = self.handler.remove_property({'varset_name': 'Params', 'name': 'Ghost'})
         assert_error_contains(self, result, "property not found")
+
+    def test_reference_check_resolves_varset_only_once(self):
+        """Pins the review finding: remove_property used to call the public
+        list_references() to check for references, which independently
+        re-resolved the same VarSet (a second resolve_object() lookup) and
+        forced a json.dumps/json.loads round trip purely for an in-process
+        call. It now calls _list_references_dict(varset, ...) directly with
+        the already-resolved object, so resolve_object() must fire exactly
+        once per remove_property call."""
+        vs = make_varset("Params")
+        vs.addProperty('App::PropertyLength', 'Width')
+        vs.InListProp = []
+        doc = make_mock_doc([vs])
+        mock_FreeCAD.ActiveDocument = doc
+
+        original_resolve = self.handler.resolve_object
+        calls = []
+        def _counting_resolve(*args, **kwargs):
+            calls.append((args, kwargs))
+            return original_resolve(*args, **kwargs)
+        self.handler.resolve_object = _counting_resolve
+
+        result = self.handler.remove_property({'varset_name': 'Params', 'name': 'Width'})
+        parsed = json.loads(result)
+        self.assertEqual(parsed['removed'], 'Width')
+        self.assertEqual(len(calls), 1)
 
     def test_builtin_property_rejected_via_status_not_exception(self):
         """Pins the review finding: removeProperty() never raises
@@ -753,20 +861,21 @@ class TestRemoveProperty(unittest.TestCase):
         self.assertIn('recompute blew up', parsed['recompute_error'])
         self.assertNotIn('Width', vs.PropertiesList)  # actually removed
 
-    def test_list_references_failure_falls_back_gracefully(self):
-        """Pins the review finding: the internal list_references() call can
-        itself return a non-JSON error string (its own bare except path) --
-        confirms the json.loads(refs_raw) fallback (refs = {"available":
-        False, "references": [], "message": refs_raw}) is reachable and
-        produces a blocking response, not a crash."""
+    def test_list_references_dict_failure_caught_not_crashed(self):
+        """remove_property now calls _list_references_dict(...) directly --
+        a plain dict return, not a JSON string round-tripped through
+        json.loads (that fallback path no longer exists; see
+        TestListReferencesDict for direct coverage of the new helper). If
+        the internal call raises for any reason, remove_property's own
+        outer try/except must still catch it and must not have removed
+        the property first."""
         vs = make_varset("Params")
         vs.addProperty('App::PropertyLength', 'Width')
         doc = make_mock_doc([vs])
         mock_FreeCAD.ActiveDocument = doc
-        self.handler.list_references = lambda args: "Error listing references: boom"
+        self.handler._list_references_dict = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
         result = self.handler.remove_property({'varset_name': 'Params', 'name': 'Width'})
-        parsed = json.loads(result)
-        self.assertTrue(parsed['blocked'])
+        assert_error_contains(self, result, "error removing property", "boom")
         self.assertIn('Width', vs.PropertiesList)  # not removed
 
 

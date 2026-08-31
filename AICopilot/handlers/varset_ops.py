@@ -20,6 +20,52 @@ from .base import BaseHandler
 # other bit we care about (LockDynamic, Hidden, ReadOnly) does have a name.
 _PROP_DYNAMIC_BIT = 21
 
+# Set True the first time _verify_prop_dynamic_bit() passes on a live
+# FreeCAD instance -- memoized at module scope so the check runs once per
+# process, not once per call.
+_dynamic_bit_verified = False
+
+
+def _verify_prop_dynamic_bit(varset) -> "str | None":
+    """One-time runtime sanity check that _PROP_DYNAMIC_BIT still means
+    "added dynamically" on this FreeCAD build.
+
+    _PROP_DYNAMIC_BIT has no name in FreeCAD's status-name table (see the
+    constant's docstring above) -- it's a hardcoded bit index with no
+    version check. If a future FreeCAD release renumbers it, every
+    dynamic/not-dynamic classification in this file (list_properties'
+    filter, and remove_property's locked/built-in safety gate) would
+    silently start being wrong instead of raising. 'Label' is a guaranteed
+    built-in property on every App::DocumentObject, never added via
+    addDynamicProperty, so it must never report the dynamic bit -- if it
+    does, the bit-to-meaning mapping has changed and every caller of this
+    check must refuse to proceed rather than risk classifying a built-in
+    property as safe to remove.
+
+    Returns an error string if the check fails, else None. Can't verify
+    (e.g. `Label` status unavailable) -> returns None rather than blocking,
+    since that's a "don't know" state, not a confirmed mismatch.
+    """
+    global _dynamic_bit_verified
+    if _dynamic_bit_verified:
+        return None
+    try:
+        label_status = varset.getPropertyStatus('Label')
+    except Exception:
+        return None
+    if _PROP_DYNAMIC_BIT in label_status:
+        return (
+            "Internal check failed: this FreeCAD build's built-in 'Label' "
+            f"property reports the dynamic-property bit ({_PROP_DYNAMIC_BIT}) "
+            "that this handler assumes only added properties have. The "
+            "bit-to-status mapping appears to have changed on this FreeCAD "
+            "version -- refusing dynamic/locked property checks rather than "
+            "risk misclassifying a built-in property as removable. Please "
+            "report this along with your FreeCAD version."
+        )
+    _dynamic_bit_verified = True
+    return None
+
 # Common property types, used only to keep add_property's "unknown type"
 # error message short and readable. NOT used for validation -- the actual
 # check is against the live supportedProperties() result, which is the only
@@ -126,11 +172,9 @@ class VarSetOpsHandler(BaseHandler):
             locked = bool(args.get('locked', False))
             enum_vals = args.get('enum_vals')
 
-            doc, varset, err = self.resolve_object(varset_name, noun='VarSet')
+            doc, varset, err = self.resolve_object(varset_name, noun='VarSet', type_id='App::VarSet')
             if err:
                 return err
-            if varset.TypeId != 'App::VarSet':
-                return f"Object {varset_name} is not a VarSet"
             if not name:
                 return "Property name is required"
             if not type_:
@@ -172,11 +216,9 @@ class VarSetOpsHandler(BaseHandler):
             name = args.get('name', '')
             value = args.get('value')
 
-            doc, varset, err = self.resolve_object(varset_name, noun='VarSet')
+            doc, varset, err = self.resolve_object(varset_name, noun='VarSet', type_id='App::VarSet')
             if err:
                 return err
-            if varset.TypeId != 'App::VarSet':
-                return f"Object {varset_name} is not a VarSet"
             if not name:
                 return "Property name is required"
             if name not in varset.PropertiesList:
@@ -226,11 +268,9 @@ class VarSetOpsHandler(BaseHandler):
             varset_name = args.get('varset_name', '')
             name = args.get('name', '')
 
-            doc, varset, err = self.resolve_object(varset_name, noun='VarSet')
+            doc, varset, err = self.resolve_object(varset_name, noun='VarSet', type_id='App::VarSet')
             if err:
                 return err
-            if varset.TypeId != 'App::VarSet':
-                return f"Object {varset_name} is not a VarSet"
             if not name:
                 return "Property name is required"
             if name not in varset.PropertiesList:
@@ -276,11 +316,9 @@ class VarSetOpsHandler(BaseHandler):
             options = args.get('options', [])
             default_index = args.get('default_index', 0)
 
-            doc, varset, err = self.resolve_object(varset_name, noun='VarSet')
+            doc, varset, err = self.resolve_object(varset_name, noun='VarSet', type_id='App::VarSet')
             if err:
                 return err
-            if varset.TypeId != 'App::VarSet':
-                return f"Object {varset_name} is not a VarSet"
             if not name:
                 return "Property name is required"
             if name not in varset.PropertiesList:
@@ -326,11 +364,12 @@ class VarSetOpsHandler(BaseHandler):
             raw_offset = args.get('offset', 0)
             offset = max(0, int(0 if raw_offset is None else raw_offset))
 
-            doc, varset, err = self.resolve_object(varset_name, noun='VarSet')
+            doc, varset, err = self.resolve_object(varset_name, noun='VarSet', type_id='App::VarSet')
             if err:
                 return err
-            if varset.TypeId != 'App::VarSet':
-                return f"Object {varset_name} is not a VarSet"
+            bit_err = _verify_prop_dynamic_bit(varset)
+            if bit_err:
+                return bit_err
 
             dynamic = [(n, varset.getPropertyStatus(n)) for n in varset.PropertiesList]
             dynamic = [(n, s) for n, s in dynamic if _PROP_DYNAMIC_BIT in s]
@@ -384,11 +423,12 @@ class VarSetOpsHandler(BaseHandler):
             name = args.get('name', '')
             force = bool(args.get('force', False))
 
-            doc, varset, err = self.resolve_object(varset_name, noun='VarSet')
+            doc, varset, err = self.resolve_object(varset_name, noun='VarSet', type_id='App::VarSet')
             if err:
                 return err
-            if varset.TypeId != 'App::VarSet':
-                return f"Object {varset_name} is not a VarSet"
+            bit_err = _verify_prop_dynamic_bit(varset)
+            if bit_err:
+                return bit_err
             if not name:
                 return "Property name is required"
             if name not in varset.PropertiesList:
@@ -400,11 +440,12 @@ class VarSetOpsHandler(BaseHandler):
             if "LockDynamic" in status:
                 return f"Cannot remove '{name}': property is locked (added with locked=True)."
 
-            refs_raw = self.list_references({"varset_name": varset_name, "property_name": name})
-            try:
-                refs = json.loads(refs_raw)
-            except Exception:
-                refs = {"available": False, "references": [], "message": refs_raw}
+            # Calls the dict-returning core directly with the varset already
+            # resolved above, instead of round-tripping through the public
+            # list_references()'s JSON string (a second resolve_object() +
+            # TypeId check plus a json.dumps/json.loads pair, purely for an
+            # in-process call).
+            refs = self._list_references_dict(varset, varset_name, property_name=name)
 
             available = refs.get("available", False)
             # Use "total" (the actual reference count), not len(references) --
@@ -464,35 +505,20 @@ class VarSetOpsHandler(BaseHandler):
             varset_name = args.get('varset_name', '')
             varset_property = args.get('varset_property', '')
 
-            doc, obj, err = self.resolve_object(object_name)
-            if err:
-                return err
-
-            _, varset, err = self.resolve_object(varset_name, doc, noun='VarSet')
-            if err:
-                return err
-            if varset.TypeId != 'App::VarSet':
-                return f"Object {varset_name} is not a VarSet"
-            if not property_name:
-                return "property_name is required"
             if not varset_property:
                 return "varset_property is required"
-            if varset_property not in varset.PropertiesList:
-                return f"Property not found on VarSet {varset_name}: {varset_property}"
 
-            expression = f"{varset_name}.{varset_property}"
-            obj.setExpression(property_name, expression)
-            self.recompute(doc)
+            def _validate_varset(doc, varset):
+                if varset.TypeId != 'App::VarSet':
+                    return f"Object {varset_name} is not a VarSet"
+                if varset_property not in varset.PropertiesList:
+                    return f"Property not found on VarSet {varset_name}: {varset_property}"
+                return None
 
-            # setExpression() doesn't validate the reference until recompute,
-            # and a failed recompute doesn't raise -- it marks the feature's
-            # State Invalid instead. Without this check, a bad varset_property
-            # would report unconditional success.
-            state_err = self._check_feature_state(obj, f"{object_name}.{property_name}")
-            if state_err:
-                return f"Error: expression bound but {state_err}"
-
-            return f"Bound {object_name}.{property_name} to {expression}"
+            return self.bind_expression(
+                object_name, property_name, varset_name, varset_property,
+                target_noun='VarSet', validate_target=_validate_varset,
+            )
 
         except Exception as e:
             return f"Error binding property: {e}"
@@ -532,72 +558,81 @@ class VarSetOpsHandler(BaseHandler):
             raw_offset = args.get('offset', 0)
             offset = max(0, int(0 if raw_offset is None else raw_offset))
 
-            doc, varset, err = self.resolve_object(varset_name, noun='VarSet')
+            doc, varset, err = self.resolve_object(varset_name, noun='VarSet', type_id='App::VarSet')
             if err:
                 return err
-            if varset.TypeId != 'App::VarSet':
-                return f"Object {varset_name} is not a VarSet"
 
-            if not hasattr(varset, 'InListProp'):
-                return json.dumps({
-                    "varset": varset_name,
-                    "property_name": property_name,
-                    "available": False,
-                    "references": [],
-                    "total": 0,
-                    "truncated": False,
-                    "message": (
-                        "Dependency-edge tracking (InListProp) is not available on "
-                        "this FreeCAD build. It requires FreeCAD's DepEdge API, first "
-                        "shipped in weekly-2026.06.24; it is absent from all 1.1.x "
-                        "stable releases."
-                    ),
-                })
-
-            all_edges = [
-                edge for edge in varset.InListProp
-                if not property_name or getattr(edge, 'ToProp', None) == property_name
-            ]
-            total = len(all_edges)
-            page = all_edges[offset:offset + limit]
-
-            references = []
-            for edge in page:
-                to_prop = getattr(edge, 'ToProp', None)
-                from_obj = getattr(edge, 'FromObj', None)
-                from_prop_raw = getattr(edge, 'FromProp', None)
-
-                # FromProp is hardcoded to the literal string "ExpressionEngine"
-                # for expression-derived edges (DocumentObject.cpp) -- it never
-                # names the actual bound property. Resolve it by reading the
-                # referencing object's own ExpressionEngine list and matching
-                # against the VarSet reference the expression text must contain.
-                resolved_prop = None
-                if from_obj is not None and hasattr(from_obj, 'ExpressionEngine'):
-                    needle = f"{varset_name}.{to_prop}" if to_prop else varset_name
-                    try:
-                        for path_str, expr_str in from_obj.ExpressionEngine:
-                            if _contains_reference(expr_str, needle):
-                                resolved_prop = path_str
-                                break
-                    except Exception:
-                        pass
-
-                references.append({
-                    "from_object": getattr(from_obj, 'Name', str(from_obj)),
-                    "from_property": resolved_prop,
-                    "from_property_raw": from_prop_raw,
-                    "to_property": to_prop,
-                })
-
-            return json.dumps({
-                "varset": varset_name,
-                "property_name": property_name,
-                "available": True,
-                "references": references,
-                "total": total,
-                "truncated": offset + len(page) < total,
-            })
+            return json.dumps(self._list_references_dict(varset, varset_name, property_name, limit, offset))
 
         except Exception as e:
             return f"Error listing references: {e}"
+
+    def _list_references_dict(self, varset, varset_name: str, property_name=None,
+                               limit: int = 200, offset: int = 0) -> dict:
+        """Core of list_references() -- returns a plain dict instead of a
+        JSON string. Shared by the public list_references() (which wraps
+        this in json.dumps for the MCP response) and remove_property()
+        (which consumes the dict directly, with `varset` already resolved,
+        avoiding a second resolve_object() lookup and a stringify/parse
+        round trip for what both callers use as an in-process query).
+        """
+        if not hasattr(varset, 'InListProp'):
+            return {
+                "varset": varset_name,
+                "property_name": property_name,
+                "available": False,
+                "references": [],
+                "total": 0,
+                "truncated": False,
+                "message": (
+                    "Dependency-edge tracking (InListProp) is not available on "
+                    "this FreeCAD build. It requires FreeCAD's DepEdge API, first "
+                    "shipped in weekly-2026.06.24; it is absent from all 1.1.x "
+                    "stable releases."
+                ),
+            }
+
+        all_edges = [
+            edge for edge in varset.InListProp
+            if not property_name or getattr(edge, 'ToProp', None) == property_name
+        ]
+        total = len(all_edges)
+        page = all_edges[offset:offset + limit]
+
+        references = []
+        for edge in page:
+            to_prop = getattr(edge, 'ToProp', None)
+            from_obj = getattr(edge, 'FromObj', None)
+            from_prop_raw = getattr(edge, 'FromProp', None)
+
+            # FromProp is hardcoded to the literal string "ExpressionEngine"
+            # for expression-derived edges (DocumentObject.cpp) -- it never
+            # names the actual bound property. Resolve it by reading the
+            # referencing object's own ExpressionEngine list and matching
+            # against the VarSet reference the expression text must contain.
+            resolved_prop = None
+            if from_obj is not None and hasattr(from_obj, 'ExpressionEngine'):
+                needle = f"{varset_name}.{to_prop}" if to_prop else varset_name
+                try:
+                    for path_str, expr_str in from_obj.ExpressionEngine:
+                        if _contains_reference(expr_str, needle):
+                            resolved_prop = path_str
+                            break
+                except Exception:
+                    pass
+
+            references.append({
+                "from_object": getattr(from_obj, 'Name', str(from_obj)),
+                "from_property": resolved_prop,
+                "from_property_raw": from_prop_raw,
+                "to_property": to_prop,
+            })
+
+        return {
+            "varset": varset_name,
+            "property_name": property_name,
+            "available": True,
+            "references": references,
+            "total": total,
+            "truncated": offset + len(page) < total,
+        }

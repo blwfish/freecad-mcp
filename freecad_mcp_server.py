@@ -1420,7 +1420,7 @@ async def main():
                     "docs": {"type": "string", "description": "Property tooltip/documentation string"},
                     "locked": {"type": "boolean", "description": "If true, permanently blocks remove_property on this property"},
                     "enum_vals": {"type": "array", "items": {"type": "string"}, "description": "Initial allowed values for an App::PropertyEnumeration, set at creation"},
-                    "value": {"type": ["string", "number", "boolean"], "description": "Value to assign to the property (set_property)"},
+                    "value": {"type": ["string", "number", "boolean", "array"], "description": "Value to assign to the property (set_property). Use an array for list-typed properties (e.g. App::PropertyStringList, App::PropertyFloatList, App::PropertyLinkList -- object name strings)."},
                     "options": {"type": "array", "items": {"type": "string"}, "description": "Allowed values for set_enum_options"},
                     "default_index": {"type": "integer", "description": "Index into options to set as the current value (set_enum_options, default 0)"},
                     "force": {"type": "boolean", "description": "Force remove_property to proceed even if references were found, or reference detection is unavailable"},

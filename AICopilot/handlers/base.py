@@ -166,7 +166,7 @@ class BaseHandler:
         return results[0]
 
     def resolve_object(self, object_name: str, doc: FreeCAD.Document = None,
-                        attr=None, noun: str = "Object"):
+                        attr=None, noun: str = "Object", type_id=None):
         """Resolve doc + object in one call, replacing the ~10-line
         get_document/get_object/None-check/hasattr-check preamble that was
         hand-copied at 200+ call sites across every handler file.
@@ -179,11 +179,20 @@ class BaseHandler:
             attr: Optional attribute name (or tuple of names, checked with
                 OR semantics) the object must have, e.g. 'Shape' or
                 ('Shape', 'Mesh'). None skips this check entirely.
-            noun: The word used in the not-found/missing-attr message
-                (e.g. "Sketch", "Spreadsheet") — callers across this
-                codebase already use different nouns for the same shape
-                of error, and that distinction is preserved rather than
-                flattened to a single generic wording.
+            noun: The word used in the not-found/missing-attr/wrong-type
+                message (e.g. "Sketch", "Spreadsheet") — callers across
+                this codebase already use different nouns for the same
+                shape of error, and that distinction is preserved rather
+                than flattened to a single generic wording.
+            type_id: Optional TypeId string (or tuple of strings, checked
+                with OR semantics) the object must match, e.g.
+                'App::VarSet'. None skips this check entirely. Checked
+                before `attr`. Folds the `resolve_object(...); if
+                obj.TypeId != '...': return f"Object {name} is not a
+                {noun}"` pattern that was hand-copied at every call site
+                in varset_ops.py (and, unfixed, still is in
+                spreadsheet_ops.py) into the same one-call shape as the
+                rest of this helper.
 
         Returns:
             (doc, obj, error) — error is None on success. On any failure,
@@ -201,6 +210,11 @@ class BaseHandler:
         obj = self.get_object(object_name, doc)
         if not obj:
             return doc, None, f"{noun} not found: {object_name}"
+
+        if type_id is not None:
+            allowed_types = (type_id,) if isinstance(type_id, str) else type_id
+            if obj.TypeId not in allowed_types:
+                return doc, obj, f"Object {object_name} is not a {noun}"
 
         if attr is not None:
             attrs = (attr,) if isinstance(attr, str) else attr
@@ -510,6 +524,68 @@ class BaseHandler:
             if diagnosis:
                 err += f"\n\nSketch wire diagnosis:\n{diagnosis}"
         return err
+
+    def bind_expression(self, object_name: str, property_name: str,
+                         target_name: str, target_ref: str,
+                         target_noun: str = "Object", validate_target=None) -> str:
+        """Bind an object's property to a named target's property/cell via
+        a FreeCAD expression (obj.setExpression + recompute).
+
+        Shared by every handler whose "bind to a named container" operation
+        reduces to this same shape — currently VarSetOpsHandler.bind_property
+        and SpreadsheetOpsHandler.bind_property, which used to each hand-copy
+        the resolve/setExpression/recompute/message sequence verbatim.
+
+        Args:
+            object_name: Object whose property will be bound.
+            property_name: Property on object_name to bind.
+            target_name: The VarSet/Spreadsheet/etc. being bound to.
+            target_ref: The property name / cell / alias on the target,
+                used to build the expression string as
+                f"{target_name}.{target_ref}".
+            target_noun: Passed through to resolve_object's `noun` for the
+                target lookup's not-found message (e.g. "VarSet",
+                "Spreadsheet").
+            validate_target: Optional callable (doc, target) -> Optional[str]
+                error, run after the target is resolved but before the
+                expression is set — lets each caller apply its own
+                type-specific validation (e.g. a VarSet TypeId + property-
+                existence check) without a second resolve_object() round
+                trip.
+
+        Returns:
+            Success or error message string, in the same shape every other
+            handler method here returns.
+        """
+        doc, obj, err = self.resolve_object(object_name)
+        if err:
+            return err
+
+        _, target, err = self.resolve_object(target_name, doc, noun=target_noun)
+        if err:
+            return err
+
+        if not property_name:
+            return "property_name is required"
+
+        if validate_target is not None:
+            val_err = validate_target(doc, target)
+            if val_err:
+                return val_err
+
+        expression = f"{target_name}.{target_ref}"
+        obj.setExpression(property_name, expression)
+        self.recompute(doc)
+
+        # setExpression() doesn't validate the reference until recompute,
+        # and a failed recompute doesn't raise -- it marks the feature's
+        # State Invalid instead. Without this check, a bad target_ref would
+        # report unconditional success.
+        state_err = self._check_feature_state(obj, f"{object_name}.{property_name}")
+        if state_err:
+            return f"Error: expression bound but {state_err}"
+
+        return f"Bound {object_name}.{property_name} to {expression}"
 
     def create_body_if_needed(self, doc: FreeCAD.Document = None):
         """Create a PartDesign Body if one doesn't exist.
