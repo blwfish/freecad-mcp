@@ -156,15 +156,15 @@ class TestBindingsAndReferences:
                            "property_name": "Width"})
         refs = json.loads(refs_result)
         if not refs["available"]:
-            # getInListProp (FreeCAD's DepEdge API) is absent on this build --
-            # confirmed live (2026-08-31) that even a 26.3.0 build dated after
-            # the documented weekly-2026.06.24 cutoff can lack it, if it's a
-            # generic/shallow checkout rather than the project's own patched
-            # branch (see CLAUDE.md on FreeCAD-prefs build provenance). This
-            # is list_references' own documented graceful-degradation path,
-            # not a test or handler bug -- nothing to verify against a build
-            # that doesn't have the feature.
-            pytest.skip(f"getInListProp unavailable on this FreeCAD build: {refs.get('message')}")
+            # InListProp (FreeCAD's DepEdge API) is genuinely absent on
+            # builds older than weekly-2026.06.24 (all 1.1.x stable
+            # releases) -- this is list_references' own documented
+            # graceful-degradation path for that case, not a test or
+            # handler bug. (A DIFFERENT bug -- the handler calling this as
+            # getInListProp() instead of the real InListProp property,
+            # which made this branch fire on every build unconditionally --
+            # was found and fixed 2026-08-31; see CLAUDE.md.)
+            pytest.skip(f"InListProp unavailable on this FreeCAD build: {refs.get('message')}")
         assert any(r["from_object"] == "Cube" for r in refs["references"])
 
     def test_bind_nonexistent_property_rejected(self, doc_with_varset):
@@ -206,7 +206,13 @@ class TestBindingsAndReferences:
                            "property_name": "Width"})
         refs = json.loads(refs_result)
         if not refs["available"]:
-            pytest.skip(f"getInListProp unavailable on this FreeCAD build: {refs.get('message')}")
+            pytest.skip(f"InListProp unavailable on this FreeCAD build: {refs.get('message')}")
         matches = [r for r in refs["references"] if r["from_object"] == "Cube3"]
         assert len(matches) == 1
-        assert matches[0]["from_property"] == ".Height"
+        # Real FreeCAD's ExpressionEngine path strings have no leading dot
+        # (confirmed live 2026-08-31: ('Height', 'Params.Width'), not
+        # ('.Height', ...)) -- the leading-dot form was an inherited unit-
+        # test-mock convention, not actual FreeCAD behavior. from_property
+        # is passed through verbatim from whatever the real API returns, so
+        # this is the correct live expectation, not a workaround.
+        assert matches[0]["from_property"] == "Height"
