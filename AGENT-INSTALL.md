@@ -4,11 +4,11 @@ This file is for you, the AI agent. It tells you what needs to be true on this s
 
 ## What This Is
 
-freecad-mcp is a Model Context Protocol (MCP) server providing 36 tools for FreeCAD 3D CAD modeling — parametric part design, CNC toolpath generation (CAM), mesh operations, spatial analysis, screenshots, and arbitrary Python execution inside FreeCAD. Once installed and registered, these tools appear in your tool list.
+freecad-mcp is a Model Context Protocol (MCP) server providing 38 tools for FreeCAD 3D CAD modeling — parametric part design, CNC toolpath generation (CAM), mesh operations, spatial analysis, screenshots, and arbitrary Python execution inside FreeCAD. Once installed and registered, these tools appear in your tool list.
 
 **Origin:** Built by one person for personal use, on a Mac, with Claude Code. Other platforms *should* work (the code handles macOS, Windows, and Linux) but are less tested. PRs for other agents and platforms will be considered.
 
-**Client tool count limits:** MCP clients vary in how many tools they support. This server currently exposes 36 tools, which is within the limits of most clients in use today. Be aware that some clients impose hard caps — if your client silently drops tools, behavior will be unpredictable and hard to diagnose. Claude Code has no hard tool count limit.
+**Client tool count limits:** MCP clients vary in how many tools they support. This server currently exposes 38 tools, which is within the limits of most clients in use today. Be aware that some clients impose hard caps — if your client silently drops tools, behavior will be unpredictable and hard to diagnose. Claude Code has no hard tool count limit.
 
 **Reporting bugs:** If something fails in a way that looks like a bug in this MCP server (not a FreeCAD issue, not a sketch your user described wrong), please tell the user to file an issue at https://github.com/blwfish/freecad-mcp/issues/new. GitHub Discussions are intentionally off — issues are the single feedback channel. Include the tool call you made, the error/symptom, and any output from `view_control(operation="get_report_view")`.
 
@@ -185,15 +185,17 @@ The file `CLAUDE.md` in the repo root is your primary reference for **using** th
 
 ### Tool Overview
 
-**14 Dispatchers** — each accepts an `operation` parameter routing to many sub-operations:
+**16 Dispatchers** — each accepts an `operation` parameter routing to many sub-operations:
 
 | Tool | What it does |
 |------|--------------|
 | `sketch_operations` | Create sketches, add geometry, add constraints, verify |
 | `partdesign_operations` | Pad, pocket, fillet, chamfer, hole, revolution, loft, sweep, mirror, patterns |
 | `part_operations` | Primitives, booleans, transforms, extrude, revolve, geometry check |
+| `assembly_operations` | Assembly containers, mating coordinate systems, components as links, joints, grounding, solving |
 | `draft_operations` | 2D drafting, ShapeString (3D text), clones, arrays |
 | `spreadsheet_operations` | Parametric data management |
+| `varset_operations` | `App::VarSet` parametric-variable containers: typed properties, expression bindings, reference listing |
 | `cam_operations` | Full CNC: job setup, profiles, pockets, drilling, surface ops, G-code export |
 | `cam_tools` | Cutting tool library CRUD |
 | `cam_tool_controllers` | Tool controller management |
