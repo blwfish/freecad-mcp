@@ -18,6 +18,8 @@ varset_operations shipped, bringing the real count to 38 dispatchers=16.
 import os
 import re
 
+import pytest
+
 
 BRIDGE_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "freecad_mcp_server.py"
@@ -172,6 +174,8 @@ def test_agent_install_tool_overview_totals_match_bridge():
 
 
 def test_claude_md_tool_counts_match_bridge():
+    if not os.path.exists(CLAUDE_MD_PATH):
+        pytest.skip("CLAUDE.md is gitignored (local-only); not present in this checkout")
     bridge = _bridge_tool_count()
     for claimed in _claude_md_tool_counts():
         assert claimed == bridge, (
