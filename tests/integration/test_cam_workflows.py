@@ -441,17 +441,19 @@ class TestCAMRealStrategies:
     def job_with_tool(self, cam_document):
         """create_job auto-seeds the new Job with exactly one default tool
         controller — deliberately NOT calling add_tool_controller here to
-        add a second one. Confirmed live: FreeCAD's own
-        PathScripts/PathUtils.py::findToolController() has a real upstream
-        bug — when a job has more than one tool controller, `name` is None,
-        and no interactive UserInput is available (true headless, no GUI),
-        none of its if/elif branches match and it falls through raising
-        UnboundLocalError: cannot access local variable 'tc' — surfacing
-        as "Error in profile: cannot access local variable 'tc'..." on
-        every operation creation call, not just profile. See
-        TestCAMToolControllerBugs below for a dedicated regression pin;
-        this fixture works around it so the real-toolpath assertions below
-        can actually exercise create_fn() successfully."""
+        add a second one. This used to be load-bearing: FreeCAD's own
+        PathScripts/PathUtils.py::findToolController() had an upstream bug
+        (FreeCAD/FreeCAD#31849) where a job with more than one tool
+        controller and no interactive UserInput (true headless, no GUI)
+        fell through every if/elif branch and raised UnboundLocalError:
+        cannot access local variable 'tc' on every operation-creation call.
+        Fixed upstream by FreeCAD/FreeCAD#31863 (merged 2026-08-30,
+        confirmed live against weekly-2026.09.09 -- the regression pin that
+        used to live here as TestCAMToolControllerBugs was deleted the same
+        day per its own docstring's instruction). Kept as a single-
+        tool-controller fixture regardless since it's still the minimal
+        setup these tests need, not because the workaround is required
+        anymore."""
         send_command("cam_operations", {"operation": "create_job", "base_object": "Body"})
         return cam_document
 
@@ -699,71 +701,6 @@ class TestCAMToolControllerCRUD:
 # Tests: an upstream FreeCAD bug found while writing TestCAMRealStrategies
 # above, unrelated to this repo's own code.
 # ---------------------------------------------------------------------------
-
-class TestCAMToolControllerBugs:
-    def test_multiple_tool_controllers_break_operation_creation_upstream(self, cam_document):
-        """Regression pin, not a fix — this is a real bug in FreeCAD's own
-        PathScripts/PathUtils.py::findToolController(), confirmed live by
-        reading its traceback directly against this exact FreeCAD build:
-        when a job has more than one tool controller and no interactive
-        UserInput is available (true headless — no GUI to prompt a
-        choice), NONE of findToolController's if/elif branches match
-        (its `if len==1` misses, its `elif name is not None` misses since
-        name is None, its `elif UserInput` misses since UserInput is None
-        headless) and it falls through with `tc` never assigned, raising
-        `UnboundLocalError: cannot access local variable 'tc'`.
-
-        create_job auto-seeds exactly one default tool controller; adding
-        a second one via add_tool_controller (an extremely common real
-        workflow — pick your own tool rather than the job's default) is
-        what triggers this. It breaks EVERY operation-creation call
-        afterward (profile/pocket/drilling/adaptive all route through the
-        same Create() -> setDefaultValues() -> findToolController() path),
-        not just one of them.
-
-        Out of scope to fix here: the bug lives in FreeCAD's own CAM
-        workbench source (Mod/CAM/PathScripts/PathUtils.py), not
-        AICopilot/handlers/cam_ops.py. Pinning it so a future FreeCAD
-        version bump that fixes it is visible (this test starting to fail
-        would mean the upstream bug is gone and this test should be
-        deleted, not "fixed").
-
-        Already known upstream: https://github.com/FreeCAD/FreeCAD/issues/31849
-        (filed 2026-08-16, independently confirmed here 2026-08-21 against
-        weekly-2026.08.20 — same root cause, same trigger condition: >1
-        tool controller + no GUI to prompt a choice). Fix is up as
-        https://github.com/FreeCAD/FreeCAD/pull/31863 ("CAM: Fix
-        findToolController for console mode"), milestone 26.3, open as of
-        2026-08-21 — once merged into a build we test against, this test
-        should start failing and should be DELETED at that point, not
-        patched. The issue thread also documents a workaround for real
-        (non-test) usage: create operations while the job still has only
-        its single default tool controller, then add extra controllers
-        and reassign op.ToolController per-operation afterward — that
-        ordering never hits the multi-TC code path this bug lives in.
-        Separately, the same thread reports a more severe secondary bug
-        (a Proxy-less op left behind by the crash later hangs the whole
-        FreeCAD GUI on doc.removeObject() — not confirmed to affect
-        headless/MCP use, but worth knowing if any cleanup path ever
-        calls removeObject on a failed CAM operation object)."""
-        send_command("cam_tools", {
-            "operation": "create_tool", "name": "Second Tool",
-            "tool_type": "endmill", "diameter": 8.0,
-        })
-        send_command("cam_operations", {"operation": "create_job", "base_object": "Body"})
-        send_command("cam_tool_controllers", {
-            "operation": "add_tool_controller", "tool_name": "Second Tool",
-            "job_name": "Job",
-        })
-        result = send_command("cam_operations", {
-            "operation": "profile", "job_name": "Job",
-        })
-        text = str(result)
-        assert "cannot access local variable 'tc'" in text, (
-            "If this assertion fails, the upstream FreeCAD bug this test "
-            f"pins may be fixed — investigate before deleting. Got: {text[:300]}"
-        )
-
 
 # ---------------------------------------------------------------------------
 # Tests: CAM placeholder operations (Phase 2) — these 17 operations are
