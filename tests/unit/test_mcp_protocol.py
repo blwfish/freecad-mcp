@@ -51,19 +51,19 @@ _SERVER: Server = _build_server()
 
 def _list_tools() -> list[types.Tool]:
     async def _call():
-        handler = _SERVER.request_handlers[types.ListToolsRequest]
-        result = await handler(types.ListToolsRequest())
-        return result.root.tools
+        entry = _SERVER.get_request_handler("tools/list")
+        result = await entry.handler(None, None)
+        return result.tools
 
     return asyncio.run(_call())
 
 
 def _call_tool(name: str, arguments: dict | None = None) -> list[types.TextContent]:
     async def _call():
-        handler = _SERVER.request_handlers[types.CallToolRequest]
+        entry = _SERVER.get_request_handler("tools/call")
         params = types.CallToolRequestParams(name=name, arguments=arguments)
-        result = await handler(types.CallToolRequest(params=params))
-        return result.root.content
+        result = await entry.handler(None, params)
+        return result.content
 
     return asyncio.run(_call())
 
@@ -87,7 +87,7 @@ class TestToolsList:
 
     def test_every_tool_has_object_schema(self):
         for tool in _list_tools():
-            schema = tool.inputSchema
+            schema = tool.input_schema
             assert isinstance(schema, dict)
             assert schema.get("type") == "object"
 
@@ -97,7 +97,7 @@ class TestToolsList:
 
     def test_schema_properties_is_dict_when_present(self):
         for tool in _list_tools():
-            props = tool.inputSchema.get("properties")
+            props = tool.input_schema.get("properties")
             if props is not None:
                 assert isinstance(props, dict)
 
@@ -219,11 +219,11 @@ class TestExecutePythonNonJsonResponse:
         loop = asyncio.new_event_loop()
         try:
             async def _call():
-                handler = _SERVER.request_handlers[types.CallToolRequest]
+                entry = _SERVER.get_request_handler("tools/call")
                 params = types.CallToolRequestParams(
                     name="execute_python", arguments={"code": "1 + 1"})
-                result = await handler(types.CallToolRequest(params=params))
-                return result.root.content
+                result = await entry.handler(None, params)
+                return result.content
 
             with patch.object(freecad_mcp_server._ctx, "resolve_target",
                                return_value=("/tmp/fake.sock", None)), \
@@ -274,7 +274,7 @@ class TestCamToolControllersSchemaHasNoDefaults:
     def test_presence_checked_fields_have_no_schema_default(self):
         tools_by_name = {t.name: t for t in _list_tools()}
         for tool_name, fields in self._NO_DEFAULT_FIELDS.items():
-            props = tools_by_name[tool_name].inputSchema["properties"]
+            props = tools_by_name[tool_name].input_schema["properties"]
             for field in fields:
                 assert "default" not in props[field], (
                     f"{tool_name}.{field} declares a schema default; a "
@@ -298,7 +298,7 @@ class TestCamToolControllersToolNumberOmission:
         loop = asyncio.new_event_loop()
         try:
             async def _call():
-                handler = _SERVER.request_handlers[types.CallToolRequest]
+                entry = _SERVER.get_request_handler("tools/call")
                 params = types.CallToolRequestParams(
                     name="cam_tool_controllers",
                     arguments={
@@ -307,8 +307,8 @@ class TestCamToolControllersToolNumberOmission:
                         "tool_name": "EM6",
                     },
                 )
-                result = await handler(types.CallToolRequest(params=params))
-                return result.root.content
+                result = await entry.handler(None, params)
+                return result.content
 
             with patch.object(freecad_mcp_server._ctx, "resolve_target",
                                return_value=("/tmp/fake.sock", None)), \
