@@ -3128,9 +3128,24 @@ async def main():
                 text=f"Unknown tool: {name}"
             )]
 
-    server = Server("freecad")
-    server.list_tools()(handle_list_tools)
-    server.call_tool()(handle_call_tool)
+    # mcp 2.0's low-level Server dropped the @server.list_tools()/@server.call_tool()
+    # decorators in favor of on_list_tools=/on_call_tool= constructor kwargs whose
+    # handlers take (ctx, params) and return a Result object rather than a bare
+    # list. These adapters keep handle_list_tools/handle_call_tool on the pre-2.0
+    # shape (untouched, including all downstream tests) and translate at the
+    # boundary instead of touching every one of the ~40 return sites above.
+    async def _on_list_tools(ctx, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+        return types.ListToolsResult(tools=await handle_list_tools())
+
+    async def _on_call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolResult:
+        content = await handle_call_tool(params.name, params.arguments)
+        return types.CallToolResult(content=content)
+
+    server = Server(
+        "freecad",
+        on_list_tools=_on_list_tools,
+        on_call_tool=_on_call_tool,
+    )
 
     # Optional: Start health monitoring if debugging enabled
     async def health_check_loop():
