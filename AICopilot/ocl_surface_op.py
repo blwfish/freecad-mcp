@@ -36,7 +36,7 @@ import math
 import FreeCAD
 import Path
 
-from handlers.base import mm_min_to_mm_s
+from handlers.base import mm_min_to_mm_s, BaseHandler
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +289,14 @@ class OCLSurfaceProxy:
         if not stl_file:
             FreeCAD.Console.PrintWarning("[OCLSurface] StlFile not set — skipping\n")
             return
+        # StlFile is a persisted document property re-read on every recompute
+        # (including after a document reload from a different machine/context,
+        # or a direct property edit) -- re-validate against the same
+        # home/tmp/Volumes allowlist enforced at creation time in
+        # cam_ops.surface_stl, rather than trusting the stored path.
+        path_err = BaseHandler._validate_file_path(stl_file)
+        if path_err:
+            raise ValueError(f"StlFile rejected: {path_err}")
         if not os.path.exists(stl_file):
             raise FileNotFoundError(f"STL file not found: {stl_file!r}")
 

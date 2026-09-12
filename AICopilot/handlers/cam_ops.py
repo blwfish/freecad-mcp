@@ -405,6 +405,9 @@ class CAMOpsHandler(BaseHandler):
             stl_file = args.get("stl_file", "")
             if not stl_file:
                 return json.dumps({"error": "stl_file is required"})
+            path_err = self._validate_file_path(stl_file)
+            if path_err:
+                return json.dumps({"error": path_err})
             if not os.path.exists(stl_file):
                 return json.dumps({"error": f"STL file not found: {stl_file!r}"})
 

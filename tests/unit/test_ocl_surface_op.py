@@ -163,3 +163,55 @@ class TestLoadStlRejectsNonBinary:
 
         with pytest.raises(ValueError):
             ocl_surface_op._load_stl(path, _fake_ocl())
+
+
+# ---------------------------------------------------------------------------
+# _do_execute: StlFile is a persisted document property, re-read on every
+# recompute (including after a document reload from a different machine, or
+# a direct property edit) -- it must be re-validated against the same
+# home/tmp/Volumes allowlist enforced at creation time in
+# cam_ops.surface_stl, not merely checked for existence.
+# ---------------------------------------------------------------------------
+
+class TestDoExecuteStlFilePathValidation:
+    def _make_obj(self, stl_file):
+        obj = MagicMock()
+        obj.StlFile = stl_file
+        return obj
+
+    def _patch_opencamlib(self, monkeypatch):
+        """_do_execute lazily imports `from opencamlib import ocl` before
+        touching StlFile at all -- stub the module out so the import
+        succeeds regardless of whether opencamlib is actually installed."""
+        fake_opencamlib = MagicMock()
+        fake_opencamlib.ocl = MagicMock()
+        monkeypatch.setitem(sys.modules, "opencamlib", fake_opencamlib)
+
+    def test_path_outside_allowlist_rejected(self, monkeypatch):
+        self._patch_opencamlib(monkeypatch)
+        proxy = ocl_surface_op.OCLSurfaceProxy.__new__(ocl_surface_op.OCLSurfaceProxy)
+        obj = self._make_obj("/etc/passwd")
+
+        with pytest.raises(ValueError, match="outside allowed directories"):
+            proxy._do_execute(obj)
+
+    def test_path_inside_allowlist_proceeds_past_validation(self, monkeypatch, tmp_path):
+        """A path under an allowed dir (tmp) must clear the allowlist check
+        and fail later for a legitimate reason (file doesn't exist), not be
+        rejected as outside the allowlist."""
+        self._patch_opencamlib(monkeypatch)
+        proxy = ocl_surface_op.OCLSurfaceProxy.__new__(ocl_surface_op.OCLSurfaceProxy)
+        missing = str(tmp_path / "does_not_exist.stl")
+        obj = self._make_obj(missing)
+
+        with pytest.raises(FileNotFoundError):
+            proxy._do_execute(obj)
+
+    def test_empty_stl_file_skips_validation_and_returns(self, monkeypatch):
+        """An unset StlFile is a legitimate no-op (warn + return), not a
+        rejected path -- must not be affected by this change."""
+        self._patch_opencamlib(monkeypatch)
+        proxy = ocl_surface_op.OCLSurfaceProxy.__new__(ocl_surface_op.OCLSurfaceProxy)
+        obj = self._make_obj("")
+
+        proxy._do_execute(obj)  # must not raise

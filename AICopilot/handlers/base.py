@@ -239,8 +239,19 @@ class BaseHandler:
         """Find a usable .ttf font file, trying the given path then common system locations.
 
         Returns the resolved path, or '' if nothing is found.
+
+        font_file is a caller-controlled MCP argument whose bytes get handed
+        straight to a native font parser (OCCT/FreeType, via
+        Part.makeWireString / Draft.make_shapestring). Unlike a plain
+        os.path.exists() check, a caller-supplied path is only honored if it
+        also resolves inside the shared file-path allowlist
+        (_validate_file_path's safe locations) or a well-known system font
+        directory (_is_allowed_font_path) -- otherwise it is treated the
+        same as a nonexistent path and this function falls through to the
+        bundled/candidate fonts below, rather than handing an arbitrary
+        file on disk to the parser.
         """
-        if font_file and os.path.exists(font_file):
+        if font_file and self._is_allowed_font_path(font_file) and os.path.exists(font_file):
             return font_file
         # FreeCAD bundles fonts in its resource directory
         try:
@@ -503,6 +514,45 @@ class BaseHandler:
             f"Path is outside allowed directories (home dir, /tmp, /Volumes). "
             f"Resolved path: {resolved}"
         )
+
+    # System font directories that are legitimate places to load a *font*
+    # from but fall outside _validate_file_path's general file-I/O allowlist
+    # (that allowlist intentionally excludes system-wide, non-user-writable
+    # areas like /System or /usr for things like save/export paths). A font
+    # is read-only input to a native parser, not a write target, so these
+    # well-known, non-user-writable system font locations are safe to add
+    # here without loosening _validate_file_path itself.
+    _FONT_SYSTEM_DIRS = (
+        "/System/Library/Fonts",       # macOS
+        "/Library/Fonts",              # macOS
+        "/usr/share/fonts",            # Linux
+        "/usr/local/share/fonts",      # Linux
+        "C:/Windows/Fonts",            # Windows
+    )
+
+    @staticmethod
+    def _is_allowed_font_path(path: str) -> bool:
+        """Return True if a caller-supplied font_file resolves somewhere
+        legitimate to load a font from: the general file-path allowlist
+        (home dir, /tmp, /var/folders, /Volumes -- see _validate_file_path,
+        which already covers a user's own per-user font directories such as
+        ~/Library/Fonts or ~/.fonts since they live under the home dir) or a
+        well-known, non-user-writable system font directory
+        (_FONT_SYSTEM_DIRS).
+
+        This is the gate that keeps find_font() from handing an arbitrary
+        file anywhere on disk to the native font parser (OCCT/FreeType) --
+        without it, any file the FreeCAD process can read could be probed
+        or fed to that parser via the font_file argument.
+        """
+        if not path:
+            return False
+        resolved = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+        safe = [os.path.realpath(p) for p in BaseHandler._FONT_SYSTEM_DIRS]
+        if any(resolved == s or resolved.startswith(s + os.sep) or resolved.startswith(s + "/")
+               for s in safe):
+            return True
+        return BaseHandler._validate_file_path(path) is None
 
     def _check_feature_state(self, feature, feature_label: str, sketch=None) -> Optional[str]:
         """Return a diagnostic error string if feature.State contains
