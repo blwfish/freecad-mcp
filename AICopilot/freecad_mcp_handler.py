@@ -118,6 +118,8 @@ import uuid
 import platform
 import struct
 import sys
+import secrets
+import subprocess
 import traceback as tb_module
 from typing import Dict, Any, Optional
 
@@ -145,6 +147,73 @@ ASYNC_JOB_TTL = 600
 SOCKET_PATH = os.environ.get("FREECAD_MCP_SOCKET") or None
 WINDOWS_HOST = "localhost"
 WINDOWS_PORT = int(os.environ.get("FREECAD_MCP_PORT", "23456"))
+
+# =============================================================================
+# Windows TCP auth token (CWE-306 mitigation)
+# =============================================================================
+# The Unix-domain socket's confidentiality boundary is the socket *file*
+# itself: start_server() chmods it 0600 (owner-only) below. TCP sockets have
+# no filesystem object to restrict that way, and Windows has no AF_UNIX
+# equivalent, so without something else, any local process/user able to
+# open a TCP connection to 127.0.0.1:WINDOWS_PORT gets full unauthenticated
+# execute_python access. This token is that "something else": the bridge
+# (freecad_mcp_server.py) reads it from disk and sends it with every
+# request on the Windows path; _process_command rejects any such request
+# whose token doesn't match via a constant-time comparison.
+#
+# Honest note on the token *file's* own confidentiality: os.chmod() / the
+# mode argument to os.open() on Windows only toggles the read-only
+# *attribute* bit -- it does NOT restrict which other local accounts can
+# read the file (documented CPython/Windows behavior; unlike POSIX, where
+# 0600 really does mean owner-only). So this is not "the same protection as
+# the Unix socket file, ported to Windows" -- it's a different, weaker
+# boundary. Two things back it instead:
+#   1. A best-effort ACL restriction applied right after the file is
+#      written, via the `icacls` tool that ships with every supported
+#      Windows release (see _restrict_token_file_to_current_user_windows).
+#      This project has no existing pywin32/win32security dependency and
+#      deliberately doesn't add one for this.
+#   2. If that fails (icacls missing/denied), the OS's default ACL on the
+#      user's own profile directory tree (%USERPROFILE%\.freecad-mcp\...),
+#      which this code neither creates nor verifies -- it inherits whatever
+#      the local Windows install already applies to a user's own profile.
+#
+# Net effect: this closes the concrete gap the finding describes -- a
+# fixed, well-known, credential-free TCP port reachable by any other local
+# account or process -- but it is a best-effort mitigation, not a
+# guarantee, and it does not defend against a local administrator or
+# another process already running as the same user account.
+WINDOWS_AUTH_TOKEN_DIR = os.path.expanduser("~/.freecad-mcp")
+# Keep in sync with freecad_mcp_server.py's WINDOWS_AUTH_TOKEN_PATH (the
+# bridge side reads this same path; there's no shared-import chokepoint
+# between the two processes, matching the existing send_message/
+# receive_message duplication pattern noted above).
+WINDOWS_AUTH_TOKEN_PATH = os.path.join(WINDOWS_AUTH_TOKEN_DIR, "windows_auth_token")
+
+
+def _restrict_token_file_to_current_user_windows(path: str) -> bool:
+    """Best-effort: strip inherited ACEs from `path` and grant Full Control
+    only to the current user account, via the `icacls` tool built into every
+    supported Windows release. Deliberately shells out rather than adding a
+    pywin32/win32security dependency this project doesn't otherwise have.
+
+    Returns False (never raises) on any failure -- caller falls back to
+    relying on the containing directory's default ACL; see the
+    WINDOWS_AUTH_TOKEN_PATH comment above for what that means.
+    """
+    username = os.environ.get("USERNAME") or os.environ.get("USER")
+    if not username:
+        return False
+    try:
+        result = subprocess.run(
+            ["icacls", path, "/inheritance:r", "/grant:r", f"{username}:F"],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
 
 # =============================================================================
 # MCP Debug Infrastructure (Optional)
@@ -290,7 +359,8 @@ except ImportError as e:
 
 MAX_MESSAGE_SIZE = 50 * 1024  # 50KB — matches bridge-side limit
 
-# The bridge (freecad_mcp_server.py) only ever sends {"tool": ..., "args": ...}.
+# The bridge (freecad_mcp_server.py) only ever sends {"tool": ..., "args": ...}
+# (plus "token" on the Windows TCP path -- see WINDOWS_AUTH_TOKEN_PATH above).
 # A request with any other top-level key is either a bug in the bridge or a
 # manually-crafted malformed request — either way it must fail loudly here
 # rather than have the typo silently swallowed. Without this, a key typo'd
@@ -298,7 +368,7 @@ MAX_MESSAGE_SIZE = 50 * 1024  # 50KB — matches bridge-side limit
 # to an empty dict indistinguishable from a legitimate no-args call, then
 # failed several layers deeper with a confusing "not found" instead of a
 # clear "malformed request" error.
-_KNOWN_REQUEST_KEYS = frozenset({"tool", "args"})
+_KNOWN_REQUEST_KEYS = frozenset({"tool", "args", "token"})
 
 
 def send_message(sock: socket.socket, message_str: str) -> bool:
@@ -384,6 +454,11 @@ class FreeCADSocketServer:
         self.running = False
         self.server_socket = None
         self.server_thread = None
+
+        # Windows-only shared secret checked by _process_command; set by
+        # start_server()'s Windows branch, stays None everywhere else (the
+        # Unix-domain socket doesn't use this at all).
+        self._windows_auth_token: Optional[str] = None
 
         # GUI thread task queues (used by handlers that need Qt main thread)
         # Tasks are (request_id, callable) tuples; responses are (request_id, result).
@@ -483,6 +558,33 @@ class FreeCADSocketServer:
     # Server lifecycle
     # -----------------------------------------------------------------
 
+    def _init_windows_auth_token(self) -> str:
+        """Generate a fresh per-launch shared secret and persist it to
+        WINDOWS_AUTH_TOKEN_PATH for the bridge to read. Called once from
+        start_server()'s Windows branch, before the socket is bound, so the
+        token exists on disk before any client could possibly connect."""
+        token = secrets.token_hex(32)
+        os.makedirs(WINDOWS_AUTH_TOKEN_DIR, mode=0o700, exist_ok=True)
+        # O_CREAT|O_WRONLY|O_TRUNC with mode 0o600: on POSIX this would be
+        # owner-only; on Windows the mode argument only toggles the
+        # read-only attribute (see WINDOWS_AUTH_TOKEN_PATH comment above) --
+        # kept for cross-platform code-path parity, not as the real access
+        # boundary on Windows. _restrict_token_file_to_current_user_windows
+        # below is the actual best-effort attempt at that.
+        fd = os.open(WINDOWS_AUTH_TOKEN_PATH, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, token.encode("ascii"))
+        finally:
+            os.close(fd)
+        if not _restrict_token_file_to_current_user_windows(WINDOWS_AUTH_TOKEN_PATH):
+            FreeCAD.Console.PrintWarning(
+                "Could not restrict the Windows auth token file "
+                f"({WINDOWS_AUTH_TOKEN_PATH}) to the current user via icacls; "
+                "falling back to the containing directory's default ACL. "
+                "See the WINDOWS_AUTH_TOKEN_PATH comment for what that means.\n"
+            )
+        return token
+
     def start_server(self):
         """Start the socket server."""
         try:
@@ -514,11 +616,26 @@ class FreeCADSocketServer:
 
             if IS_WINDOWS:
                 self.socket_path = None
+                self._windows_auth_token = self._init_windows_auth_token()
                 self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                # SO_EXCLUSIVEADDRUSE, not SO_REUSEADDR: on Windows (unlike
+                # POSIX) SO_REUSEADDR lets a second, unrelated process bind a
+                # listening socket to an address:port that's already
+                # listening, with the OS arbitrating which listener a given
+                # inbound connection reaches -- a documented Windows-specific
+                # port-squatting risk. Requests on this socket now carry the
+                # bearer token generated above on every call, so a squatter
+                # that won that race could intercept and replay it;
+                # SO_EXCLUSIVEADDRUSE is the standard Windows-specific
+                # mitigation for exactly that. (The AF_UNIX branch below
+                # keeps SO_REUSEADDR -- different platform, different
+                # socket-reuse semantics, and this constant doesn't exist
+                # there.)
+                self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
                 self.server_socket.bind((WINDOWS_HOST, WINDOWS_PORT))
                 FreeCAD.Console.PrintMessage(
-                    f"Socket server started on {WINDOWS_HOST}:{WINDOWS_PORT} (Windows TCP)\n"
+                    f"Socket server started on {WINDOWS_HOST}:{WINDOWS_PORT} "
+                    "(Windows TCP, token-authenticated)\n"
                 )
             else:
                 # Resolve the socket path:
@@ -1183,6 +1300,26 @@ class FreeCADSocketServer:
                     "error": f"Unrecognized request key(s): {sorted(unknown_keys)}. "
                              f"Expected only {sorted(_KNOWN_REQUEST_KEYS)}."
                 })
+
+            # Windows has no AF_UNIX equivalent for this socket, so unlike
+            # the Unix-domain path (restricted via the 0600 socket file
+            # below) it carries no filesystem-based access boundary at all.
+            # Require the shared secret start_server() generated and wrote
+            # to WINDOWS_AUTH_TOKEN_PATH on every request before dispatching
+            # to any tool -- otherwise any local process/user able to open a
+            # TCP connection to this port gets unauthenticated
+            # execute_python access (CWE-306). secrets.compare_digest avoids
+            # a timing side-channel on the comparison itself.
+            if IS_WINDOWS:
+                supplied_token = command.get("token")
+                expected_token = self._windows_auth_token
+                if (not expected_token or not isinstance(supplied_token, str)
+                        or not secrets.compare_digest(supplied_token, expected_token)):
+                    return json.dumps({
+                        "error": "Unauthorized: missing or invalid token. This "
+                                 "endpoint requires the auth token FreeCAD wrote "
+                                 f"to {WINDOWS_AUTH_TOKEN_PATH} at startup."
+                    })
 
             tool_name = command.get("tool", "")
             args = command.get("args", {})

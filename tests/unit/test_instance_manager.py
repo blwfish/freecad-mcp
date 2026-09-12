@@ -197,6 +197,52 @@ class TestTcpSocketAlive:
 
 
 # ===========================================================================
+# _read_windows_auth_token (F2 fix: Windows TCP socket auth token)
+#
+# The Windows TCP listener has no AF_UNIX-style socket file to restrict
+# access to, so send_to_freecad() must read this shared secret from disk and
+# attach it to every request. Must stay in sync with
+# freecad_mcp_handler.py's WINDOWS_AUTH_TOKEN_PATH -- both sides compute the
+# same path independently (no shared-import chokepoint between the two
+# processes), so a test pinning the literal path guards against the two
+# drifting apart.
+# ===========================================================================
+
+class TestReadWindowsAuthToken:
+    def test_path_matches_handler_side_convention(self, bridge):
+        assert bridge.WINDOWS_AUTH_TOKEN_PATH == os.path.expanduser(
+            "~/.freecad-mcp/windows_auth_token"
+        )
+
+    def test_missing_file_returns_none(self, bridge, monkeypatch, tmp_path):
+        monkeypatch.setattr(bridge, "WINDOWS_AUTH_TOKEN_PATH", str(tmp_path / "no-such-file"))
+        assert bridge._read_windows_auth_token() is None
+
+    def test_reads_token_written_by_handler_side(self, bridge, monkeypatch, tmp_path):
+        token_path = tmp_path / "windows_auth_token"
+        token_path.write_text("abc123deadbeef")
+        monkeypatch.setattr(bridge, "WINDOWS_AUTH_TOKEN_PATH", str(token_path))
+        assert bridge._read_windows_auth_token() == "abc123deadbeef"
+
+    def test_strips_trailing_whitespace(self, bridge, monkeypatch, tmp_path):
+        """The handler side writes the raw token with no newline, but be
+        tolerant of one (e.g. a hand-edited file during manual testing)."""
+        token_path = tmp_path / "windows_auth_token"
+        token_path.write_text("abc123deadbeef\n")
+        monkeypatch.setattr(bridge, "WINDOWS_AUTH_TOKEN_PATH", str(token_path))
+        assert bridge._read_windows_auth_token() == "abc123deadbeef"
+
+    def test_empty_file_returns_none_not_empty_string(self, bridge, monkeypatch, tmp_path):
+        """An empty/blank token file must not be treated as a valid
+        (falsy-but-present) credential -- callers use `if not token` to
+        detect the missing-token case."""
+        token_path = tmp_path / "windows_auth_token"
+        token_path.write_text("   \n")
+        monkeypatch.setattr(bridge, "WINDOWS_AUTH_TOKEN_PATH", str(token_path))
+        assert bridge._read_windows_auth_token() is None
+
+
+# ===========================================================================
 # _find_freecadcmd
 # ===========================================================================
 

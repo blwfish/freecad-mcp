@@ -39,11 +39,14 @@ jobs:
 
       - name: Determine image tags
         id: meta
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          TAG_INPUT: ${{ inputs.tag }}
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
-            VERSION="${{ github.ref_name }}"
+            VERSION="$REF_NAME"
           else
-            VERSION="${{ inputs.tag }}"
+            VERSION="$TAG_INPUT"
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tags=ghcr.io/blwfish/freecad-mcp:${VERSION},ghcr.io/blwfish/freecad-mcp:latest" >> $GITHUB_OUTPUT
