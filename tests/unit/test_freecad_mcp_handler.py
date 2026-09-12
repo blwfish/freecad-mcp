@@ -2276,6 +2276,223 @@ class TestStartServerMonitorSocketPath:
 
 
 # ---------------------------------------------------------------------------
+# Windows TCP auth token (F2 fix: CWE-306, unauthenticated code execution)
+#
+# The Windows TCP fallback socket has no AF_UNIX-style file to restrict
+# access to (unlike the Unix-domain socket's 0600 chmod below), so it
+# requires a shared-secret token on every request instead. Covers both
+# halves: the _process_command check, and start_server()'s token
+# generation/persistence plus its SO_EXCLUSIVEADDRUSE socket option (not
+# SO_REUSEADDR, which on Windows -- unlike POSIX -- lets an unrelated
+# process port-squat the listening address:port; that squatting risk newly
+# matters once a bearer token is flowing over this socket).
+# ---------------------------------------------------------------------------
+
+class TestWindowsAuthTokenProcessCommand:
+    def test_rejects_missing_token_on_windows(self, server, monkeypatch):
+        import freecad_mcp_handler as ss_mod
+        monkeypatch.setattr(ss_mod, "IS_WINDOWS", True)
+        server._windows_auth_token = "correct-token"
+        server._execute_tool = MagicMock(return_value=json.dumps({"result": "ok"}))
+
+        response = server._process_command(
+            json.dumps({"tool": "execute_python_sync", "args": {"code": "1+1"}})
+        )
+        parsed = json.loads(response)
+        assert "error" in parsed
+        server._execute_tool.assert_not_called()
+
+    def test_rejects_wrong_token_on_windows(self, server, monkeypatch):
+        import freecad_mcp_handler as ss_mod
+        monkeypatch.setattr(ss_mod, "IS_WINDOWS", True)
+        server._windows_auth_token = "correct-token"
+        server._execute_tool = MagicMock(return_value=json.dumps({"result": "ok"}))
+
+        response = server._process_command(json.dumps({
+            "tool": "execute_python_sync", "args": {}, "token": "wrong-token",
+        }))
+        parsed = json.loads(response)
+        assert "error" in parsed
+        server._execute_tool.assert_not_called()
+
+    def test_accepts_correct_token_on_windows(self, server, monkeypatch):
+        import freecad_mcp_handler as ss_mod
+        monkeypatch.setattr(ss_mod, "IS_WINDOWS", True)
+        server._windows_auth_token = "correct-token"
+        server._execute_tool = MagicMock(return_value=json.dumps({"result": "ok"}))
+
+        response = server._process_command(json.dumps({
+            "tool": "execute_python_sync", "args": {}, "token": "correct-token",
+        }))
+        parsed = json.loads(response)
+        assert parsed["result"] == "ok"
+        server._execute_tool.assert_called_once()
+
+    def test_fails_closed_if_server_never_generated_a_token(self, server, monkeypatch):
+        """Should be unreachable in practice (start_server always sets this
+        before binding), but an empty/None server-side token must never be
+        treated as "no auth required" -- fail closed, not open."""
+        import freecad_mcp_handler as ss_mod
+        monkeypatch.setattr(ss_mod, "IS_WINDOWS", True)
+        server._windows_auth_token = None
+        server._execute_tool = MagicMock(return_value=json.dumps({"result": "ok"}))
+
+        response = server._process_command(json.dumps({
+            "tool": "execute_python_sync", "args": {}, "token": "",
+        }))
+        parsed = json.loads(response)
+        assert "error" in parsed
+        server._execute_tool.assert_not_called()
+
+    def test_non_windows_path_unaffected(self, server, monkeypatch):
+        """The Unix-domain socket's access boundary is the 0600 socket
+        file, not this token -- it must keep working with no token at all."""
+        import freecad_mcp_handler as ss_mod
+        monkeypatch.setattr(ss_mod, "IS_WINDOWS", False)
+        server._windows_auth_token = None
+        server._execute_tool = MagicMock(return_value=json.dumps({"result": "ok"}))
+
+        response = server._process_command(json.dumps({"tool": "create_box", "args": {}}))
+        parsed = json.loads(response)
+        assert parsed["result"] == "ok"
+        server._execute_tool.assert_called_once()
+
+    def test_token_is_a_known_request_key(self, ss_module):
+        """A legitimate 'token' field must not trip the unrecognized-key
+        rejection added for the bridge's {"tool", "args"} contract."""
+        assert "token" in ss_module._KNOWN_REQUEST_KEYS
+
+
+class TestInitWindowsAuthToken:
+    def test_generates_and_persists_a_token(self, server, monkeypatch, tmp_path):
+        import freecad_mcp_handler as ss_mod
+        token_path = tmp_path / "windows_auth_token"
+        monkeypatch.setattr(ss_mod, "WINDOWS_AUTH_TOKEN_DIR", str(tmp_path))
+        monkeypatch.setattr(ss_mod, "WINDOWS_AUTH_TOKEN_PATH", str(token_path))
+        monkeypatch.setattr(
+            ss_mod, "_restrict_token_file_to_current_user_windows",
+            MagicMock(return_value=True),
+        )
+
+        token = server._init_windows_auth_token()
+
+        assert isinstance(token, str) and len(token) >= 32
+        assert token_path.read_text() == token
+
+    def test_warns_but_still_returns_a_token_if_acl_restriction_fails(
+        self, server, monkeypatch, tmp_path
+    ):
+        """icacls being unavailable/denied must degrade gracefully (a
+        console warning), not break the auth mechanism itself -- the token
+        file falling back to the directory's default ACL is documented, not
+        fatal."""
+        import freecad_mcp_handler as ss_mod
+        token_path = tmp_path / "windows_auth_token"
+        monkeypatch.setattr(ss_mod, "WINDOWS_AUTH_TOKEN_DIR", str(tmp_path))
+        monkeypatch.setattr(ss_mod, "WINDOWS_AUTH_TOKEN_PATH", str(token_path))
+        monkeypatch.setattr(
+            ss_mod, "_restrict_token_file_to_current_user_windows",
+            MagicMock(return_value=False),
+        )
+
+        token = server._init_windows_auth_token()
+
+        assert token_path.read_text() == token
+
+
+class TestRestrictTokenFileToCurrentUserWindows:
+    """Best-effort icacls hardening -- no pywin32/win32security dependency
+    (this project has none); shells out to a tool built into every
+    supported Windows release instead."""
+
+    def test_success_returns_true_and_invokes_icacls(self, ss_module, monkeypatch, tmp_path):
+        monkeypatch.setenv("USERNAME", "testuser")
+        run_mock = MagicMock(return_value=MagicMock(returncode=0))
+        monkeypatch.setattr(ss_module.subprocess, "run", run_mock)
+
+        target = str(tmp_path / "windows_auth_token")
+        assert ss_module._restrict_token_file_to_current_user_windows(target) is True
+
+        called_args = run_mock.call_args[0][0]
+        assert called_args[0] == "icacls"
+        assert target in called_args
+        assert "testuser:F" in called_args
+
+    def test_icacls_nonzero_exit_returns_false(self, ss_module, monkeypatch, tmp_path):
+        monkeypatch.setenv("USERNAME", "testuser")
+        monkeypatch.setattr(
+            ss_module.subprocess, "run", MagicMock(return_value=MagicMock(returncode=1))
+        )
+        assert ss_module._restrict_token_file_to_current_user_windows(
+            str(tmp_path / "f")
+        ) is False
+
+    def test_icacls_missing_returns_false_not_raise(self, ss_module, monkeypatch, tmp_path):
+        monkeypatch.setenv("USERNAME", "testuser")
+        monkeypatch.setattr(
+            ss_module.subprocess, "run", MagicMock(side_effect=FileNotFoundError("no icacls"))
+        )
+        assert ss_module._restrict_token_file_to_current_user_windows(
+            str(tmp_path / "f")
+        ) is False
+
+    def test_no_username_env_returns_false(self, ss_module, monkeypatch, tmp_path):
+        monkeypatch.delenv("USERNAME", raising=False)
+        monkeypatch.delenv("USER", raising=False)
+        assert ss_module._restrict_token_file_to_current_user_windows(
+            str(tmp_path / "f")
+        ) is False
+
+
+class TestStartServerWindowsSocketOptions:
+    """start_server()'s Windows branch: SO_EXCLUSIVEADDRUSE instead of
+    SO_REUSEADDR, and the auth token generated/stored before the listening
+    socket is bound."""
+
+    def _patch_common(self, ss_mod, monkeypatch, fake_sock):
+        monkeypatch.setattr(ss_mod, "IS_WINDOWS", True)
+        # SO_EXCLUSIVEADDRUSE doesn't exist in the real socket module on
+        # non-Windows test hosts; inject it so start_server()'s real
+        # (unmocked) attribute lookup doesn't AttributeError here, mirroring
+        # how real Windows always provides this constant.
+        monkeypatch.setattr(ss_mod.socket, "SO_EXCLUSIVEADDRUSE", 0xBEEF, raising=False)
+        monkeypatch.setattr(ss_mod.socket, "socket", MagicMock(return_value=fake_sock))
+        monkeypatch.setattr(
+            ss_mod, "_restrict_token_file_to_current_user_windows",
+            MagicMock(return_value=True),
+        )
+        monkeypatch.setattr(ss_mod.os, "makedirs", MagicMock())
+        monkeypatch.setattr(ss_mod.threading, "Thread", MagicMock(return_value=MagicMock()))
+
+    def test_uses_exclusiveaddruse_not_reuseaddr(self, server, monkeypatch, tmp_path):
+        import freecad_mcp_handler as ss_mod
+        fake_sock = MagicMock()
+        self._patch_common(ss_mod, monkeypatch, fake_sock)
+        monkeypatch.setattr(ss_mod, "WINDOWS_AUTH_TOKEN_PATH", str(tmp_path / "token"))
+
+        assert server.start_server() is True
+
+        setsockopt_calls = fake_sock.setsockopt.call_args_list
+        assert len(setsockopt_calls) == 1
+        assert setsockopt_calls[0].args == (ss_mod.socket.SOL_SOCKET, 0xBEEF, 1)
+        used_options = {c.args[1] for c in setsockopt_calls}
+        assert ss_mod.socket.SO_REUSEADDR not in used_options
+
+    def test_token_generated_and_stored_before_returning(self, server, monkeypatch, tmp_path):
+        import freecad_mcp_handler as ss_mod
+        fake_sock = MagicMock()
+        self._patch_common(ss_mod, monkeypatch, fake_sock)
+        monkeypatch.setattr(ss_mod, "WINDOWS_AUTH_TOKEN_PATH", str(tmp_path / "token"))
+
+        assert server._windows_auth_token is None  # precondition: unset until start_server runs
+        assert server.start_server() is True
+
+        assert server._windows_auth_token
+        assert (tmp_path / "token").read_text() == server._windows_auth_token
+        fake_sock.bind.assert_called_once_with((ss_mod.WINDOWS_HOST, ss_mod.WINDOWS_PORT))
+
+
+# ---------------------------------------------------------------------------
 # GUI heartbeat + active-connection/queue-depth visibility
 # ---------------------------------------------------------------------------
 

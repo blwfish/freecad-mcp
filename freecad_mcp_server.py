@@ -27,6 +27,28 @@ from mcp_events import event_context, emit_event
 
 DISCOVERY_DIR = os.path.expanduser("~/.cache/freecad-mcp/instances")
 
+# Must match freecad_mcp_handler.py's WINDOWS_AUTH_TOKEN_PATH -- the
+# FreeCAD-side Windows TCP listener has no AF_UNIX equivalent to restrict
+# access to (unlike the Unix-domain socket, whose confidentiality boundary
+# is the 0600 socket file), so it instead requires a shared-secret token,
+# generated fresh at each FreeCAD launch and written to this path. Every
+# request send_to_freecad makes on the Windows path must include it. See
+# freecad_mcp_handler.py's comment above WINDOWS_AUTH_TOKEN_PATH for what
+# confidentiality guarantee the file itself actually has on Windows.
+WINDOWS_AUTH_TOKEN_PATH = os.path.expanduser("~/.freecad-mcp/windows_auth_token")
+
+
+def _read_windows_auth_token() -> str | None:
+    """Read the shared-secret token the FreeCAD-side Windows TCP listener
+    wrote at startup. Re-read on every call rather than cached at import
+    time, since restarting the FreeCAD instance rotates the token."""
+    try:
+        with open(WINDOWS_AUTH_TOKEN_PATH, "r", encoding="ascii") as f:
+            token = f.read().strip()
+            return token or None
+    except OSError:
+        return None
+
 
 # =============================================================================
 # Update check — pull only (we never listen for a push), cached, throttled,
@@ -2331,9 +2353,21 @@ async def main():
         sock = None
         try:
             # Create socket connection based on platform
+            windows_token = None
             if platform.system() == "Windows":
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.connect(('localhost', 23456))
+                # The Windows TCP listener has no filesystem object to gate
+                # access on (unlike the Unix-domain socket's 0600 file), so
+                # it requires this shared-secret token on every request --
+                # see WINDOWS_AUTH_TOKEN_PATH above.
+                windows_token = _read_windows_auth_token()
+                if not windows_token:
+                    return json.dumps({
+                        "error": "Windows auth token not found at "
+                                 f"{WINDOWS_AUTH_TOKEN_PATH}; is the FreeCAD "
+                                 "AICopilot service running?"
+                    })
             else:
                 current_path, err = _ctx.resolve_target()
                 if err:
@@ -2342,7 +2376,10 @@ async def main():
                 sock.connect(current_path)
 
             # Send command with length-prefixed protocol (v2.1.1)
-            command = json.dumps({"tool": tool_name, "args": args})
+            command_payload = {"tool": tool_name, "args": args}
+            if windows_token is not None:
+                command_payload["token"] = windows_token
+            command = json.dumps(command_payload)
             if not send_message(sock, command):
                 return json.dumps({"error": "Failed to send command to FreeCAD"})
 
