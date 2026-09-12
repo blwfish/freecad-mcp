@@ -102,7 +102,8 @@ class OpLog:
 
     def _flush(self) -> None:
         try:
-            with open(OPLOG_FILE, "w") as f:
+            fd = os.open(OPLOG_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "w") as f:
                 json.dump(list(self._ops), f, indent=2)
         except Exception:
             pass

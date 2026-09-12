@@ -630,6 +630,62 @@ class TestPostProcess(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# cam_ops: surface_stl
+# ---------------------------------------------------------------------------
+
+class TestSurfaceStlPathValidation(unittest.TestCase):
+    """surface_stl's stl_file must go through the same home/tmp/Volumes
+    allowlist as post_process's output_file (_validate_file_path), instead
+    of only an os.path.exists() check — otherwise it's a file-existence
+    oracle and format-constrained read primitive against any absolute path
+    the FreeCAD process can reach."""
+
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(CAMOpsHandler)
+
+    def test_path_outside_allowlist_rejected(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.surface_stl({
+            "job_name": "Job1",
+            "stl_file": "/etc/passwd",
+        })
+
+        assert_error_contains(self, result, "outside allowed directories")
+
+    def test_missing_job_checked_before_path_validation(self):
+        """Job lookup happens first -- an outside-allowlist path shouldn't
+        change which error a caller with the wrong job_name sees."""
+        doc = make_mock_doc()
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.surface_stl({
+            "job_name": "Ghost",
+            "stl_file": "/etc/passwd",
+        })
+
+        assert_error_contains(self, result, "ghost", "not found")
+
+    def test_path_inside_allowlist_proceeds_past_validation(self):
+        """A path under an allowed dir (/tmp) must clear the allowlist
+        check and fail later for a legitimate reason (file doesn't exist),
+        not be rejected as outside the allowlist."""
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.surface_stl({
+            "job_name": "Job1",
+            "stl_file": "/tmp/does_not_exist_ocl_surface_test.stl",
+        })
+
+        assert_error_contains(self, result, "stl file not found")
+
+
+# ---------------------------------------------------------------------------
 # cam_ops: create_job
 # ---------------------------------------------------------------------------
 

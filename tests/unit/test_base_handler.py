@@ -413,6 +413,110 @@ class TestRecompute:
 
 
 # ---------------------------------------------------------------------------
+# find_font / _is_allowed_font_path (F7 security fix)
+#
+# font_file is a caller-controlled MCP argument whose bytes are handed
+# straight to a native font parser (OCCT/FreeType via Part.makeWireString /
+# Draft.make_shapestring). Before this fix, find_font() only checked
+# os.path.exists() -- any file the FreeCAD process could read, anywhere on
+# disk, would be accepted and parsed. _is_allowed_font_path gates that.
+# ---------------------------------------------------------------------------
+
+class TestIsAllowedFontPath:
+    def test_home_dir_path_allowed(self, base_handler):
+        home = os.path.realpath(os.path.expanduser("~"))
+        path = os.path.join(home, "Fonts", "custom.ttf")
+        assert base_handler._is_allowed_font_path(path) is True
+
+    def test_tmp_path_allowed(self, base_handler):
+        assert base_handler._is_allowed_font_path("/tmp/custom.ttf") is True
+
+    def test_macos_system_fonts_dir_allowed(self, base_handler):
+        assert base_handler._is_allowed_font_path(
+            "/System/Library/Fonts/Supplemental/Arial.ttf"
+        ) is True
+
+    def test_macos_library_fonts_allowed(self, base_handler):
+        assert base_handler._is_allowed_font_path("/Library/Fonts/Arial.ttf") is True
+
+    def test_linux_usr_share_fonts_allowed(self, base_handler):
+        assert base_handler._is_allowed_font_path(
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+        ) is True
+
+    def test_linux_usr_local_share_fonts_allowed(self, base_handler):
+        assert base_handler._is_allowed_font_path(
+            "/usr/local/share/fonts/custom.ttf"
+        ) is True
+
+    def test_windows_fonts_dir_allowed(self, base_handler):
+        assert base_handler._is_allowed_font_path("C:/Windows/Fonts/arial.ttf") is True
+
+    def test_exact_system_dir_itself_allowed(self):
+        """Boundary case for the `resolved == s` branch -- the directory
+        itself (not just something nested inside it)."""
+        from handlers.base import BaseHandler
+        assert BaseHandler._is_allowed_font_path("/usr/share/fonts") is True
+
+    def test_sibling_dir_sharing_string_prefix_not_treated_as_inside(self, base_handler):
+        """'/usr/share/fonts-evil' shares the '/usr/share/fonts' string
+        prefix but is not actually inside that directory -- a naive
+        `.startswith(prefix)` check without a separator would wrongly
+        allow this."""
+        assert base_handler._is_allowed_font_path(
+            "/usr/share/fonts-evil/payload.ttf"
+        ) is False
+
+    def test_arbitrary_path_outside_allowlist_rejected(self, base_handler):
+        assert base_handler._is_allowed_font_path("/etc/passwd") is False
+
+    def test_traversal_outside_home_rejected(self, base_handler):
+        assert base_handler._is_allowed_font_path(
+            os.path.join(os.path.expanduser("~"), "..", "..", "etc", "passwd")
+        ) is False
+
+    def test_empty_path_rejected(self, base_handler):
+        assert base_handler._is_allowed_font_path("") is False
+
+
+class TestFindFont:
+    def test_returns_caller_path_inside_allowlist(self, base_handler, monkeypatch):
+        allowed = "/tmp/allowed_test_font.ttf"
+        monkeypatch.setattr(os.path, "exists", lambda p: p == allowed)
+        assert base_handler.find_font(allowed) == allowed
+
+    def test_ignores_caller_path_outside_allowlist_even_if_it_exists(self, base_handler, monkeypatch):
+        """The exploit this fix closes: an MCP caller points font_file at
+        a file outside every allowed directory. Even if that file exists
+        and is readable, find_font() must not hand it back for parsing."""
+        arbitrary = "/etc/passwd"
+        monkeypatch.setattr(os.path, "exists", lambda p: True)
+        assert base_handler.find_font(arbitrary) != arbitrary
+
+    def test_disallowed_path_falls_back_to_candidate_search(self, base_handler, monkeypatch):
+        """Rejecting a disallowed font_file falls through to the normal
+        bundled/candidate search, exactly like the pre-existing behavior
+        for a font_file that simply doesn't exist -- it is not a hard
+        error, just an ignored hint."""
+        arbitrary = "/etc/passwd"
+        bundled = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+        monkeypatch.setattr(
+            os.path, "exists",
+            lambda p: p == bundled,  # arbitrary path never "exists" here
+        )
+        assert base_handler.find_font(arbitrary) == bundled
+
+    def test_no_font_file_falls_back_to_candidate_search(self, base_handler, monkeypatch):
+        bundled = "/Library/Fonts/Arial.ttf"
+        monkeypatch.setattr(os.path, "exists", lambda p: p == bundled)
+        assert base_handler.find_font('') == bundled
+
+    def test_nothing_found_returns_empty_string(self, base_handler, monkeypatch):
+        monkeypatch.setattr(os.path, "exists", lambda p: False)
+        assert base_handler.find_font('/tmp/whatever.ttf') == ''
+
+
+# ---------------------------------------------------------------------------
 # save_before_risky_op
 # ---------------------------------------------------------------------------
 

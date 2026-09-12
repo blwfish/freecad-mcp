@@ -15,6 +15,7 @@ since it does a local `import FreeCAD` inside the except block.
 import importlib
 import json
 import os
+import stat
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -61,6 +62,110 @@ class TestSetCurrentOpSuccess:
             data = json.load(f)
         assert len(data["args"]["code"].encode("utf-8")) <= crash_watcher._MAX_ARG_BYTES + 20
         assert "[truncated]" in data["args"]["code"]
+
+
+class TestSetCurrentOpFilePermissions:
+    """F6: LAST_OP_FILE sits directly under the shared, world-writable/
+    world-traversable /tmp with a fixed, predictable name. Its content
+    (tool args, which can include a real credential embedded in
+    execute_python source) must never be readable by another local
+    account regardless of the process umask."""
+
+    def test_file_created_owner_only(self):
+        crash_watcher.set_current_op("execute_python", {"code": "1+1"})
+        mode = stat.S_IMODE(os.stat(crash_watcher.LAST_OP_FILE).st_mode)
+        assert mode == 0o600
+
+    def test_file_created_owner_only_even_with_permissive_umask(self):
+        """A 000 umask would normally leave a freshly-created file at
+        whatever mode the open() call requested, unmasked — confirming the
+        mode comes from the explicit opener, not merely "got lucky" with
+        the ambient umask on a typical dev/CI box (022 or 002)."""
+        old_umask = os.umask(0o000)
+        try:
+            crash_watcher.set_current_op("execute_python", {"code": "1+1"})
+        finally:
+            os.umask(old_umask)
+        mode = stat.S_IMODE(os.stat(crash_watcher.LAST_OP_FILE).st_mode)
+        assert mode == 0o600
+
+    def test_restrictive_umask_does_not_widen_permissions(self):
+        """A umask that would ordinarily narrow permissions further (e.g.
+        clearing the owner-write bit) is respected, not overridden back
+        up to 0600 -- the opener requests 0600 as a ceiling, not a floor."""
+        old_umask = os.umask(0o200)  # clears owner-write
+        try:
+            crash_watcher.set_current_op("execute_python", {"code": "1+1"})
+        finally:
+            os.umask(old_umask)
+        mode = stat.S_IMODE(os.stat(crash_watcher.LAST_OP_FILE).st_mode)
+        assert mode == 0o400, "umask narrows the requested 0600, never widens it"
+        assert mode & 0o077 == 0, "must never be group/world readable"
+
+
+class TestRedactSecrets:
+    """F6: args are persisted to a shared /tmp path purely for crash
+    diagnosis, but may legitimately contain a real credential a user
+    embedded in execute_python source. Common recognizable secret shapes
+    must be redacted before the file is written."""
+
+    def test_aws_access_key_redacted(self):
+        assert crash_watcher._redact_secrets("AKIAABCDEFGHIJKLMNOP") == "[REDACTED]"
+
+    def test_openai_style_key_redacted(self):
+        s = "api_key=sk-abcdef1234567890ABCDEFGHIJ"
+        out = crash_watcher._redact_secrets(s)
+        assert "sk-abcdef1234567890ABCDEFGHIJ" not in out
+        assert "[REDACTED]" in out
+
+    def test_bearer_token_redacted(self):
+        s = "Authorization: Bearer abc123.def456-ghi789"
+        out = crash_watcher._redact_secrets(s)
+        assert "abc123.def456-ghi789" not in out
+
+    def test_jwt_redacted(self):
+        jwt = (
+            "eyJhbGciOiJIUzI1NiJ9."
+            "eyJzdWIiOiIxMjM0NTY3ODkwIn0."
+            "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+        )
+        out = crash_watcher._redact_secrets(f"token = {jwt}")
+        assert jwt not in out
+
+    def test_password_assignment_redacted_key_preserved(self):
+        out = crash_watcher._redact_secrets("password: 'hunter2222'")
+        assert "hunter2222" not in out
+        assert out.startswith("password: ")
+
+    def test_url_embedded_credential_redacted_but_user_and_host_kept(self):
+        out = crash_watcher._redact_secrets("postgres://svc_user:hunter2@db.internal/prod")
+        assert "hunter2" not in out
+        assert "svc_user" in out
+        assert "db.internal" in out
+
+    def test_ordinary_prose_mentioning_password_is_untouched(self):
+        """No '=' or ':' assignment shape -- must not be mangled."""
+        s = "this handles the password reset flow for the user"
+        assert crash_watcher._redact_secrets(s) == s
+
+    def test_short_non_secret_assignment_is_untouched(self):
+        """Below the minimum value length -- avoids over-eager redaction
+        of ordinary short variable assignments that merely contain one of
+        the watched key names."""
+        s = "x=1234"
+        assert crash_watcher._redact_secrets(s) == s
+
+    def test_set_current_op_writes_redacted_args_not_raw_secret(self):
+        secret = "sk-abcdef1234567890ABCDEFGHIJ"
+        crash_watcher.set_current_op(
+            "execute_python",
+            {"code": f"import requests\nrequests.get(url, headers={{'api_key': '{secret}'}})"},
+        )
+        with open(crash_watcher.LAST_OP_FILE, "rb") as f:
+            raw = f.read()
+        assert secret.encode() not in raw
+        data = json.loads(raw)
+        assert "[REDACTED]" in data["args"]["code"]
 
 
 class TestSetCurrentOpWriteFailure:
