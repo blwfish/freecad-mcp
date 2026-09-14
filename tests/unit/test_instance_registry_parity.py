@@ -19,6 +19,7 @@ exclusively, so the divergence was invisible to CI.
 import json
 import os
 import socket
+import subprocess
 import sys
 import uuid
 import pytest
@@ -29,6 +30,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import instance_registry  # noqa: E402
 import freecad_mcp_server  # noqa: E402
+
+
+@pytest.fixture
+def dead_pid():
+    """A pid guaranteed to not refer to a running process. Spawned via
+    subprocess (not raw os.fork) since pytest itself is multi-threaded and
+    forking a multi-threaded process risks deadlock."""
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()
+    return proc.pid
 
 
 @pytest.fixture
@@ -71,6 +82,26 @@ def _write(directory, name, content):
         else:
             json.dump(content, f)
     return path
+
+
+class TestPidAliveParity:
+    """instance_registry.is_pid_alive and freecad_mcp_server._pid_alive are
+    independent implementations of the same check (same reason as
+    scan_discovery above: separate processes/installs, can't import each
+    other) -- must agree on every input."""
+
+    @pytest.mark.parametrize("pid", [None, 0, -1, "12345", 1.5])
+    def test_agree_on_invalid_pids(self, pid):
+        assert instance_registry.is_pid_alive(pid) is False
+        assert freecad_mcp_server._pid_alive(pid) is False
+
+    def test_agree_current_process_is_alive(self):
+        assert instance_registry.is_pid_alive(os.getpid()) is True
+        assert freecad_mcp_server._pid_alive(os.getpid()) is True
+
+    def test_agree_reaped_child_is_dead(self, dead_pid):
+        assert instance_registry.is_pid_alive(dead_pid) is False
+        assert freecad_mcp_server._pid_alive(dead_pid) is False
 
 
 class TestScanDiscoveryParity:
@@ -144,6 +175,49 @@ class TestScanDiscoveryParity:
         assert bridge == []  # did not raise
         for name in ("list.json", "number.json", "null.json"):
             assert os.path.exists(os.path.join(isolated_dirs, name))
+
+    def test_busy_but_alive_pid_not_pruned_by_either(self, isolated_dirs, tmp_path):
+        """The pid-liveness fallback both implementations must share: a
+        dead socket whose recorded pid is confirmed alive (this test
+        process's own) must NOT be pruned by either side -- a failed
+        connect probe alone isn't proof of death (see both scan_discovery
+        docstrings)."""
+        stale_sock = str(tmp_path / "busy.sock")
+        with open(stale_sock, "w"):
+            pass
+        _write(isolated_dirs, "busy.json", {
+            "uuid": "busy", "socket_path": stale_sock, "pid": os.getpid(),
+        })
+
+        canonical = instance_registry.scan_discovery(prune_stale=True)
+        assert canonical == []  # not reported live (socket really is dead)
+        assert os.path.exists(os.path.join(isolated_dirs, "busy.json"))
+        assert os.path.exists(stale_sock)  # NOT unlinked
+
+        bridge = freecad_mcp_server._scan_discovery(prune_stale=True)
+        assert bridge == []
+        assert os.path.exists(os.path.join(isolated_dirs, "busy.json"))
+
+    def test_dead_socket_and_dead_pid_pruned_by_both(self, isolated_dirs, tmp_path, dead_pid):
+        """Regression guard shared by both implementations: when the pid
+        is ALSO confirmed dead, pruning still happens exactly as before
+        this fix."""
+        stale_sock = str(tmp_path / "reallydead.sock")
+        with open(stale_sock, "w"):
+            pass
+        _write(isolated_dirs, "dead.json", {
+            "uuid": "d", "socket_path": stale_sock, "pid": dead_pid,
+        })
+        canonical = instance_registry.scan_discovery(prune_stale=True)
+        assert canonical == []
+        assert not os.path.exists(os.path.join(isolated_dirs, "dead.json"))
+
+        _write(isolated_dirs, "dead2.json", {
+            "uuid": "d2", "socket_path": stale_sock, "pid": dead_pid,
+        })
+        bridge = freecad_mcp_server._scan_discovery(prune_stale=True)
+        assert bridge == []
+        assert not os.path.exists(os.path.join(isolated_dirs, "dead2.json"))
 
     def test_prune_stale_false_leaves_dead_record_on_both(self, isolated_dirs):
         dead_path = "/tmp/freecad_mcp_definitely_dead_9f8e7d.sock"

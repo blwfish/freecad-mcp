@@ -8,9 +8,14 @@ Both AICopilot side (this module) and bridge side (freecad_mcp_server.py)
 must agree on:
   - DISCOVERY_DIR location
   - JSON schema (see write_discovery)
+  - the pid-liveness fallback in scan_discovery's pruning decision (see
+    is_pid_alive) -- a socket that fails a single quick connect probe is
+    not proof the process is dead, only that it isn't accepting
+    connections *right now*; pruning must not destroy a busy-but-alive
+    instance's connectivity.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 import glob
 import json
@@ -48,15 +53,23 @@ def write_discovery(
     label: str | None = None,
     freecad_version: str | None = None,
     freecad_binary: str | None = None,
+    pid: int | None = None,
 ) -> str:
     """Atomically write the discovery file for this instance.
+
+    `pid` defaults to the current process's own pid, which is always
+    correct for real callers (an AICopilot instance always writes its own
+    discovery record). The override exists solely so tests can simulate a
+    specific — notably an already-dead — pid without duplicating this
+    function's JSON-construction logic; production code should never pass
+    it explicitly.
 
     Returns the absolute path of the written file.
     """
     ensure_dir()
     data = {
         "uuid": instance_uuid,
-        "pid": os.getpid(),
+        "pid": pid if pid is not None else os.getpid(),
         "socket_path": socket_path,
         "gui": gui,
         "label": label or instance_uuid,
@@ -111,6 +124,33 @@ def is_socket_alive(socket_path: str, timeout: float = 0.5) -> bool:
         return False
 
 
+def is_pid_alive(pid) -> bool:
+    """Best-effort check for whether `pid` still refers to a running process.
+
+    Returns False (i.e. "can't confirm alive") for anything that isn't a
+    plausible pid -- missing/None/non-int/non-positive -- since a record
+    in that shape predates this check or is otherwise malformed, not
+    evidence of a genuinely live-but-busy process. That's a deliberate
+    asymmetry: a confirmed-alive pid should block destructive pruning
+    (see scan_discovery), but an unconfirmable one should not block it
+    forever, or a record with a missing/garbled pid field would become
+    permanently unprunable.
+    """
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Process exists but isn't signalable by us (different user) --
+        # existence is still confirmed, so treat as alive.
+        return True
+    except OSError:
+        return False
+
+
 def scan_discovery(prune_stale: bool = True) -> list[dict]:
     """Return list of live instance discovery records.
 
@@ -124,8 +164,19 @@ def scan_discovery(prune_stale: bool = True) -> list[dict]:
     would silently kill discovery for any future schema migration — older
     AICopilots scanning newer files would nuke them.  Instead we log a
     warning and leave the record in place so the newer process can still
-    rely on it.  Only records that DO carry socket_path but whose socket
-    is dead are pruned, since those are unambiguously stale.
+    rely on it.
+
+    A record that carries socket_path but whose socket fails to connect is
+    pruned only if its pid is ALSO confirmed dead (see is_pid_alive). A
+    failed connect alone is not proof of death — it just means the socket
+    isn't accepting connections *right now*, which a live process can
+    produce for reasons other than having exited (most notably: the GUI
+    thread, and with it the accept loop, blocked for minutes by a heavy
+    OCCT boolean operation — see freecad_mcp_handler.py's own GUI-thread
+    heartbeat/timeout handling, built for exactly that scenario). Pruning
+    on the connect probe alone would delete a live instance's discovery
+    record and unlink its still-listening socket file permanently, even
+    though it would have recovered on its own once the operation finished.
     """
     try:
         entries = os.listdir(DISCOVERY_DIR)
@@ -164,10 +215,31 @@ def scan_discovery(prune_stale: bool = True) -> list[dict]:
         if is_socket_alive(sock_path):
             live.append(data)
         elif prune_stale:
-            # Socket is definitively dead — safe to remove both the
-            # discovery record and the orphaned socket file itself. The
-            # socket file matters too: nothing else will ever revisit it,
-            # since every future instance picks a fresh random UUID path.
+            if is_pid_alive(data.get("pid")):
+                # The socket isn't accepting connections right now, but
+                # the process that wrote this record is still running --
+                # most likely busy with a long-running FreeCAD operation
+                # (heavy OCCT booleans can block the GUI thread, and with
+                # it the socket accept loop, for minutes; see
+                # freecad_mcp_handler.py's own GUI-thread-heartbeat/
+                # timeout handling, which exists for exactly this reason).
+                # Deleting the discovery record and unlinking the live
+                # socket file out from under a running process destroys
+                # its connectivity permanently -- it would otherwise have
+                # recovered on its own once the operation finished.
+                # Confirmed 2026-09-13: a ~13-minute recompute() call
+                # triggered exactly this, reported as "no live instances"
+                # by the bridge, wiping the socket file mid-recompute
+                # while FreeCAD was still working (and later hit a
+                # "Broken pipe" trying to report success back over it).
+                # Leave the record and socket file in place; just don't
+                # report this instance as live for this scan.
+                continue
+            # Socket is dead AND the owning process is confirmed gone --
+            # safe to remove both the discovery record and the orphaned
+            # socket file itself. The socket file matters too: nothing
+            # else will ever revisit it, since every future instance
+            # picks a fresh random UUID path.
             try:
                 os.unlink(path)
             except OSError:

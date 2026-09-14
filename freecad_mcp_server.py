@@ -239,6 +239,28 @@ def _tcp_socket_alive(host_port: str, timeout: float = 0.5) -> bool:
         return False
 
 
+def _pid_alive(pid) -> bool:
+    """Best-effort check for whether `pid` still refers to a running process.
+
+    Mirrors instance_registry.is_pid_alive (AICopilot side) — keep both in
+    sync, same as _scan_discovery/scan_discovery below. Returns False for
+    anything that isn't a plausible pid (missing/None/non-int/non-positive):
+    an unconfirmable pid should not permanently block pruning of a
+    malformed or pre-pid-field record.
+    """
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
 def _scan_discovery(prune_stale: bool = True) -> list[dict]:
     """Read ~/.cache/freecad-mcp/instances/*.json, return live records.
 
@@ -258,8 +280,17 @@ def _scan_discovery(prune_stale: bool = True) -> list[dict]:
     prune_stale=True — mass-deleting unrecognized records would silently
     kill discovery for any future schema migration. A record that isn't a
     JSON object at all (list, number, null) is skipped without aborting the
-    rest of the scan. Only records that DO carry socket_path but whose
-    socket is dead are pruned, since those are unambiguously stale.
+    rest of the scan.
+
+    A record that carries socket_path but whose socket fails to connect is
+    pruned only if its pid is ALSO confirmed dead (_pid_alive). A failed
+    connect alone isn't proof of death — a live process can fail a quick
+    connect probe for reasons other than having exited, most notably a
+    long-running OCCT boolean blocking the GUI thread (and its accept
+    loop) for minutes. Confirmed 2026-09-13: a ~13-minute recompute()
+    tripped exactly this, and the old unconditional-prune behavior deleted
+    a still-listening instance's discovery record and socket file out from
+    under it.
     """
     if platform.system() == "Windows":
         return []
@@ -297,6 +328,12 @@ def _scan_discovery(prune_stale: bool = True) -> list[dict]:
         if _socket_alive(sock_path):
             live.append(data)
         elif prune_stale:
+            if _pid_alive(data.get("pid")):
+                # Process still running -- likely just busy, not dead.
+                # Don't delete its discovery record out from under it; see
+                # this function's docstring. Just don't report it as live
+                # for this scan.
+                continue
             try:
                 os.unlink(path)
             except OSError:
