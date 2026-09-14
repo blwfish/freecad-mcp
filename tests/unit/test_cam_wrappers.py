@@ -1008,6 +1008,111 @@ class TestCreatePathOpStepDownExpression(unittest.TestCase):
         self.assertEqual(op.FinalDepth, -12.5)
 
 
+class TestDrillingNumericParamValidation(unittest.TestCase):
+    """peck_depth/dwell_time/retract_height had no bounds check anywhere
+    in the pipeline -- unlike surface_stl's tool_diameter/stepover/
+    sample_interval, which are validated downstream in ocl_surface_op.py.
+    A wrong retract_height in particular is a crash-into-fixture/table
+    risk on real hardware, the same class of concern as the FinalDepth
+    expression-binding trap tested above."""
+
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(CAMOpsHandler)
+
+    def _create_fn(self):
+        import sys
+        create_fn = MagicMock()
+        sys.modules['Path.Op.Drilling'].Create = create_fn
+        return create_fn
+
+    def test_peck_depth_zero_rejected(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        create_fn = self._create_fn()
+
+        result = self.handler.drilling({'job_name': 'Job1', 'peck_depth': 0})
+
+        assert_error_contains(self, result, "peck_depth")
+        create_fn.assert_not_called()
+
+    def test_peck_depth_negative_rejected(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        create_fn = self._create_fn()
+
+        result = self.handler.drilling({'job_name': 'Job1', 'peck_depth': -1})
+
+        assert_error_contains(self, result, "peck_depth")
+        create_fn.assert_not_called()
+
+    def test_dwell_time_zero_accepted(self):
+        """0 is a valid dwell time (no dwell), unlike peck_depth/retract_height."""
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        op = MagicMock()
+        import sys
+        sys.modules['Path.Op.Drilling'].Create = MagicMock(return_value=op)
+
+        result = self.handler.drilling({'job_name': 'Job1', 'dwell_time': 0})
+
+        assert_success_contains(self, result, "Drilling")
+        self.assertEqual(op.DwellTime, 0)
+
+    def test_dwell_time_negative_rejected(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        create_fn = self._create_fn()
+
+        result = self.handler.drilling({'job_name': 'Job1', 'dwell_time': -0.5})
+
+        assert_error_contains(self, result, "dwell_time")
+        create_fn.assert_not_called()
+
+    def test_retract_height_zero_rejected(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        create_fn = self._create_fn()
+
+        result = self.handler.drilling({'job_name': 'Job1', 'retract_height': 0})
+
+        assert_error_contains(self, result, "retract_height")
+        create_fn.assert_not_called()
+
+    def test_retract_height_negative_rejected(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        create_fn = self._create_fn()
+
+        result = self.handler.drilling({'job_name': 'Job1', 'retract_height': -5})
+
+        assert_error_contains(self, result, "retract_height")
+        create_fn.assert_not_called()
+
+    def test_valid_positive_values_accepted(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        op = MagicMock()
+        import sys
+        sys.modules['Path.Op.Drilling'].Create = MagicMock(return_value=op)
+
+        result = self.handler.drilling({
+            'job_name': 'Job1', 'peck_depth': 2.0, 'dwell_time': 0.5, 'retract_height': 10.0,
+        })
+
+        assert_success_contains(self, result, "Drilling")
+        self.assertEqual(op.PeckDepth, 2.0)
+        self.assertEqual(op.DwellTime, 0.5)
+        self.assertEqual(op.RetractHeight, 10.0)
+
+
 class TestCreatePathOpBaseWiring(unittest.TestCase):
     def setUp(self):
         reset_mocks()

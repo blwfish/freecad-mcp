@@ -104,8 +104,22 @@ def _open_owner_only(path: str, flags: int) -> int:
 
     POSIX-only: os.open's mode argument has no meaningful effect on
     Windows, where NTFS ACLs (not Unix permission bits) govern access.
+
+    os.open's mode argument only applies when the call actually creates a
+    NEW file -- a pre-existing file at this fixed, predictable path (e.g.
+    a leftover .tmp from an interrupted prior write, or a file that
+    predates this permission hardening) would otherwise keep its old,
+    looser permissions forever. Try O_EXCL first so a genuinely fresh
+    file still goes through the normal umask-narrows-0600 path (tested
+    above); only fall back to fchmod-after-open, which unconditionally
+    forces exactly 0600, when reusing a file that already existed.
     """
-    return os.open(path, flags, 0o600)
+    try:
+        return os.open(path, flags | os.O_EXCL, 0o600)
+    except FileExistsError:
+        fd = os.open(path, flags, 0o600)
+        os.fchmod(fd, 0o600)
+        return fd
 
 
 # A persistent write failure (disk full, permissions, /tmp not writable)

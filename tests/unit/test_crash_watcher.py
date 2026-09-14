@@ -110,6 +110,23 @@ class TestSetCurrentOpFilePermissions:
         mode = stat.S_IMODE(os.stat(crash_watcher.LAST_OP_FILE).st_mode)
         assert mode == 0o600
 
+    def test_preexisting_looser_tmp_permissions_are_tightened(self):
+        """Regression: os.open's mode argument only applies when O_CREAT
+        actually creates a NEW file -- a leftover .tmp file (e.g. from an
+        interrupted prior write, or predating this permission hardening)
+        already sitting at the fixed, predictable tmp path used to keep
+        its old, looser permissions forever, silently defeating the 0600
+        hardening for that specific write."""
+        tmp_path = crash_watcher.LAST_OP_FILE + ".tmp"
+        with open(tmp_path, "w") as f:
+            f.write("{}")
+        os.chmod(tmp_path, 0o644)
+
+        crash_watcher.set_current_op("execute_python", {"code": "1+1"})
+
+        mode = stat.S_IMODE(os.stat(crash_watcher.LAST_OP_FILE).st_mode)
+        assert mode == 0o600, "pre-existing tmp file's permissions must be tightened, not left as-is"
+
     def test_restrictive_umask_does_not_widen_permissions(self):
         """A umask that would ordinarily narrow permissions further (e.g.
         clearing the owner-write bit) is respected, not overridden back

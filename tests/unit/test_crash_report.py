@@ -141,6 +141,44 @@ class TestLegacyCrashParsing:
         assert "start + 1" not in out
 
 
+class TestOpLogFlushPermissions:
+    """OPLOG_FILE sits directly under the shared, world-writable/world-
+    traversable /tmp with a fixed, predictable name. Its content (a ring
+    buffer of recent tool-call summaries) must never be readable by
+    another local account regardless of umask -- including when a file
+    from before this permission hardening shipped (or the umask-default
+    mode) already exists at that path."""
+
+    @pytest.fixture(autouse=True)
+    def isolated_oplog(self, monkeypatch, tmp_path):
+        path = str(tmp_path / "oplog.json")
+        monkeypatch.setattr(cr, "OPLOG_FILE", path)
+        return path
+
+    def test_fresh_file_created_owner_only(self, isolated_oplog):
+        log = cr.OpLog()
+        log.record("execute_python", {"code": "1+1"})
+        mode = os.stat(isolated_oplog).st_mode & 0o777
+        assert mode == 0o600
+
+    def test_preexisting_looser_permissions_are_tightened(self, isolated_oplog):
+        """Regression: os.open's mode argument only applies when O_CREAT
+        actually creates a NEW file -- a file already sitting at this path
+        with looser (e.g. umask-default 0o644) permissions used to keep
+        them forever, silently defeating the confidentiality goal of the
+        0600 hardening for that specific file."""
+        with open(isolated_oplog, "w") as f:
+            f.write("{}")
+        os.chmod(isolated_oplog, 0o644)
+        assert os.stat(isolated_oplog).st_mode & 0o777 == 0o644
+
+        log = cr.OpLog()
+        log.record("execute_python", {"code": "1+1"})
+
+        mode = os.stat(isolated_oplog).st_mode & 0o777
+        assert mode == 0o600, "pre-existing file's permissions must be tightened, not left as-is"
+
+
 class TestReadLastOp:
     """_read_last_op must only ever read the requested pid's own file.
 

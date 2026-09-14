@@ -642,6 +642,33 @@ class TestScanDiscoveryMalformedRecords:
         assert "future0000003.json" in combined
         assert "endpoint" in combined  # the unfamiliar key
 
+    def test_corrupt_json_drop_logs_warning(self, isolated_dir, capsys):
+        """Regression: corrupt/unparseable JSON used to be dropped via a
+        bare `continue` with zero visibility -- a directory full of
+        corrupted records was indistinguishable from "no live instances".
+        """
+        instance_registry.ensure_dir()
+        bad_path = os.path.join(isolated_dir, "corrupt0000001.json")
+        with open(bad_path, "w") as f:
+            f.write("{not valid json")
+        instance_registry.scan_discovery(prune_stale=False)
+        captured = capsys.readouterr()
+        combined = captured.out + captured.err
+        assert "corrupt0000001.json" in combined
+
+    def test_non_dict_json_drop_logs_warning(self, isolated_dir, capsys):
+        """Regression: valid-but-non-object JSON (list/number/null) was
+        also dropped silently -- same visibility gap as the corrupt-JSON
+        case above."""
+        instance_registry.ensure_dir()
+        bad_path = os.path.join(isolated_dir, "listrecord0000001.json")
+        with open(bad_path, "w") as f:
+            json.dump(["not", "a", "record"], f)
+        instance_registry.scan_discovery(prune_stale=True)
+        captured = capsys.readouterr()
+        combined = captured.out + captured.err
+        assert "listrecord0000001.json" in combined
+
     def test_record_with_unlistened_socket_file_is_pruned(self, isolated_dir, tmp_path, dead_pid):
         """is_socket_alive returns False for a file that exists but isn't
         a listening Unix socket.  Existing test_prunes_stale_entries uses

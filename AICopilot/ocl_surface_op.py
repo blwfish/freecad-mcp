@@ -38,6 +38,13 @@ import Path
 
 from handlers.base import mm_min_to_mm_s, BaseHandler
 
+# Sanity cap on a binary STL's declared triangle count. The file-size
+# cross-check in _load_stl is the real backstop (this many triangles
+# requires a file this large to actually exist on disk) -- this exists to
+# fail fast with a clear message rather than attempt to parse a many-GB
+# file and build tens of millions of OCL triangle objects from one call.
+_MAX_STL_TRIANGLES = 10_000_000
+
 
 # ---------------------------------------------------------------------------
 # Module-level helpers (no OCL dependency at import time)
@@ -90,6 +97,18 @@ def _load_stl(stl_file, ocl):
                 f"(file is {file_size} bytes, expected {expected_size} "
                 f"for {n_tris} triangles)"
             )
+        # The file-size cross-check just above is the real backstop --
+        # n_tris this large requires a file this large to actually exist
+        # on disk, and file_size == expected_size has already been
+        # confirmed by this point. This cap exists purely to fail fast
+        # with a clear message instead of attempting to parse a many-GB
+        # file and build tens of millions of OCL triangle objects from one
+        # call, for the rare case such a file genuinely exists.
+        if n_tris > _MAX_STL_TRIANGLES:
+            raise ValueError(
+                f"STL file declares {n_tris} triangles, exceeding the "
+                f"{_MAX_STL_TRIANGLES} sanity limit: {stl_file}"
+            )
 
         for _ in range(n_tris):
             f.read(12)  # normal vector (ignored — OCL recomputes)
@@ -98,6 +117,18 @@ def _load_stl(stl_file, ocl):
                 raise ValueError(f"Truncated triangle data in: {stl_file}")
             v = struct.unpack("<9f", raw)
             f.read(2)  # attribute byte count
+
+            if not all(math.isfinite(c) for c in v):
+                # A NaN vertex coordinate silently no-ops every bounds
+                # comparison below (`x < x_min` is always False when x is
+                # NaN), leaving x_min/x_max/y_min/y_max wrong or infinite
+                # with no error -- and an Inf coordinate that survives into
+                # y_max can make _build_zigzag_scan's scan-line loop
+                # (`while y <= y_max + 1e-9`) never terminate.
+                raise ValueError(
+                    f"Non-finite vertex coordinate (NaN/Inf) in triangle "
+                    f"data: {stl_file}"
+                )
 
             stl_surf.addTriangle(ocl.Triangle(
                 ocl.Point(v[0], v[1], v[2]),
@@ -330,6 +361,17 @@ class OCLSurfaceProxy:
             )
         if sampling <= 0:
             raise ValueError(f"SampleInterval must be > 0 (got {sampling})")
+        # safe_z/cut_feed/plunge_feed aren't fed into OCL itself (no C++
+        # hang/crash risk), but a non-positive value here still produces
+        # unsafe or degenerate G-code: zero/negative safe_z gives the rapid
+        # retract move no actual clearance above the work, and a
+        # zero/negative feed rate is meaningless motion.
+        if safe_z <= 0:
+            raise ValueError(f"SafeHeight must be > 0 (got {safe_z})")
+        if cut_feed <= 0:
+            raise ValueError(f"CutFeed must be > 0 (got {cut_feed})")
+        if plunge_feed <= 0:
+            raise ValueError(f"PlungeFeed must be > 0 (got {plunge_feed})")
 
         t0 = time.time()
 
