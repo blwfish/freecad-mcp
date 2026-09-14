@@ -135,9 +135,13 @@ _FREECAD_SPEC = [
     'ParamGet',
     # Dynamically assigned onto the FreeCAD module itself by InitGui.py /
     # headless_server.py as ad hoc global state, not read via a literal
-    # `FreeCAD.__ai_...` attribute expression that grep alone would catch
+    # `FreeCAD._ai_...` attribute expression that grep alone would catch
     # as "usage" in the same way — listed explicitly since they're real.
-    '__ai_global_service', '__ai_socket_server',
+    # Single leading underscore (not double): a double-underscore name
+    # written literally inside InitGui.py's GlobalAIService class body
+    # would be name-mangled to `_GlobalAIService__ai_...`, breaking every
+    # reader outside that class — see InitGui.py's GlobalAIService docstring.
+    '_ai_global_service', '_ai_socket_server',
 ]
 _PART_SPEC = [
     'ArcOfCircle', 'Circle', 'export', 'Face', 'insert', 'LineSegment',

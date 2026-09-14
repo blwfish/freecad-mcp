@@ -18,7 +18,7 @@ strengthened version for that fix.
 
 This file exercises the REAL dispatch against a live FreeCAD process: seed
 server.selector.pending_operations exactly as request_selection would (via
-execute_python_sync reaching FreeCAD.__ai_socket_server.selector, the same
+execute_python_sync reaching FreeCAD._ai_socket_server.selector, the same
 handle headless_server.py and InitGui.py both expose), then call the
 actual continue_selection MCP tool.
 
@@ -106,7 +106,7 @@ def _seed_pending_selection(operation_id: str, tool: str, obj_name: str, element
     extra_repr = ", ".join(f"{k!r}: {v!r}" for k, v in extra.items())
     code = f"""
 import time
-server = FreeCAD.__ai_socket_server
+server = FreeCAD._ai_socket_server
 server.selector.pending_operations[{operation_id!r}] = {{
     "tool": {tool!r}, "type": "edges", "object": {obj_name!r},
     "timestamp": time.time(), {extra_repr}
@@ -173,7 +173,7 @@ class TestContinueSelectionAllFiveTools:
         # Override the "edges" default _seed_pending_selection hardcodes,
         # for the face-selecting tools.
         send_command("execute_python_sync", {"code": f"""
-server = FreeCAD.__ai_socket_server
+server = FreeCAD._ai_socket_server
 server.selector.pending_operations[{op_id!r}]["type"] = {selection_type!r}
 """})
 

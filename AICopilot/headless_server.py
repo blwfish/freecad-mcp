@@ -112,8 +112,12 @@ def main():
         FreeCAD.Console.PrintError("[Headless MCP] Failed to start socket server.\n")
         sys.exit(1)
 
-    # Expose on FreeCAD module so execute_python code can reach it if needed
-    FreeCAD.__ai_socket_server = server
+    # Expose on FreeCAD module so execute_python code can reach it if needed.
+    # Single leading underscore, not double: InitGui.py's GUI path sets this
+    # from inside a class method, where a literal `__ai_socket_server`
+    # attribute expression would get name-mangled to
+    # `_GlobalAIService__ai_socket_server` and no longer match this name.
+    FreeCAD._ai_socket_server = server
 
     # Write discovery file (best-effort — never fatal).
     instance_uuid = None
@@ -183,8 +187,8 @@ def main():
                 instance_registry.remove_discovery(instance_uuid)
             except Exception:
                 pass
-        if hasattr(FreeCAD, "__ai_socket_server"):
-            del FreeCAD.__ai_socket_server
+        if hasattr(FreeCAD, "_ai_socket_server"):
+            del FreeCAD._ai_socket_server
 
 
 main()
