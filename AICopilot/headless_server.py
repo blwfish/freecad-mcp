@@ -191,12 +191,17 @@ def main():
             del FreeCAD._ai_socket_server
 
 
-if __name__ == "__main__":
-    # FreeCADCmd invokes this file as a script (see the module docstring's
-    # Usage line), so __name__ == "__main__" there exactly as it would be
-    # for a normal `python3 headless_server.py` invocation -- this guard
-    # changes nothing about production behavior. It exists so the module
-    # can be imported (e.g. by tests) without unconditionally starting a
-    # real socket server and blocking in main()'s signal-wait loop, which
-    # is why this file had zero test coverage before.
-    main()
+main()
+# NOT guarded by `if __name__ == "__main__":` -- confirmed against
+# FC-clone's src/App/Application.cpp (Application::processFiles): a .py
+# file passed on the FreeCADCmd command line is loaded via
+# Base::Interpreter().loadModule(), a REGULAR import (module name ==
+# "headless_server", not "__main__"), falling back to running it as
+# __main__ ONLY if loadModule() raises a Base::PyException. A __main__
+# guard here would make main() never run under the normal (loadModule)
+# path -- confirmed live: added once during a test-coverage pass
+# (2026-09-14), broke every CI integration test ("FreeCADCmd exited
+# prematurely with code 0" -- the script imported cleanly and returned
+# without ever starting the server), reverted same day. See
+# tests/unit/test_headless_server.py for how this stays testable without
+# a __main__ guard.
