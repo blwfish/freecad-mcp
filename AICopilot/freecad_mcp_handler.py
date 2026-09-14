@@ -87,8 +87,34 @@
 #                   renumbers it; set_property's MCP schema widened to accept
 #                   array values for list-typed properties. Also bumped the
 #                   dev-weekly CI pin to weekly-2026.08.26.
+# Version: 7.5.0 - Security hardening: Windows TCP control-plane socket now
+#                   requires a shared-secret auth token (closes CWE-306);
+#                   Docker workflow shell-injection fix; font/STL file-path
+#                   arguments now run through the same allowlist as other
+#                   file I/O; crash_watcher.py's last-op file gets secret
+#                   redaction and 0600 permissions. Discovery/instance-
+#                   registry hardening: scan_discovery and sweep_stale_
+#                   sockets no longer prune a live instance just because it's
+#                   busy (e.g. mid-recompute) rather than dead; the bridge-
+#                   side scan_discovery now removes orphaned socket files
+#                   the same way the AICopilot-side copy always did; both
+#                   sides' Windows liveness check no longer misuses
+#                   os.kill(pid, 0) (not a liveness probe there). Fixed a
+#                   FreeCAD.__ai_socket_server/__ai_global_service name-
+#                   mangling bug that broke execute_python's access to the
+#                   running server. Full-review pass closed 1 Critical
+#                   (a truncation-boundary surviving mutant), 5 High, and 10
+#                   Medium findings: a secret-redaction regex ordering bug
+#                   that could destroy URL host/path; unguarded CAM
+#                   parameters (stepover, peck_depth, drilling clearances);
+#                   unvalidated STL triangle counts and NaN/Inf vertex data;
+#                   permission-reuse gaps on pre-existing crash-diagnostic
+#                   files; deploy.sh got its first test coverage (which
+#                   found and fixed a `set -e` bug hiding its own error
+#                   message); headless_server.py went from 0% to 84% unit
+#                   coverage.
 
-__version__ = "7.4.1"
+__version__ = "7.5.0"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
