@@ -505,7 +505,7 @@ wheels = [
 
 [[package]]
 name = "freecad-mcp"
-version = "7.4.1"
+version = "7.5.0"
 source = { virtual = "." }
 dependencies = [
     { name = "mcp" },
