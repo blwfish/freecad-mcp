@@ -731,14 +731,14 @@ class TestHoleWizard:
 # (Phase 2 — see the plan's note: this exercises the real creation/
 # recompute logic but bypasses the public continue_selection dispatch,
 # a narrower guard than test_continue_selection.py's dispatch-level tests.
-# Reached via FreeCAD.__ai_socket_server.partdesign_ops, the same handle
+# Reached via FreeCAD._ai_socket_server.partdesign_ops, the same handle
 # headless_server.py/InitGui.py expose for the running FreeCADSocketServer
 # instance.)
 # ---------------------------------------------------------------------------
 
 def _call_internal_selection_method(method_name: str, args: dict, elements: list) -> str:
     code = f"""
-server = FreeCAD.__ai_socket_server
+server = FreeCAD._ai_socket_server
 selection_result = {{"selection_data": {{"elements": {elements!r}}}}}
 print(server.partdesign_ops.{method_name}({args!r}, selection_result))
 result = None

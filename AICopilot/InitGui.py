@@ -28,7 +28,18 @@ else:
         sys.path.append(path)
 
     class GlobalAIService:
-        """Global MCP socket service that runs across all workbenches."""
+        """Global MCP socket service that runs across all workbenches.
+
+        NOTE: state is stashed on the FreeCAD module as `_ai_socket_server`
+        / `_ai_global_service` (single leading underscore) rather than
+        `__ai_...`. A double-underscore name written as a literal
+        `FreeCAD.__ai_x = ...` attribute expression here would be Python
+        name-mangled to `FreeCAD._GlobalAIService__ai_x` (mangling applies
+        to any `__name` textually inside a class body, not just `self.__x`),
+        silently breaking every reader outside this class (the Python
+        console, execute_python code, headless_server.py, tests) that
+        expects the plain attribute name. Keep these single-underscore.
+        """
 
         def __init__(self):
             self.socket_server = None
@@ -93,7 +104,7 @@ else:
                 from freecad_mcp_handler import FreeCADSocketServer
                 self.socket_server = FreeCADSocketServer()
                 if self.socket_server.start_server():
-                    FreeCAD.__ai_socket_server = self.socket_server
+                    FreeCAD._ai_socket_server = self.socket_server
                     FreeCAD.Console.PrintMessage("AI Socket Server started - Claude ready\n")
                 else:
                     FreeCAD.Console.PrintError("Failed to start AI socket server\n")
@@ -134,7 +145,7 @@ else:
                 FreeCAD.Console.PrintWarning(f"Stale socket sweep failed: {e}\n")
 
             self.is_running = True
-            FreeCAD.__ai_global_service = self
+            FreeCAD._ai_global_service = self
             FreeCAD.Console.PrintMessage("AI Copilot Service running - available from all workbenches\n")
 
             self._connect_quit_cleanup(self.stop)
@@ -163,7 +174,7 @@ else:
                 except Exception:
                     pass
 
-            for attr in ('__ai_socket_server', '__ai_global_service'):
+            for attr in ('_ai_socket_server', '_ai_global_service'):
                 if hasattr(FreeCAD, attr):
                     delattr(FreeCAD, attr)
 
@@ -174,7 +185,7 @@ else:
         FreeCAD.Console.PrintMessage("Test mode - AI Copilot auto-start skipped\n")
     else:
         try:
-            if not hasattr(FreeCAD, '__ai_global_service'):
+            if not hasattr(FreeCAD, '_ai_global_service'):
                 service = GlobalAIService()
                 if service.start():
                     FreeCAD.Console.PrintMessage("FreeCAD AI Copilot ready.\n")

@@ -137,6 +137,24 @@ class DiagnosticsOpsHandler(BaseHandler):
         The response is sent BEFORE the restart happens, so the MCP bridge
         gets a clean response. The new FreeCAD instance will start fresh
         with AICopilot reconnecting on the same socket path.
+
+        TODO(socket-only-death): this is the only recovery tool today even
+        when just the AI socket server has died (broken pipe) while FreeCAD
+        itself is still alive and healthy — full process restart is overkill
+        for that case, but a lighter "reconnect the socket without
+        restarting FreeCAD" MCP tool can't be dispatched the normal way:
+        it would have to travel over the very socket that is dead to reach
+        this handler, which is exactly the failure being recovered from.
+        The only channel that still works in that state is one that runs
+        inside FreeCAD's own process without going through the socket —
+        e.g. a FreeCADGui menu/toolbar command (Gui::Command, none exist
+        yet in AICopilot) the user triggers by hand, running the same
+        reconnect steps as the manual Python-console recovery: construct a
+        fresh FreeCADSocketServer, call start_server(), and call
+        instance_registry.write_discovery(...). That's a real design
+        decision (new workbench UI surface), not a small addition — left
+        here rather than guessed at. See GlobalAIService in InitGui.py for
+        the equivalent GUI-path lifecycle this would need to hook into.
         """
         if not FreeCAD.GuiUp:
             return json.dumps({"error": "restart_freecad is not available in headless mode"})

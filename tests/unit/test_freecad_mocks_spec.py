@@ -96,15 +96,18 @@ class TestSpecAllowsRealUsage:
 
     def test_ai_global_attrs_settable_and_deletable(self):
         """InitGui.py / headless_server.py stash ad hoc state directly on
-        the FreeCAD module (FreeCAD.__ai_socket_server = ...) and later
+        the FreeCAD module (FreeCAD._ai_socket_server = ...) and later
         hasattr()-check / delattr() it — spec (not spec_set) must not raise
         on assignment or deletion of a name already in the allowlist.
 
         Uses setattr/delattr with an explicit string rather than literal
-        dunder-attribute syntax (mock_FreeCAD.__ai_socket_server = ...)
-        because the latter gets Python name-mangled to
-        _TestSpecAllowsRealUsage__ai_socket_server inside a class body,
-        which would silently test the wrong attribute name entirely.
+        attribute syntax (mock_FreeCAD._ai_socket_server = ...) on general
+        principle: this name is single-leading-underscore specifically
+        because a double-underscore name written as a literal attribute
+        expression inside a class body gets Python name-mangled (see
+        InitGui.py's GlobalAIService docstring for the real-code incident
+        this guards against) — using setattr/delattr here keeps this test
+        immune to that class of bug regardless of what the real name is.
 
         Does NOT assert hasattr() is False after delattr(): MagicMock
         auto-vivifies any spec-listed name on first access regardless of
@@ -113,8 +116,8 @@ class TestSpecAllowsRealUsage:
         del-then-hasattr fidelity here would test something spec was never
         going to provide.
         """
-        setattr(mock_FreeCAD, "__ai_socket_server", object())
-        delattr(mock_FreeCAD, "__ai_socket_server")
+        setattr(mock_FreeCAD, "_ai_socket_server", object())
+        delattr(mock_FreeCAD, "_ai_socket_server")
 
 
 class TestSpecSurvivesResetMocks:
