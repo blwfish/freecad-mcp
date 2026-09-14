@@ -218,11 +218,25 @@ class CAMOpsHandler(BaseHandler):
             # tool paths are non-overlapping (or gapped), leaving uncut
             # ridges/material — syntactically valid G-code with silently
             # wrong geometry. Validated before creating the op.
+            #
+            # The floor matters too: Pocket's StepOver property is
+            # App::PropertyPercent, which silently CLAMPS an out-of-range
+            # assignment into [0,100] rather than raising — so an
+            # unvalidated zero/negative value wouldn't error here, it
+            # would just clamp to 0 downstream and produce a degenerate
+            # (zero-width) toolpath with no signal to the caller that
+            # their input was rejected.
             if 'stepover' in args and args['stepover'] >= 100:
                 error = Exception(
                     f"stepover ({args['stepover']}%) must be < 100% of tool diameter — "
                     f"at or above 100% the tool paths don't overlap, leaving uncut "
                     f"ridges/material"
+                )
+                return self.log_and_return("pocket", args, error=error, duration=time.time() - start_time)
+            if 'stepover' in args and args['stepover'] <= 0:
+                error = Exception(
+                    f"stepover ({args['stepover']}%) must be > 0% of tool diameter — "
+                    f"a zero or negative stepover produces a degenerate toolpath"
                 )
                 return self.log_and_return("pocket", args, error=error, duration=time.time() - start_time)
 
@@ -306,11 +320,23 @@ class CAMOpsHandler(BaseHandler):
             # (obj.removeProperty("StepOver")), so hasattr(op, 'StepOver')
             # is False on any modern Adaptive feature and the caller's
             # stepover argument was silently never applied.
+            #
+            # The floor check matters MORE here than in pocket(): Adaptive's
+            # StepOverPercent is a plain, unconstrained App::PropertyFloat
+            # with no clamping at all (unlike Pocket's PropertyPercent) — a
+            # zero/negative value flows straight into the trochoidal
+            # clearing engine unguarded.
             if 'stepover' in args and args['stepover'] >= 100:
                 error = Exception(
                     f"stepover ({args['stepover']}%) must be < 100% of tool diameter — "
                     f"at or above 100% the tool paths don't overlap, leaving uncut "
                     f"ridges/material"
+                )
+                return self.log_and_return("adaptive", args, error=error, duration=time.time() - start_time)
+            if 'stepover' in args and args['stepover'] <= 0:
+                error = Exception(
+                    f"stepover ({args['stepover']}%) must be > 0% of tool diameter — "
+                    f"a zero or negative stepover produces a degenerate toolpath"
                 )
                 return self.log_and_return("adaptive", args, error=error, duration=time.time() - start_time)
 

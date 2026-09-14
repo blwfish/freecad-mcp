@@ -31,6 +31,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import instance_registry  # noqa: E402
 import freecad_mcp_server  # noqa: E402
 
+import tests.unit._freecad_mocks  # noqa: E402,F401 -- installs FreeCAD/Part/etc. mocks into sys.modules, required before importing freecad_mcp_handler below
+import freecad_mcp_handler  # noqa: E402
+
 
 @pytest.fixture
 def dead_pid():
@@ -102,6 +105,46 @@ class TestPidAliveParity:
     def test_agree_reaped_child_is_dead(self, dead_pid):
         assert instance_registry.is_pid_alive(dead_pid) is False
         assert freecad_mcp_server._pid_alive(dead_pid) is False
+
+    def test_agree_both_dispatch_to_windows_specific_check_on_win32(self, monkeypatch):
+        """Both independent implementations must avoid os.kill(pid, 0) on
+        Windows (signal 0 maps to CTRL_C_EVENT there, not a liveness
+        probe) and dispatch to their own _is_pid_alive_windows helper
+        instead."""
+        monkeypatch.setattr(instance_registry.sys, "platform", "win32")
+        monkeypatch.setattr(freecad_mcp_server.sys, "platform", "win32")
+        monkeypatch.setattr(instance_registry, "_is_pid_alive_windows", lambda pid: True)
+        monkeypatch.setattr(freecad_mcp_server, "_is_pid_alive_windows", lambda pid: True)
+
+        def fail_kill(pid, sig):
+            raise AssertionError("must not call os.kill on Windows")
+        monkeypatch.setattr(instance_registry.os, "kill", fail_kill)
+        monkeypatch.setattr(freecad_mcp_server.os, "kill", fail_kill)
+
+        assert instance_registry.is_pid_alive(4321) is True
+        assert freecad_mcp_server._pid_alive(4321) is True
+
+
+class TestWindowsAuthTokenPathParity:
+    """freecad_mcp_handler.WINDOWS_AUTH_TOKEN_PATH and
+    freecad_mcp_server.WINDOWS_AUTH_TOKEN_PATH are two independently
+    computed constants for the same shared-secret file (same reason as
+    the other parity classes in this file: separate processes/installs,
+    no shared-import chokepoint) -- a security-relevant path (this pins
+    where the Windows TCP auth token, added to close CWE-306, actually
+    lives). Before this test, only the bridge side was pinned against a
+    hardcoded literal string; a drift introduced only in the handler's
+    own computation (WINDOWS_AUTH_TOKEN_DIR + "windows_auth_token") would
+    have gone completely uncaught by any test, and Windows isn't in the
+    CI matrix either, so no CI run would have caught it live."""
+
+    def test_both_sides_compute_the_same_path(self):
+        assert freecad_mcp_handler.WINDOWS_AUTH_TOKEN_PATH == freecad_mcp_server.WINDOWS_AUTH_TOKEN_PATH
+
+    def test_both_sides_agree_with_the_documented_literal(self):
+        expected = os.path.expanduser("~/.freecad-mcp/windows_auth_token")
+        assert freecad_mcp_handler.WINDOWS_AUTH_TOKEN_PATH == expected
+        assert freecad_mcp_server.WINDOWS_AUTH_TOKEN_PATH == expected
 
 
 class TestScanDiscoveryParity:
@@ -201,23 +244,36 @@ class TestScanDiscoveryParity:
     def test_dead_socket_and_dead_pid_pruned_by_both(self, isolated_dirs, tmp_path, dead_pid):
         """Regression guard shared by both implementations: when the pid
         is ALSO confirmed dead, pruning still happens exactly as before
-        this fix."""
-        stale_sock = str(tmp_path / "reallydead.sock")
-        with open(stale_sock, "w"):
+        this fix -- including removal of the orphaned socket FILE itself,
+        not just the discovery JSON record. A prior version of this test
+        reused one socket path across both calls and only ever asserted
+        the JSON record was gone; that masked a real divergence where the
+        bridge-side implementation never removed the socket file at all
+        (only instance_registry.py's copy did) -- the second call's file
+        had already been deleted by the first call before the bridge ever
+        got a chance to prove it could do the same. Using a distinct
+        socket path per side closes that gap."""
+        canonical_sock = str(tmp_path / "reallydead_canonical.sock")
+        with open(canonical_sock, "w"):
             pass
         _write(isolated_dirs, "dead.json", {
-            "uuid": "d", "socket_path": stale_sock, "pid": dead_pid,
+            "uuid": "d", "socket_path": canonical_sock, "pid": dead_pid,
         })
         canonical = instance_registry.scan_discovery(prune_stale=True)
         assert canonical == []
         assert not os.path.exists(os.path.join(isolated_dirs, "dead.json"))
+        assert not os.path.exists(canonical_sock), "orphaned socket file must be removed too"
 
+        bridge_sock = str(tmp_path / "reallydead_bridge.sock")
+        with open(bridge_sock, "w"):
+            pass
         _write(isolated_dirs, "dead2.json", {
-            "uuid": "d2", "socket_path": stale_sock, "pid": dead_pid,
+            "uuid": "d2", "socket_path": bridge_sock, "pid": dead_pid,
         })
         bridge = freecad_mcp_server._scan_discovery(prune_stale=True)
         assert bridge == []
         assert not os.path.exists(os.path.join(isolated_dirs, "dead2.json"))
+        assert not os.path.exists(bridge_sock), "orphaned socket file must be removed too"
 
     def test_prune_stale_false_leaves_dead_record_on_both(self, isolated_dirs):
         dead_path = "/tmp/freecad_mcp_definitely_dead_9f8e7d.sock"

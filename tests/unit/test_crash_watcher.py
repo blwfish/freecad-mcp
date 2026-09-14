@@ -164,6 +164,25 @@ class TestRedactSecrets:
         assert "svc_user" in out
         assert "db.internal" in out
 
+    def test_url_credential_with_keyword_username_keeps_host_and_path(self):
+        """Regression test: when a URL's username happens to match a
+        watched key name (a common real shape -- GitHub token-auth cloning
+        uses e.g. `x-access-token`, and `token`/`password` are common
+        userinfo values for other services), _KEY_VALUE_SECRET_PATTERN used
+        to run first with an unbounded greedy value class, consuming
+        `@host/path` along with the secret before the URL-specific pattern
+        ever got a chance to preserve them."""
+        out = crash_watcher._redact_secrets(
+            "https://x-access-token:ghp_ABCDEFGHIJKLMNOPQRSTUVWX@github.com/org/repo.git"
+        )
+        assert "ghp_ABCDEFGHIJKLMNOPQRSTUVWX" not in out
+        assert out.endswith("@github.com/org/repo.git")
+
+    def test_url_credential_with_password_keyword_username_keeps_host(self):
+        out = crash_watcher._redact_secrets("redis://password:hunter2@cache.internal:6379")
+        assert "hunter2" not in out
+        assert out.endswith("@cache.internal:6379")
+
     def test_ordinary_prose_mentioning_password_is_untouched(self):
         """No '=' or ':' assignment shape -- must not be mangled."""
         s = "this handles the password reset flow for the user"

@@ -1120,6 +1120,49 @@ class TestPocketStepoverValidation(unittest.TestCase):
         assert_success_contains(self, result, "Pocket")
         self.assertEqual(op.StepOver, 99)
 
+    def test_stepover_at_zero_rejected(self):
+        """Floor boundary: Pocket's StepOver is App::PropertyPercent, which
+        silently CLAMPS an out-of-range assignment into [0,100] instead of
+        raising -- an unvalidated zero would clamp rather than error,
+        producing a degenerate toolpath with no signal to the caller."""
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        import sys
+        create_fn = MagicMock()
+        sys.modules['Path.Op.Pocket'].Create = create_fn
+
+        result = self.handler.pocket({'job_name': 'Job1', 'stepover': 0})
+
+        assert_error_contains(self, result, "stepover")
+        create_fn.assert_not_called()
+
+    def test_stepover_negative_rejected(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        import sys
+        create_fn = MagicMock()
+        sys.modules['Path.Op.Pocket'].Create = create_fn
+
+        result = self.handler.pocket({'job_name': 'Job1', 'stepover': -5})
+
+        assert_error_contains(self, result, "stepover")
+        create_fn.assert_not_called()
+
+    def test_stepover_just_above_zero_accepted(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        op = MagicMock()
+        import sys
+        sys.modules['Path.Op.Pocket'].Create = MagicMock(return_value=op)
+
+        result = self.handler.pocket({'job_name': 'Job1', 'stepover': 1})
+
+        assert_success_contains(self, result, "Pocket")
+        self.assertEqual(op.StepOver, 1)
+
 
 class TestAdaptiveStepoverValidation(unittest.TestCase):
     def setUp(self):
@@ -1138,6 +1181,50 @@ class TestAdaptiveStepoverValidation(unittest.TestCase):
 
         assert_error_contains(self, result, "stepover", "100")
         create_fn.assert_not_called()
+
+    def test_stepover_at_zero_rejected(self):
+        """Floor boundary: Adaptive's StepOverPercent is a plain,
+        unconstrained App::PropertyFloat with NO clamping at all (unlike
+        Pocket's PropertyPercent) -- an unvalidated zero/negative value
+        would flow straight into the trochoidal clearing engine
+        unguarded."""
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        import sys
+        create_fn = MagicMock()
+        sys.modules['Path.Op.Adaptive'].Create = create_fn
+
+        result = self.handler.adaptive({'job_name': 'Job1', 'stepover': 0})
+
+        assert_error_contains(self, result, "stepover")
+        create_fn.assert_not_called()
+
+    def test_stepover_negative_rejected(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        import sys
+        create_fn = MagicMock()
+        sys.modules['Path.Op.Adaptive'].Create = create_fn
+
+        result = self.handler.adaptive({'job_name': 'Job1', 'stepover': -10})
+
+        assert_error_contains(self, result, "stepover")
+        create_fn.assert_not_called()
+
+    def test_stepover_just_above_zero_accepted(self):
+        job = make_cam_job("Job1")
+        doc = make_mock_doc([job])
+        mock_FreeCAD.ActiveDocument = doc
+        op = MagicMock(spec=['Name', 'StepOverPercent', 'Tolerance', 'Base'])
+        import sys
+        sys.modules['Path.Op.Adaptive'].Create = MagicMock(return_value=op)
+
+        result = self.handler.adaptive({'job_name': 'Job1', 'stepover': 1})
+
+        assert_success_contains(self, result, "Adaptive")
+        self.assertEqual(op.StepOverPercent, 1)
 
     def test_stepover_writes_to_step_over_percent_not_legacy_stepover(self):
         """Regression: the real Adaptive property is StepOverPercent, not

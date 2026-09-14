@@ -55,10 +55,18 @@ _FULL_MATCH_SECRET_PATTERNS = [
 ]
 # key=value / key: "value" style credential assignments. Group 1 = key
 # name, 2 = separator, 3 = optional quote, 4 = the secret value (redacted).
+# The value class excludes '@' and '/' as well as whitespace/quotes/commas:
+# without that, a URL like https://token:ghp_XXX@github.com/org/repo.git
+# has "token" as a watched key name, and an unbounded greedy value class
+# would consume "ghp_XXX@github.com/org/repo.git" in one match — destroying
+# the host/path along with the secret. Real credential values (API keys,
+# tokens) don't legitimately contain '@' or '/', so excluding them stops
+# the match at the credential's actual boundary and leaves the rest of the
+# URL for _URL_CREDENTIAL_PATTERN below to handle on its own terms.
 _KEY_VALUE_SECRET_PATTERN = re.compile(
     r"(?i)\b(api[_-]?key|apikey|access[_-]?key|secret(?:[_-]?key)?|"
     r"password|passwd|pwd|token|auth[_-]?token|client[_-]?secret)"
-    r"(\s*[:=]\s*)(['\"]?)([^\s'\",;]{6,})\3"
+    r"(\s*[:=]\s*)(['\"]?)([^\s'\",;@/]{6,})\3"
 )
 # Credentials embedded in a URL, e.g. postgres://user:hunter2@host/db.
 # Group 1 = "scheme://user:", 2 = password (redacted), 3 = "@".
