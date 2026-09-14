@@ -30,6 +30,8 @@ import tmp_safety
 # multiple concurrent instances don't clobber one another's crash context.
 LAST_OP_FILE = f"/tmp/freecad_mcp_last_op_{os.getpid()}.json"
 _MAX_ARG_BYTES = 1500   # truncate large args (e.g. long Python scripts)
+_TRUNCATION_SUFFIX = " … [truncated]"
+_TRUNCATION_SUFFIX_BYTES = len(_TRUNCATION_SUFFIX.encode("utf-8"))
 
 # args (e.g. execute_python's `code`) can legitimately contain a real
 # credential a user embedded to call an external service from inside
@@ -118,10 +120,13 @@ def set_current_op(tool: str, args: dict) -> None:
     for k, v in args.items():
         s = _redact_secrets(str(v))
         # _MAX_ARG_BYTES is a BYTE limit — truncate on the encoded bytes, not the
-        # character count, so multibyte UTF-8 args don't blow past it.
+        # character count, so multibyte UTF-8 args don't blow past it. The kept
+        # slice is shortened by the suffix's own byte length so the final
+        # persisted value never exceeds _MAX_ARG_BYTES total.
         b = s.encode("utf-8")
         if len(b) > _MAX_ARG_BYTES:
-            safe_args[k] = b[:_MAX_ARG_BYTES].decode("utf-8", errors="ignore") + " … [truncated]"
+            kept = b[: _MAX_ARG_BYTES - _TRUNCATION_SUFFIX_BYTES]
+            safe_args[k] = kept.decode("utf-8", errors="ignore") + _TRUNCATION_SUFFIX
         else:
             safe_args[k] = s
 

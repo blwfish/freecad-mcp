@@ -60,8 +60,29 @@ class TestSetCurrentOpSuccess:
         crash_watcher.set_current_op("execute_python", {"code": huge})
         with open(crash_watcher.LAST_OP_FILE) as f:
             data = json.load(f)
-        assert len(data["args"]["code"].encode("utf-8")) <= crash_watcher._MAX_ARG_BYTES + 20
+        assert len(data["args"]["code"].encode("utf-8")) <= crash_watcher._MAX_ARG_BYTES
         assert "[truncated]" in data["args"]["code"]
+
+    @pytest.mark.parametrize(
+        "size,should_truncate",
+        [
+            (crash_watcher._MAX_ARG_BYTES - 1, False),
+            (crash_watcher._MAX_ARG_BYTES, False),
+            (crash_watcher._MAX_ARG_BYTES + 1, True),
+        ],
+    )
+    def test_truncation_boundary_is_exact(self, size, should_truncate):
+        """Pins the `>` (not `>=`) contract at exactly _MAX_ARG_BYTES, and
+        that the truncated output — suffix included — never exceeds the
+        cap. A prior version appended the suffix AFTER slicing to the cap,
+        so a truncated value could silently exceed _MAX_ARG_BYTES by the
+        suffix's own length."""
+        crash_watcher.set_current_op("execute_python", {"code": "x" * size})
+        with open(crash_watcher.LAST_OP_FILE) as f:
+            data = json.load(f)
+        encoded = data["args"]["code"].encode("utf-8")
+        assert len(encoded) <= crash_watcher._MAX_ARG_BYTES
+        assert ("[truncated]" in data["args"]["code"]) == should_truncate
 
 
 class TestSetCurrentOpFilePermissions:
