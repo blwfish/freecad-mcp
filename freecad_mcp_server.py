@@ -250,6 +250,8 @@ def _pid_alive(pid) -> bool:
     """
     if not isinstance(pid, int) or pid <= 0:
         return False
+    if sys.platform == "win32":
+        return _is_pid_alive_windows(pid)
     try:
         os.kill(pid, 0)
         return True
@@ -259,6 +261,30 @@ def _pid_alive(pid) -> bool:
         return True
     except OSError:
         return False
+
+
+def _is_pid_alive_windows(pid: int) -> bool:
+    """Windows-specific process-existence check.
+
+    Mirrors instance_registry._is_pid_alive_windows (AICopilot side). Kept
+    for defense in depth even though _scan_discovery below already
+    short-circuits to [] on Windows before _pid_alive is ever reached --
+    os.kill(pid, 0) is not a liveness probe on Windows (signal 0 maps to
+    CTRL_C_EVENT/GenerateConsoleCtrlEvent, which raises OSError for a
+    normal, unrelated process regardless of whether it's alive), so this
+    function would misbehave the moment it's called from anywhere that
+    guard doesn't cover.
+    """
+    import ctypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    handle = ctypes.windll.kernel32.OpenProcess(  # type: ignore[attr-defined]
+        PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+    )
+    if handle:
+        ctypes.windll.kernel32.CloseHandle(handle)  # type: ignore[attr-defined]
+        return True
+    return False
 
 
 def _scan_discovery(prune_stale: bool = True) -> list[dict]:
@@ -334,8 +360,18 @@ def _scan_discovery(prune_stale: bool = True) -> list[dict]:
                 # this function's docstring. Just don't report it as live
                 # for this scan.
                 continue
+            # Socket is dead AND the owning process is confirmed gone --
+            # safe to remove both the discovery record and the orphaned
+            # socket file itself. Mirrors instance_registry.scan_discovery
+            # (AICopilot side); without this the socket file leaks into
+            # /tmp permanently, since nothing else will ever revisit it —
+            # every future instance picks a fresh random UUID path.
             try:
                 os.unlink(path)
+            except OSError:
+                pass
+            try:
+                os.remove(sock_path)
             except OSError:
                 pass
     return live

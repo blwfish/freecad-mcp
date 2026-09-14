@@ -234,6 +234,51 @@ class TestIsPidAlive:
         monkeypatch.setattr(instance_registry.os, "kill", fake_kill)
         assert instance_registry.is_pid_alive(1) is True
 
+    def test_windows_dispatches_to_windows_specific_check(self, monkeypatch):
+        """On win32, is_pid_alive must NOT fall through to os.kill(pid, 0)
+        -- signal 0 isn't a liveness probe on Windows (it maps to
+        CTRL_C_EVENT), so a plain os.kill call there would misreport a
+        genuinely-alive process as dead. Confirms the dispatch happens by
+        monkeypatching sys.platform and the Windows-specific helper."""
+        monkeypatch.setattr(instance_registry.sys, "platform", "win32")
+        monkeypatch.setattr(instance_registry, "_is_pid_alive_windows", lambda pid: True)
+        assert instance_registry.is_pid_alive(4321) is True
+        monkeypatch.setattr(instance_registry, "_is_pid_alive_windows", lambda pid: False)
+        assert instance_registry.is_pid_alive(4321) is False
+
+    def test_windows_check_uses_openprocess_not_os_kill(self, monkeypatch):
+        """_is_pid_alive_windows must call OpenProcess (a real existence
+        check), not rely on os.kill at all."""
+        calls = []
+
+        class FakeKernel32:
+            def OpenProcess(self, access, inherit, pid):
+                calls.append(("OpenProcess", pid))
+                return 12345  # non-zero handle == process exists
+
+            def CloseHandle(self, handle):
+                calls.append(("CloseHandle", handle))
+
+        import ctypes
+        monkeypatch.setattr(ctypes, "windll", type("W", (), {"kernel32": FakeKernel32()})(), raising=False)
+
+        def fail_kill(pid, sig):
+            raise AssertionError("must not call os.kill on Windows")
+        monkeypatch.setattr(instance_registry.os, "kill", fail_kill)
+
+        assert instance_registry._is_pid_alive_windows(4321) is True
+        assert ("OpenProcess", 4321) in calls
+        assert ("CloseHandle", 12345) in calls
+
+    def test_windows_check_false_when_openprocess_returns_null_handle(self, monkeypatch):
+        class FakeKernel32:
+            def OpenProcess(self, access, inherit, pid):
+                return 0  # NULL handle == process doesn't exist / access denied
+
+        import ctypes
+        monkeypatch.setattr(ctypes, "windll", type("W", (), {"kernel32": FakeKernel32()})(), raising=False)
+        assert instance_registry._is_pid_alive_windows(99999) is False
+
 
 class TestScanDiscoveryPidLivenessFallback:
     """The busy-vs-dead distinction this fix adds: a record whose socket
@@ -483,6 +528,53 @@ class TestSweepStaleSockets:
         import inspect
         sig = inspect.signature(instance_registry.sweep_stale_sockets)
         assert sig.parameters["directory"].default == "/tmp"
+
+    def test_busy_but_alive_socket_not_removed(self, isolated_dir, short_dir):
+        """Regression guard: a socket that fails its connect probe but is
+        named by a discovery record whose pid is confirmed alive must be
+        left in place -- the same busy-vs-dead protection scan_discovery
+        applies, now also applied here. Before this fix, sweep_stale_sockets
+        had no way to associate a bare socket path with a pid at all, so it
+        would unconditionally remove any non-listening socket regardless of
+        whether its owning process was actually still running (e.g. blocked
+        mid-recompute) -- reproducing the exact incident the scan_discovery
+        fix (9ae8425) addressed, via this sibling code path."""
+        stale_sock = os.path.join(short_dir, "freecad_mcp_busy0001.sock")
+        with open(stale_sock, "w"):
+            pass  # not listening -- fails the connect probe
+        os.makedirs(isolated_dir, exist_ok=True)
+        with open(os.path.join(isolated_dir, "busy.json"), "w") as f:
+            json.dump({"uuid": "busy", "socket_path": stale_sock, "pid": os.getpid()}, f)
+
+        removed = instance_registry.sweep_stale_sockets(short_dir)
+        assert removed == 0
+        assert os.path.exists(stale_sock)
+
+    def test_dead_socket_with_dead_pid_record_still_removed(self, isolated_dir, short_dir, dead_pid):
+        """The pid-liveness fallback only protects a socket whose recorded
+        owner is actually alive -- one whose discovery record names a
+        confirmed-dead pid is pruned exactly as before."""
+        stale_sock = os.path.join(short_dir, "freecad_mcp_reallydead0001.sock")
+        with open(stale_sock, "w"):
+            pass
+        os.makedirs(isolated_dir, exist_ok=True)
+        with open(os.path.join(isolated_dir, "dead.json"), "w") as f:
+            json.dump({"uuid": "d", "socket_path": stale_sock, "pid": dead_pid}, f)
+
+        removed = instance_registry.sweep_stale_sockets(short_dir)
+        assert removed == 1
+        assert not os.path.exists(stale_sock)
+
+    def test_orphaned_socket_with_no_discovery_record_still_removed(self, isolated_dir, tmp_path):
+        """A socket with no matching discovery record at all (the original
+        'fully orphaned, crashed before cleanup' case this function exists
+        for) has no pid to check -- falls back to the prior unconditional
+        removal, unchanged by the new pid-liveness lookup."""
+        dead = tmp_path / "freecad_mcp_orphan0001.sock"
+        dead.write_text("")
+        removed = instance_registry.sweep_stale_sockets(str(tmp_path))
+        assert removed == 1
+        assert not dead.exists()
 
 
 # ---------------------------------------------------------------------------

@@ -21,6 +21,7 @@ import glob
 import json
 import os
 import socket
+import sys
 import time
 import uuid
 
@@ -138,6 +139,8 @@ def is_pid_alive(pid) -> bool:
     """
     if not isinstance(pid, int) or pid <= 0:
         return False
+    if sys.platform == "win32":
+        return _is_pid_alive_windows(pid)
     try:
         os.kill(pid, 0)
         return True
@@ -149,6 +152,31 @@ def is_pid_alive(pid) -> bool:
         return True
     except OSError:
         return False
+
+
+def _is_pid_alive_windows(pid: int) -> bool:
+    """Windows-specific process-existence check.
+
+    os.kill(pid, 0) is NOT a liveness probe on Windows: signal 0 equals
+    CTRL_C_EVENT, so CPython routes it through GenerateConsoleCtrlEvent,
+    which requires sharing a console with the target process group and
+    otherwise raises OSError regardless of whether the process is
+    actually alive -- so a genuinely-alive, busy process would be
+    misreported as dead here (an OSError caught by the same broad
+    `except OSError: return False` used for real process-lookup
+    failures), defeating the exact busy-vs-dead protection this function
+    exists to provide. OpenProcess is a real existence check instead.
+    """
+    import ctypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    handle = ctypes.windll.kernel32.OpenProcess(  # type: ignore[attr-defined]
+        PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+    )
+    if handle:
+        ctypes.windll.kernel32.CloseHandle(handle)  # type: ignore[attr-defined]
+        return True
+    return False
 
 
 def scan_discovery(prune_stale: bool = True) -> list[dict]:
@@ -254,15 +282,23 @@ def scan_discovery(prune_stale: bool = True) -> list[dict]:
 def sweep_stale_sockets(directory: str = "/tmp") -> int:
     """Remove orphaned instance socket files with no listener.
 
-    Complements scan_discovery's pruning above: that only ever removes a
-    dead entry's discovery JSON, never the socket file itself, and only
-    for sockets that had a discovery record in the first place. A socket
-    from an instance that crashed, was force-killed, or exited before the
-    GUI quit-cleanup hook existed/worked (see AICopilot/InitGui.py's
-    _connect_quit_cleanup) is never revisited once orphaned — every future
-    instance picks a fresh random UUID path, so nothing else will ever
-    probe that exact path again. Call this once at startup (GUI and
-    headless) to sweep those up.
+    Complements scan_discovery's pruning above. Call this once at startup
+    (GUI and headless) to sweep up sockets from an instance that crashed,
+    was force-killed, or exited before the GUI quit-cleanup hook existed/
+    worked (see AICopilot/InitGui.py's _connect_quit_cleanup) — every
+    future instance picks a fresh random UUID path, so nothing else will
+    ever probe that exact path again.
+
+    Applies the same busy-vs-dead protection as scan_discovery: a socket
+    that fails a connect probe is only removed if either (a) no discovery
+    record names it at all (nothing to check liveness against — the
+    original "fully orphaned socket" case this function exists for), or
+    (b) a discovery record does name it but the record's pid is confirmed
+    dead. A socket whose owning process is still alive per a live
+    discovery record — most likely busy with a long-running FreeCAD
+    operation, the exact scenario scan_discovery was hardened against — is
+    left in place, matching scan_discovery's behavior instead of
+    destroying it out from under a running instance.
 
     Only matches this project's own `freecad_mcp_<uuid>.sock` naming
     (default_socket_path) — never the legacy single-instance
@@ -271,14 +307,36 @@ def sweep_stale_sockets(directory: str = "/tmp") -> int:
 
     Returns the number of files removed.
     """
+    pid_by_socket: dict[str, object] = {}
+    try:
+        entries = os.listdir(DISCOVERY_DIR)
+    except FileNotFoundError:
+        entries = []
+    for name in entries:
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(DISCOVERY_DIR, name)) as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        sock_path = data.get("socket_path")
+        if sock_path:
+            pid_by_socket[sock_path] = data.get("pid")
+
     removed = 0
     for path in glob.glob(os.path.join(directory, "freecad_mcp_*.sock")):
-        if not is_socket_alive(path):
-            try:
-                os.remove(path)
-                removed += 1
-            except OSError:
-                pass
+        if is_socket_alive(path):
+            continue
+        if is_pid_alive(pid_by_socket.get(path)):
+            continue
+        try:
+            os.remove(path)
+            removed += 1
+        except OSError:
+            pass
     return removed
 
 
