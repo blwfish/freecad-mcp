@@ -482,6 +482,29 @@ class BaseHandler:
 
         return "\n".join(issues)
 
+    @staticmethod
+    def _resolve_path(path: str) -> str:
+        """Canonicalize a caller-supplied path the same way for every
+        allowlist check in this class: expand ~, make absolute, resolve
+        symlinks -- so every check compares against the same normal form.
+        """
+        return os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+
+    @staticmethod
+    def _is_under_any_prefix(resolved: str, prefixes: list) -> bool:
+        """True if `resolved` equals or is nested under one of `prefixes`.
+
+        Single source of truth for the "is this path inside an allowed
+        directory" check -- both _validate_file_path (general file I/O)
+        and _is_allowed_font_path (read-only font lookup) consume this
+        rather than each re-implementing the same resolve+match logic,
+        which had drifted into two near-identical copies.
+        """
+        return any(
+            resolved == p or resolved.startswith(p + os.sep) or resolved.startswith(p + "/")
+            for p in prefixes
+        )
+
     # Prefixes considered outside any user-writable area on common platforms.
     # Allowlist approach: only home dir, /tmp, and platform-specific temp dirs
     # are permitted for file I/O operations.
@@ -496,7 +519,7 @@ class BaseHandler:
         import sys as _sys
         if not path:
             return "file path is required"
-        resolved = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+        resolved = BaseHandler._resolve_path(path)
         home = os.path.realpath(os.path.expanduser("~"))
 
         safe: list = [home]
@@ -507,8 +530,7 @@ class BaseHandler:
             # Resolve each prefix so symlinks (e.g. /tmp -> /private/tmp on macOS) match.
             safe += [os.path.realpath(p) for p in ("/tmp", "/var/folders", "/var/tmp", "/Volumes")]
 
-        if any(resolved == s or resolved.startswith(s + os.sep) or resolved.startswith(s + "/")
-               for s in safe):
+        if BaseHandler._is_under_any_prefix(resolved, safe):
             return None
         return (
             f"Path is outside allowed directories (home dir, /tmp, /Volumes). "
@@ -547,10 +569,9 @@ class BaseHandler:
         """
         if not path:
             return False
-        resolved = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+        resolved = BaseHandler._resolve_path(path)
         safe = [os.path.realpath(p) for p in BaseHandler._FONT_SYSTEM_DIRS]
-        if any(resolved == s or resolved.startswith(s + os.sep) or resolved.startswith(s + "/")
-               for s in safe):
+        if BaseHandler._is_under_any_prefix(resolved, safe):
             return True
         return BaseHandler._validate_file_path(path) is None
 

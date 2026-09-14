@@ -219,8 +219,12 @@ def scan_discovery(prune_stale: bool = True) -> list[dict]:
         try:
             with open(path) as f:
                 data = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            # Corrupt or unreadable — drop it
+        except (OSError, json.JSONDecodeError) as e:
+            # Corrupt or unreadable — drop it. Logged (not just silently
+            # continue'd) so a directory full of corrupted records doesn't
+            # look identical to "no live instances" with zero visibility
+            # into why.
+            _log_dropped_record(path, f"unreadable/corrupt JSON: {e}")
             if prune_stale:
                 try:
                     os.unlink(path)
@@ -233,6 +237,7 @@ def scan_discovery(prune_stale: bool = True) -> list[dict]:
             # crashing the rest of the scan (data.get below would raise
             # AttributeError on a list/etc otherwise, aborting discovery
             # for every other instance in this directory).
+            _log_dropped_record(path, f"not a JSON object (got {type(data).__name__})")
             continue
         sock_path = data.get("socket_path")
         if sock_path is None:
@@ -340,25 +345,40 @@ def sweep_stale_sockets(directory: str = "/tmp") -> int:
     return removed
 
 
-def _log_unknown_schema(path: str, data: dict) -> None:
-    """Emit a one-line warning about a discovery record we don't understand.
-
-    Always writes to stderr so the warning is observable in tests and in
-    headless contexts.  Additionally surfaces it to FreeCAD's GUI console
-    when running inside FreeCAD.  Never raises — this helper exists purely
-    so the bug isn't *invisible*; the caller has already decided to keep
-    the record either way.
+def _emit_warning(msg: str) -> None:
+    """Write a one-line warning to stderr, and to FreeCAD's GUI console
+    when running inside FreeCAD.  Never raises — used purely so a scan
+    problem isn't *invisible*; the caller has already decided how to
+    handle the record either way.
     """
-    keys = sorted(data.keys()) if isinstance(data, dict) else []
-    msg = (
-        f"instance_registry.scan_discovery: skipping record without "
-        f"socket_path: {os.path.basename(path)} (keys: {keys}). "
-        f"Possibly a newer schema; record preserved.\n"
-    )
-    import sys
+    if not msg.endswith("\n"):
+        msg += "\n"
     sys.stderr.write(msg)
     try:
         import FreeCAD  # type: ignore
         FreeCAD.Console.PrintWarning(msg)
     except Exception:
         pass
+
+
+def _log_unknown_schema(path: str, data: dict) -> None:
+    """Emit a one-line warning about a discovery record we don't understand."""
+    keys = sorted(data.keys()) if isinstance(data, dict) else []
+    _emit_warning(
+        f"instance_registry.scan_discovery: skipping record without "
+        f"socket_path: {os.path.basename(path)} (keys: {keys}). "
+        f"Possibly a newer schema; record preserved."
+    )
+
+
+def _log_dropped_record(path: str, reason: str) -> None:
+    """Emit a one-line warning about a discovery record dropped from a
+    scan (unreadable/corrupt JSON, or valid JSON that isn't an object).
+
+    Without this, a directory full of corrupted records is indistinguishable
+    from "no live instances" -- scan_discovery would just return an empty
+    list either way, with nothing to tell the two cases apart.
+    """
+    _emit_warning(
+        f"instance_registry.scan_discovery: dropping {os.path.basename(path)}: {reason}."
+    )

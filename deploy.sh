@@ -39,10 +39,19 @@
 
 set -e
 
-PREFS_BASE="/Volumes/Files/claude/FreeCAD-prefs"
+# DEPLOY_PREFS_BASE overrides PREFS_BASE for testing (see
+# tests/unit/test_deploy_sh.py) -- unset in normal use, so real deploys are
+# unaffected.
+PREFS_BASE="${DEPLOY_PREFS_BASE:-/Volumes/Files/claude/FreeCAD-prefs}"
 SRC="$(dirname "$0")/AICopilot/"
 
-DEST_MOD=$(python3 -c "
+# The `if ! VAR=$(...); then` form (rather than a bare `VAR=$(...)`
+# followed by an `[ -z "$VAR" ]` check) matters under `set -e`: a bare
+# assignment's failing command substitution triggers errexit immediately,
+# exiting the script before the explicit error message below ever runs.
+# Testing the command's exit status via `if` puts it in a context `set -e`
+# exempts, so the intended message is actually reachable.
+if ! DEST_MOD=$(python3 -c "
 import pathlib, sys
 
 base = pathlib.Path('$PREFS_BASE')
@@ -62,9 +71,7 @@ versioned = sorted(
 if not versioned:
     sys.exit(1)
 print(versioned[0] / 'Mod')
-")
-
-if [ -z "$DEST_MOD" ]; then
+"); then
     echo "Error: no versioned FreeCAD prefs dir with a Mod/ subdir found under $PREFS_BASE" >&2
     exit 1
 fi

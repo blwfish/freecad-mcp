@@ -5,6 +5,7 @@ client (Claude, Cursor, etc.) would see.
 """
 
 import asyncio
+import importlib.metadata
 import json
 import os
 import sys
@@ -14,6 +15,34 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+
+# This file's collection has twice been misdiagnosed as a "pre-existing,
+# unrelated" failure (commits 32b59e8, 13866ed) when it was actually a
+# stray global `mcp` install (1.x) shadowing this project's own .venv
+# (mcp>=2.2.0, pyproject.toml) on a bare `python3` invocation -- the exact
+# same trap commit 4e4745b's own message diagnosed as root-causing an
+# earlier incorrect Server-API rewrite. Check the actual installed
+# version up front so a future collection failure here fails with an
+# actionable message instead of an opaque TypeError that looks dismissable.
+_MIN_MCP_VERSION = (2, 2, 0)
+try:
+    _installed_mcp_version = tuple(
+        int(p) for p in importlib.metadata.version("mcp").split(".")[:3]
+    )
+except Exception:
+    _installed_mcp_version = None  # can't determine -- let the real import below succeed/fail on its own
+
+if _installed_mcp_version is not None and _installed_mcp_version < _MIN_MCP_VERSION:
+    raise RuntimeError(
+        f"tests/unit/test_mcp_protocol.py requires mcp>="
+        f"{'.'.join(map(str, _MIN_MCP_VERSION))}, but {sys.executable} has "
+        f"mcp=={'.'.join(map(str, _installed_mcp_version))} installed. This is "
+        f"almost always a bare `python3` resolving to a stray global mcp install "
+        f"instead of this project's own environment -- run with `.venv/bin/python3 "
+        f"-m pytest` (or `uv run pytest`) instead. Do NOT treat this as a "
+        f"pre-existing/unrelated collection failure without checking the "
+        f"interpreter first."
+    )
 
 import mcp.server.stdio
 import mcp.types as types

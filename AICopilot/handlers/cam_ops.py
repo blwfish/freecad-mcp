@@ -268,6 +268,23 @@ class CAMOpsHandler(BaseHandler):
         """
         start_time = time.time()
         try:
+            # Unlike tool_diameter/stepover/sample_interval (validated in
+            # ocl_surface_op.py for surface_stl -- this operation doesn't
+            # go through OCL, so these three have no equivalent guard
+            # anywhere in this handler. A crash-into-fixture/table risk on
+            # real hardware, same concern as the FinalDepth expression-
+            # binding trap handled below.
+            if 'peck_depth' in args and args['peck_depth'] <= 0:
+                error = Exception(f"peck_depth ({args['peck_depth']}) must be > 0")
+                return self.log_and_return("drilling", args, error=error, duration=time.time() - start_time)
+            if 'dwell_time' in args and args['dwell_time'] < 0:
+                error = Exception(f"dwell_time ({args['dwell_time']}) must be >= 0")
+                return self.log_and_return("drilling", args, error=error, duration=time.time() - start_time)
+            if 'retract_height' in args and args['retract_height'] <= 0:
+                error = Exception(f"retract_height ({args['retract_height']}) must be > 0 "
+                                   f"-- it must provide real clearance above the work")
+                return self.log_and_return("drilling", args, error=error, duration=time.time() - start_time)
+
             try:
                 from Path.Op.Drilling import Create as CreateDrilling
             except ImportError:

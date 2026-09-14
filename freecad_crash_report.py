@@ -102,7 +102,22 @@ class OpLog:
 
     def _flush(self) -> None:
         try:
-            fd = os.open(OPLOG_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+            base_flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
+            try:
+                # Try exclusive creation first so a genuinely fresh file
+                # is still created at exactly the requested mode (allowing
+                # a stricter umask to narrow it further, as usual).
+                fd = os.open(OPLOG_FILE, base_flags | os.O_EXCL, 0o600)
+            except FileExistsError:
+                # os.open's mode argument only applies when O_CREAT
+                # actually creates a NEW file -- a pre-existing file at
+                # this fixed path (e.g. left over from before this
+                # permission hardening shipped, when this used to be a
+                # plain open(path, "w") at the umask default) would
+                # otherwise keep its old, looser permissions forever.
+                # fchmod on the already-open fd closes that gap.
+                fd = os.open(OPLOG_FILE, base_flags, 0o600)
+                os.fchmod(fd, 0o600)
             with os.fdopen(fd, "w") as f:
                 json.dump(list(self._ops), f, indent=2)
         except Exception:

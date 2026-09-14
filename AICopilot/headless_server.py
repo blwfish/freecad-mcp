@@ -191,4 +191,12 @@ def main():
             del FreeCAD._ai_socket_server
 
 
-main()
+if __name__ == "__main__":
+    # FreeCADCmd invokes this file as a script (see the module docstring's
+    # Usage line), so __name__ == "__main__" there exactly as it would be
+    # for a normal `python3 headless_server.py` invocation -- this guard
+    # changes nothing about production behavior. It exists so the module
+    # can be imported (e.g. by tests) without unconditionally starting a
+    # real socket server and blocking in main()'s signal-wait loop, which
+    # is why this file had zero test coverage before.
+    main()

@@ -164,6 +164,52 @@ class TestLoadStlRejectsNonBinary:
         with pytest.raises(ValueError):
             ocl_surface_op._load_stl(path, _fake_ocl())
 
+    def test_declared_count_exceeding_sanity_cap_rejected(self, tmp_path, monkeypatch):
+        """A binary STL whose declared triangle count exceeds the sanity
+        cap is rejected with a clear message, even when its size correctly
+        matches that count (so the size cross-check alone wouldn't catch
+        it). The cap is monkeypatched down so this doesn't require
+        actually writing a multi-hundred-MB fixture file."""
+        monkeypatch.setattr(ocl_surface_op, "_MAX_STL_TRIANGLES", 2)
+        path = str(tmp_path / "too_many.stl")
+        _write_binary_stl(path, [
+            (0, 0, 0, 1, 0, 0, 0, 1, 0),
+            (0, 0, 0, 1, 0, 0, 0, 1, 0),
+            (0, 0, 0, 1, 0, 0, 0, 1, 0),
+        ])
+
+        with pytest.raises(ValueError, match="sanity limit"):
+            ocl_surface_op._load_stl(path, _fake_ocl())
+
+    def test_declared_count_at_sanity_cap_accepted(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ocl_surface_op, "_MAX_STL_TRIANGLES", 2)
+        path = str(tmp_path / "at_cap.stl")
+        _write_binary_stl(path, [
+            (0, 0, 0, 1, 0, 0, 0, 1, 0),
+            (0, 0, 0, 1, 0, 0, 0, 1, 0),
+        ])
+
+        ocl_surface_op._load_stl(path, _fake_ocl())  # must not raise
+
+    @pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), float("-inf")])
+    def test_non_finite_vertex_coordinate_rejected(self, tmp_path, bad_value):
+        """A NaN vertex coordinate silently no-ops every bounds comparison
+        (`x < x_min` is always False when x is NaN), leaving the computed
+        bounding box wrong with no error; an Inf coordinate that survives
+        into y_max can make _build_zigzag_scan's scan-line loop
+        (`while y <= y_max + 1e-9`) never terminate."""
+        path = str(tmp_path / "nonfinite.stl")
+        _write_binary_stl(path, [(0, 0, 0, 1, 0, 0, bad_value, 1, 0)])
+
+        with pytest.raises(ValueError, match="[Nn]on-finite"):
+            ocl_surface_op._load_stl(path, _fake_ocl())
+
+    def test_all_finite_vertex_coordinates_accepted(self, tmp_path):
+        path = str(tmp_path / "finite.stl")
+        _write_binary_stl(path, [(0, 0, 0, 1, 0, 0, 0, 1, 0)])
+
+        ocl_surface_op._load_stl(path, _fake_ocl())  # must not raise
+
 
 # ---------------------------------------------------------------------------
 # _do_execute: StlFile is a persisted document property, re-read on every
@@ -213,5 +259,57 @@ class TestDoExecuteStlFilePathValidation:
         self._patch_opencamlib(monkeypatch)
         proxy = ocl_surface_op.OCLSurfaceProxy.__new__(ocl_surface_op.OCLSurfaceProxy)
         obj = self._make_obj("")
+
+        proxy._do_execute(obj)  # must not raise
+
+
+class TestDoExecuteNumericParamValidation:
+    """safe_z/cut_feed/plunge_feed had no bounds check at all -- unlike
+    tool_dia/stepover/sampling, which are validated a few lines above them
+    in the same function. Not fed into OCL itself (no C++ hang/crash risk
+    like the OCL-bound params), but a non-positive value here still
+    produces unsafe or degenerate G-code: zero/negative SafeHeight gives
+    the rapid retract move no real clearance above the work."""
+
+    def _make_valid_obj(self, stl_file, **overrides):
+        obj = MagicMock()
+        obj.StlFile = stl_file
+        obj.ToolDiameter = overrides.get("ToolDiameter", 3.0)
+        obj.StepOver = overrides.get("StepOver", 0.5)
+        obj.SampleInterval = overrides.get("SampleInterval", 0.5)
+        obj.SafeHeight = overrides.get("SafeHeight", 8.0)
+        obj.CutFeed = overrides.get("CutFeed", 400.0)
+        obj.PlungeFeed = overrides.get("PlungeFeed", 150.0)
+        return obj
+
+    def _patch_opencamlib(self, monkeypatch):
+        fake_opencamlib = MagicMock()
+        fake_opencamlib.ocl = _fake_ocl()
+        monkeypatch.setitem(sys.modules, "opencamlib", fake_opencamlib)
+
+    def _valid_stl_path(self, tmp_path):
+        path = str(tmp_path / "valid.stl")
+        _write_binary_stl(path, [(0, 0, 0, 1, 0, 0, 0, 1, 0)])
+        return path
+
+    @pytest.mark.parametrize("field,value", [
+        ("SafeHeight", 0), ("SafeHeight", -1),
+        ("CutFeed", 0), ("CutFeed", -1),
+        ("PlungeFeed", 0), ("PlungeFeed", -1),
+    ])
+    def test_non_positive_value_rejected(self, monkeypatch, tmp_path, field, value):
+        self._patch_opencamlib(monkeypatch)
+        proxy = ocl_surface_op.OCLSurfaceProxy.__new__(ocl_surface_op.OCLSurfaceProxy)
+        obj = self._make_valid_obj(self._valid_stl_path(tmp_path), **{field: value})
+
+        with pytest.raises(ValueError, match=field):
+            proxy._do_execute(obj)
+
+    def test_valid_positive_values_pass_validation(self, monkeypatch, tmp_path):
+        """Confirms the new checks don't reject legitimate values -- must
+        proceed past validation into the (mocked) OCL pipeline, not raise."""
+        self._patch_opencamlib(monkeypatch)
+        proxy = ocl_surface_op.OCLSurfaceProxy.__new__(ocl_surface_op.OCLSurfaceProxy)
+        obj = self._make_valid_obj(self._valid_stl_path(tmp_path))
 
         proxy._do_execute(obj)  # must not raise
