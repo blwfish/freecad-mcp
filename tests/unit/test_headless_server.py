@@ -1,12 +1,21 @@
 """Unit tests for AICopilot/headless_server.py.
 
-Previously zero test coverage: the module ran main() unconditionally at
-import time (no `if __name__ == "__main__":` guard), so importing it for
-testing would have started a real socket server and blocked in its
-signal-wait loop. That guard was added specifically to make this file
-testable -- FreeCADCmd invokes this file as a script (per the module's own
-docstring), where __name__ == "__main__" regardless, so the guard changes
-nothing about production behavior.
+Previously zero test coverage. main() is called UNCONDITIONALLY at module
+level, with no `if __name__ == "__main__":` guard -- and that's
+deliberate, not an oversight: confirmed against FC-clone's own
+src/App/Application.cpp (Application::processFiles), a .py file passed on
+the FreeCADCmd command line is loaded via Base::Interpreter().loadModule(),
+a REGULAR import (module name == "headless_server", not "__main__"),
+falling back to running it as __main__ only if loadModule() itself raises.
+A __main__ guard was tried once (2026-09-14) to make this file importable
+for testing, and broke every CI integration test the same day -- the
+script imported cleanly and returned without ever starting the server,
+because loadModule()'s __name__ is never "__main__". Reverted; this file's
+tests instead work WITH the real unconditional-main()-at-import behavior:
+the `hs` fixture primes a safe (fails-fast) fake server before import so
+that first, real main() invocation exits quickly and cleanly, then
+individual tests call hs.main() again directly with whatever server
+behavior they actually want to exercise.
 
 This diff's own commit (338a89a) is the direct motivation for this file's
 one real regression-worthy behavior: `FreeCAD._ai_socket_server` (single
@@ -15,6 +24,7 @@ to get silently name-mangled when written from inside a class method
 elsewhere in this codebase.
 """
 
+import importlib.util
 import os
 import signal
 import sys
@@ -24,6 +34,7 @@ import pytest
 from unittest.mock import MagicMock
 
 AICOPILOT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot")
+HEADLESS_SERVER_PATH = os.path.join(AICOPILOT_DIR, "headless_server.py")
 sys.path.insert(0, AICOPILOT_DIR)
 
 import tests.unit._freecad_mocks as _fc_mocks  # noqa: E402
@@ -54,34 +65,65 @@ def _reset(monkeypatch):
 
 @pytest.fixture
 def hs(monkeypatch):
-    """Import headless_server fresh for each test (module-level state like
+    """Load headless_server fresh for each test (module-level state like
     _socket_path_arg is computed once at import time).
 
-    headless_server.py's own module-level code deliberately evicts
-    `handlers` / `handlers.*` / `freecad_mcp_handler` from sys.modules
-    (guarding against a real stale-cached-addon-path bug) -- appropriate
-    for a real process startup, but running that eviction against the
-    shared sys.modules of a whole pytest session would permanently drop
-    other test files' cached module objects, causing e.g. mock.patch to
-    later re-resolve a dotted path to a DIFFERENT freshly-reimported
-    module instance than the one those tests actually exercise. Snapshot
-    and restore the evicted entries so this test file's use of the real
-    eviction logic stays contained to itself.
+    Two things make this fixture more than a plain `import`:
+
+    1. main() runs unconditionally at module level (see module docstring
+       above for why there's no __main__ guard) -- so the act of loading
+       this module always runs main() once, for real. A default, fails-
+       fast fake `freecad_mcp_handler` (server.start_server() -> False)
+       is installed first so that priming run exits via a clean, quick
+       sys.exit(1) instead of trying to start a real socket server.
+       Loaded via importlib directly (registering the module in
+       sys.modules BEFORE exec_module runs, not relying on the `import`
+       statement's own bookkeeping) so the module stays usable even
+       though exec_module raises SystemExit partway through -- a plain
+       `import` statement does not reliably leave a failed module behind
+       in sys.modules for a later `import headless_server` to find.
+       Individual tests call hs.main() again directly afterward with
+       their own fake server to exercise the behavior under test.
+
+    2. headless_server.py's own module-level code deliberately evicts
+       `handlers` / `handlers.*` / `freecad_mcp_handler` from sys.modules
+       (guarding against a real stale-cached-addon-path bug) -- appropriate
+       for a real process startup, but running that eviction against the
+       shared sys.modules of a whole pytest session would permanently drop
+       other test files' cached module objects, causing e.g. mock.patch to
+       later re-resolve a dotted path to a DIFFERENT freshly-reimported
+       module instance than the one those tests actually exercise. Snapshot
+       and restore the evicted entries so this test file's use of the real
+       eviction logic stays contained to itself.
     """
     snapshot = {
         name: sys.modules.get(name)
         for name in list(sys.modules)
         if name == "freecad_mcp_handler" or name == "handlers" or name.startswith("handlers.")
     }
+
+    default_fake_module = types.ModuleType("freecad_mcp_handler")
+    default_fake_module.FreeCADSocketServer = lambda: _FakeServer(start_ok=False)
+    monkeypatch.setitem(sys.modules, "freecad_mcp_handler", default_fake_module)
+
     sys.modules.pop("headless_server", None)
-    import headless_server
-    yield headless_server
+    spec = importlib.util.spec_from_file_location("headless_server", HEADLESS_SERVER_PATH)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["headless_server"] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except SystemExit:
+        pass  # expected: the priming main() call above hit its fast-fail path
+
+    yield mod
+
+    sys.modules.pop("headless_server", None)
     # Restore every snapshotted entry -- headless_server's own eviction
     # DELETES these keys from sys.modules, so a loop over the (now
     # missing-those-keys) current sys.modules would never touch them; the
     # snapshot's own keys are the ones that must come back.
-    for name, mod in snapshot.items():
-        sys.modules[name] = mod
+    for name, snap_mod in snapshot.items():
+        sys.modules[name] = snap_mod
     # Anything matching the pattern that got created fresh during the
     # test and wasn't there before (shouldn't normally happen, since
     # nothing in this test file imports real handlers.* modules) --
