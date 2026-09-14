@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import socket
+import subprocess
 import sys
 import tempfile
 import uuid
@@ -22,6 +23,22 @@ def isolated_dir(monkeypatch, tmp_path):
     target = str(tmp_path / "instances")
     monkeypatch.setattr(instance_registry, "DISCOVERY_DIR", target)
     return target
+
+
+@pytest.fixture
+def dead_pid():
+    """A pid guaranteed to not refer to a running process.
+
+    Spawns a real child process (via subprocess, not raw os.fork -- pytest
+    itself is multi-threaded, and forking a multi-threaded process risks
+    deadlock) that exits immediately, and waits on it, so the pid is
+    definitely reaped (not just "probably exited") before the test uses
+    it — avoids the flakiness of picking a large/arbitrary pid number and
+    hoping nothing on the test machine happens to hold it.
+    """
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()
+    return proc.pid
 
 
 @pytest.fixture
@@ -173,6 +190,160 @@ class TestIsSocketAlive:
             os.unlink(stale)
 
 
+class TestIsPidAlive:
+    def test_true_for_current_process(self):
+        assert instance_registry.is_pid_alive(os.getpid()) is True
+
+    def test_false_for_reaped_child(self, dead_pid):
+        assert instance_registry.is_pid_alive(dead_pid) is False
+
+    def test_false_for_none(self):
+        # Ambiguous input: a pre-pid-field record. Must not raise, and
+        # must not be treated as "confirmed alive" -- an unconfirmable pid
+        # shouldn't block pruning forever.
+        assert instance_registry.is_pid_alive(None) is False
+
+    def test_false_for_missing_key_via_dict_get_default(self):
+        # Mirrors how callers actually invoke this: data.get("pid") on a
+        # record with no "pid" key at all yields None.
+        assert instance_registry.is_pid_alive({}.get("pid")) is False
+
+    def test_false_for_zero(self):
+        # Boundary: 0 is not a valid pid (would ambiguously signal the
+        # calling process's own process group to os.kill).
+        assert instance_registry.is_pid_alive(0) is False
+
+    def test_false_for_negative(self):
+        # Boundary: negative pids signal process groups to os.kill, not a
+        # single process -- must be rejected before ever reaching os.kill.
+        assert instance_registry.is_pid_alive(-1) is False
+
+    def test_false_for_non_int(self):
+        # A garbled/mistyped pid field (e.g. hand-edited JSON) must not
+        # crash is_pid_alive or be silently coerced.
+        assert instance_registry.is_pid_alive("12345") is False
+
+    def test_true_when_permission_denied(self, monkeypatch):
+        """A PermissionError from os.kill means the process exists but
+        isn't signalable by us (different uid) -- existence is confirmed,
+        so this must count as alive, not dead. Simulated via monkeypatch
+        since provoking a real cross-user PermissionError isn't portable
+        in a test environment."""
+        def fake_kill(pid, sig):
+            raise PermissionError("not our process")
+        monkeypatch.setattr(instance_registry.os, "kill", fake_kill)
+        assert instance_registry.is_pid_alive(1) is True
+
+
+class TestScanDiscoveryPidLivenessFallback:
+    """The busy-vs-dead distinction this fix adds: a record whose socket
+    fails to connect is only pruned if its pid is ALSO confirmed dead.
+    Confirmed 2026-09-13: a long-running recompute() blocked the accept
+    loop long enough that a liveness probe failed while FreeCAD was still
+    genuinely alive and working, and the old unconditional-prune behavior
+    deleted its discovery record and live socket file out from under it."""
+
+    def test_busy_but_alive_process_is_not_pruned(self, isolated_dir, tmp_path):
+        """Socket doesn't accept a connection (simulating a GUI thread
+        blocked by a long operation), but the recorded pid is this test
+        process's own -- unambiguously alive. Must be left alone: neither
+        the discovery JSON nor the socket file may be deleted, and it
+        still isn't reported as 'live' (the socket really isn't usable
+        right now)."""
+        instance_registry.ensure_dir()
+        stale_sock = str(tmp_path / "busy.sock")
+        with open(stale_sock, "w") as f:
+            f.write("")  # exists, but nothing is listening -- socket "dead"
+        u = "busy0000001"
+        instance_registry.write_discovery(u, stale_sock, gui=True, label="busy",
+                                           pid=os.getpid())
+        path = instance_registry.discovery_path(u)
+
+        result = instance_registry.scan_discovery(prune_stale=True)
+
+        assert result == []                    # not reported live
+        assert os.path.exists(path)             # discovery record preserved
+        assert os.path.exists(stale_sock)       # socket file NOT unlinked
+
+    def test_dead_socket_and_dead_pid_is_still_pruned(self, isolated_dir, tmp_path, dead_pid):
+        """Regression guard: the new pid check must not accidentally make
+        pruning permissive across the board -- a genuinely dead instance
+        (both socket and pid confirmed dead) is pruned exactly as before."""
+        instance_registry.ensure_dir()
+        stale_sock = str(tmp_path / "reallydead.sock")
+        with open(stale_sock, "w") as f:
+            f.write("")
+        u = "dead00000001"
+        instance_registry.write_discovery(u, stale_sock, gui=True, label="dead",
+                                           pid=dead_pid)
+        path = instance_registry.discovery_path(u)
+
+        result = instance_registry.scan_discovery(prune_stale=True)
+
+        assert result == []
+        assert not os.path.exists(path)
+        assert not os.path.exists(stale_sock)
+
+    def test_busy_record_kept_across_repeated_scans_until_it_recovers(self, isolated_dir):
+        """A busy-but-alive record must survive not just one scan but
+        repeated scans (e.g. the bridge polling every second during a
+        long recompute), and start reporting live again the moment the
+        socket recovers -- without ever having been deleted in between.
+
+        Uses a short /tmp-rooted path (not pytest's deeply-nested tmp_path)
+        for the actual bind(), same reason as TestSweepStaleSockets.short_dir
+        above: AF_UNIX bind paths are capped at ~104 bytes on macOS.
+        """
+        instance_registry.ensure_dir()
+        stale_sock = f"/tmp/freecad_mcp_test_recover_{uuid.uuid4().hex[:8]}.sock"
+        with open(stale_sock, "w") as f:
+            f.write("")
+        u = "recover00001"
+        instance_registry.write_discovery(u, stale_sock, gui=True, label="recovering",
+                                           pid=os.getpid())
+        path = instance_registry.discovery_path(u)
+
+        for _ in range(3):
+            result = instance_registry.scan_discovery(prune_stale=True)
+            assert result == []
+            assert os.path.exists(path)
+
+        # Socket "recovers": replace the dead file with a real listener.
+        os.unlink(stale_sock)
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(stale_sock)
+        srv.listen(1)
+        try:
+            result = instance_registry.scan_discovery(prune_stale=True)
+            assert len(result) == 1
+            assert result[0]["uuid"] == u
+        finally:
+            srv.close()
+            if os.path.exists(stale_sock):
+                os.unlink(stale_sock)
+
+    def test_missing_pid_field_falls_back_to_old_prune_behavior(self, isolated_dir, tmp_path):
+        """A pre-pid-field record (written by an older AICopilot version)
+        has no 'pid' key at all. is_pid_alive(None) is False, so this must
+        still prune exactly as it did before this fix -- an unconfirmable
+        pid can't be allowed to permanently block pruning of an old-schema
+        record with a dead socket."""
+        instance_registry.ensure_dir()
+        stale_sock = str(tmp_path / "nopid.sock")
+        with open(stale_sock, "w") as f:
+            f.write("")
+        path = os.path.join(isolated_dir, "nopid0000001.json")
+        with open(path, "w") as f:
+            json.dump({"uuid": "nopid0000001", "socket_path": stale_sock,
+                       "gui": True, "label": "nopid"}, f)
+
+        result = instance_registry.scan_discovery(prune_stale=True)
+
+        assert result == []
+        assert not os.path.exists(path)
+        assert not os.path.exists(stale_sock)
+
+
 class TestScanDiscovery:
     def test_empty_when_dir_missing(self, isolated_dir):
         # isolated_dir points at a path that doesn't exist yet
@@ -187,21 +358,24 @@ class TestScanDiscovery:
         assert result[0]["uuid"] == u
         assert result[0]["socket_path"] == sock_path
 
-    def test_prunes_stale_entries(self, isolated_dir):
-        # Write a discovery file pointing at a socket that doesn't exist
+    def test_prunes_stale_entries(self, isolated_dir, dead_pid):
+        # Write a discovery file pointing at a socket that doesn't exist,
+        # with a pid that's also confirmed dead -- otherwise write_discovery's
+        # default pid (this test process's own, very much alive) would now
+        # trip the busy-vs-dead fallback and block pruning.
         u = "stale0000001"
         instance_registry.write_discovery(u, "/tmp/definitely_not_there.sock",
-                                           gui=False, label="stale")
+                                           gui=False, label="stale", pid=dead_pid)
         path = instance_registry.discovery_path(u)
         assert os.path.isfile(path)
         result = instance_registry.scan_discovery(prune_stale=True)
         assert result == []
         assert not os.path.exists(path)  # pruned
 
-    def test_keeps_stale_when_prune_disabled(self, isolated_dir):
+    def test_keeps_stale_when_prune_disabled(self, isolated_dir, dead_pid):
         u = "keeps0000001"
         instance_registry.write_discovery(u, "/tmp/definitely_not_there.sock",
-                                           gui=False, label="stale")
+                                           gui=False, label="stale", pid=dead_pid)
         path = instance_registry.discovery_path(u)
         instance_registry.scan_discovery(prune_stale=False)
         assert os.path.exists(path)  # still there
@@ -376,7 +550,7 @@ class TestScanDiscoveryMalformedRecords:
         assert "future0000003.json" in combined
         assert "endpoint" in combined  # the unfamiliar key
 
-    def test_record_with_unlistened_socket_file_is_pruned(self, isolated_dir, tmp_path):
+    def test_record_with_unlistened_socket_file_is_pruned(self, isolated_dir, tmp_path, dead_pid):
         """is_socket_alive returns False for a file that exists but isn't
         a listening Unix socket.  Existing test_prunes_stale_entries uses
         a nonexistent path; this exercises the "file exists but connect
@@ -388,14 +562,14 @@ class TestScanDiscoveryMalformedRecords:
         with open(stale_sock, "w") as f:
             f.write("")
         u = "ghost0000001"
-        instance_registry.write_discovery(u, stale_sock, gui=False, label="ghost")
+        instance_registry.write_discovery(u, stale_sock, gui=False, label="ghost", pid=dead_pid)
         path = instance_registry.discovery_path(u)
         assert os.path.isfile(path)
         result = instance_registry.scan_discovery(prune_stale=True)
         assert result == []
         assert not os.path.exists(path)
 
-    def test_prune_also_removes_the_orphaned_socket_file(self, isolated_dir, tmp_path):
+    def test_prune_also_removes_the_orphaned_socket_file(self, isolated_dir, tmp_path, dead_pid):
         """Pruning a stale record used to remove only the discovery JSON,
         leaving the socket file itself behind forever -- every future
         instance picks a fresh random UUID path, so nothing else would
@@ -406,13 +580,13 @@ class TestScanDiscoveryMalformedRecords:
         with open(stale_sock, "w") as f:
             f.write("")
         u = "orphan000001"
-        instance_registry.write_discovery(u, stale_sock, gui=False, label="orphan")
+        instance_registry.write_discovery(u, stale_sock, gui=False, label="orphan", pid=dead_pid)
         assert os.path.exists(stale_sock)
         result = instance_registry.scan_discovery(prune_stale=True)
         assert result == []
         assert not os.path.exists(stale_sock)  # socket file itself is gone
 
-    def test_prune_disabled_keeps_the_socket_file_too(self, isolated_dir, tmp_path):
+    def test_prune_disabled_keeps_the_socket_file_too(self, isolated_dir, tmp_path, dead_pid):
         """Symmetric to the JSON-record case: prune_stale=False must leave
         the socket file alone as well, not just the discovery JSON."""
         instance_registry.ensure_dir()
@@ -420,16 +594,16 @@ class TestScanDiscoveryMalformedRecords:
         with open(stale_sock, "w") as f:
             f.write("")
         u = "keepsock0001"
-        instance_registry.write_discovery(u, stale_sock, gui=False, label="keep")
+        instance_registry.write_discovery(u, stale_sock, gui=False, label="keep", pid=dead_pid)
         instance_registry.scan_discovery(prune_stale=False)
         assert os.path.exists(stale_sock)
 
-    def test_prune_tolerates_socket_file_already_gone(self, isolated_dir):
+    def test_prune_tolerates_socket_file_already_gone(self, isolated_dir, dead_pid):
         """The dead socket_path may not exist as a file at all (the
         nonexistent-path case already covered by test_prunes_stale_entries)
         -- os.remove on a missing path must not raise and abort the scan."""
         u = "nofile000001"
         instance_registry.write_discovery(u, "/tmp/definitely_not_there_either.sock",
-                                           gui=False, label="nofile")
+                                           gui=False, label="nofile", pid=dead_pid)
         result = instance_registry.scan_discovery(prune_stale=True)
         assert result == []
