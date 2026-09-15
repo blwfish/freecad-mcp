@@ -1265,6 +1265,95 @@ class TestCallOnGuiThreadAsync:
         )
         assert "Too many async jobs" in result["error"]
 
+    def test_job_is_listed_under_its_tool(self, server):
+        """A handler job is registered through the same chokepoint as execute_python_async,
+        so list_jobs names its tool instead of '?'."""
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        server._heartbeat.stamp()
+        try:
+            job_id = json.loads(
+                server._call_on_gui_thread_async(MagicMock(), {}, "fuse")
+            )["job_id"]
+            listed = json.loads(server._list_jobs({}))["jobs"][job_id]
+            assert listed["tool"] == "fuse"
+        finally:
+            ss_mod.QtCore = None
+
+
+# ---------------------------------------------------------------------------
+# _submit_async_job — ONE chokepoint for every async job record
+# ---------------------------------------------------------------------------
+
+class TestSubmitAsyncJob:
+    def test_record_shape_and_submission_response(self, server):
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        server._heartbeat.stamp()
+        try:
+            result = json.loads(server._submit_async_job("restart_freecad", lambda: {"success": True}))
+            job = server._async_jobs[result["job_id"]]
+            assert job["status"] == "running" and job["tool"] == "restart_freecad" and "started" in job
+            assert result["status"] == "submitted" and result["queue_depth"] == 0
+            req_id, _task = server._gui_task_queue.get_nowait()
+            assert req_id == f"async:{result['job_id']}"
+        finally:
+            ss_mod.QtCore = None
+
+    def test_stale_heartbeat_registers_nothing(self, server):
+        import freecad_mcp_handler as ss_mod
+        ss_mod.QtCore = MagicMock()
+        try:
+            result = json.loads(server._submit_async_job("x", lambda: None))
+            assert "unresponsive" in result["error"]
+            assert server._async_jobs == {}
+            assert server._gui_task_queue.empty()
+        finally:
+            ss_mod.QtCore = None
+
+    def test_limit_registers_nothing(self, server):
+        import freecad_mcp_handler as ss_mod
+        for i in range(ss_mod.MAX_ASYNC_JOBS):
+            server._async_jobs[f"j{i}"] = {"status": "running", "started": time.time()}
+        result = json.loads(server._submit_async_job("x", lambda: None))
+        assert "Too many async jobs" in result["error"]
+        assert len(server._async_jobs) == ss_mod.MAX_ASYNC_JOBS
+
+
+class TestAsyncJobRegistration:
+    """Every async job record is created by _submit_async_job and nowhere else.
+
+    Surface gate (string-level, decidable): a statement that ASSIGNS into
+    self._async_jobs[...] outside that method is a second home for the
+    job-registration policy (the heartbeat refusal, stale-job cleanup, the
+    MAX_ASYNC_JOBS limit, the record shape, the queue-depth capture) and fails
+    here naming its line."""
+
+    def test_only_the_chokepoint_creates_job_records(self):
+        import ast
+        path = os.path.join(AICOPILOT_DIR, "freecad_mcp_handler.py")
+        with open(path, encoding="utf-8") as fh:
+            tree = ast.parse(fh.read(), path)
+
+        def is_async_jobs_subscript(target):
+            return (
+                isinstance(target, ast.Subscript)
+                and isinstance(target.value, ast.Attribute)
+                and target.value.attr == "_async_jobs"
+                and isinstance(target.value.value, ast.Name)
+                and target.value.value.id == "self"
+            )
+
+        offences = []
+        for cls in [n for n in tree.body if isinstance(n, ast.ClassDef)]:
+            for fn in [n for n in cls.body if isinstance(n, ast.FunctionDef)]:
+                for node in ast.walk(fn):
+                    if isinstance(node, ast.Assign) and any(
+                        is_async_jobs_subscript(t) for t in node.targets
+                    ) and fn.name != "_submit_async_job":
+                        offences.append(f"{cls.name}.{fn.name}:{node.lineno}")
+        assert offences == [], f"async job records created outside _submit_async_job: {offences}"
+
 
 # ---------------------------------------------------------------------------
 # _cancel_operation
