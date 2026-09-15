@@ -436,10 +436,20 @@ class BaseHandler:
         open_verts = []
 
         # --- Step 1: find dangling endpoints ---
+        # OpenVertices is a Python *property* on Sketcher::SketchObject
+        # (returning a list of plain (x, y, z) tuples), not a
+        # getOpenVertices() method -- confirmed live against FreeCAD 26.3:
+        # dir(sketch) has no getOpenVertices attribute at all, even though
+        # the C++ side (TaskSketcherValidation.cpp's onHighlightButtonClicked)
+        # calls it as a real member function. Same "get-prefix stripped to a
+        # property" binding pattern as App::VarSet's InListProp (see
+        # feedback_python_binding_name_verification.md). Wrap each tuple in
+        # a Vector since the rest of this method (and _find_geo_for_point)
+        # does attribute access (.x/.y), which plain tuples don't support.
         try:
-            open_verts = sketch.getOpenVertices()
+            open_verts = [FreeCAD.Vector(*v) for v in sketch.OpenVertices]
         except Exception as exc:
-            issues.append(f"  (getOpenVertices unavailable: {exc})")
+            issues.append(f"  (OpenVertices unavailable: {exc})")
 
         if open_verts:
             pos_names = {1: "start", 2: "end", 3: "center"}
@@ -461,26 +471,203 @@ class BaseHandler:
                     )
 
         # --- Step 2: suggest Coincident constraints to close the gaps ---
+        # detectMissingPointOnPointConstraints() takes no parameters in this
+        # binding (precision is hardcoded to Precision::Confusion() inside
+        # the C++ implementation) -- confirmed live; the previous precision=/
+        # includeconstruction= kwargs raised TypeError on every call, silently
+        # swallowed by the except below, so this block never actually ran.
+        # It also returns None, not a count -- read the count from the
+        # MissingPointOnPointConstraints property afterward instead, the same
+        # order the native ValidateSketch dialog uses (detect, then read).
+        #
+        # Each item is a plain 5-tuple (First, FirstPos, Second, SecondPos,
+        # Type) -- confirmed live against a constructed near-miss pair, not a
+        # ConstraintIds object with .First/.FirstPos attributes as previously
+        # assumed (that would raise AttributeError: 'tuple' object has no
+        # attribute 'First'). PointPos: 1=start, 2=end.
         try:
-            missing_count = sketch.detectMissingPointOnPointConstraints(
-                precision=0.1, includeconstruction=False
-            )
-            if missing_count > 0:
-                pairs = sketch.getMissingPointOnPointConstraints()
-                issues.append(f"\n{missing_count} suggested fix(es):")
+            sketch.detectMissingPointOnPointConstraints()
+            pairs = sketch.MissingPointOnPointConstraints
+            if pairs:
+                issues.append(f"\n{len(pairs)} suggested fix(es):")
                 for c in pairs:
+                    first, first_pos, second, second_pos = c[0], c[1], c[2], c[3]
                     issues.append(
                         f"  sketch_operations(operation=\"add_constraint\","
                         f" constraint_type=\"Coincident\","
                         f" sketch_name=\"{sketch.Name}\","
-                        f" geo_id1={c.First}, pos_id1={c.FirstPos},"
-                        f" geo_id2={c.Second}, pos_id2={c.SecondPos})"
+                        f" geo_id1={first}, pos_id1={first_pos},"
+                        f" geo_id2={second}, pos_id2={second_pos})"
                     )
+                issues.append(
+                    "  (or fix all at once: "
+                    f"execute_python(code=\"FreeCAD.ActiveDocument.{sketch.Name}"
+                    ".makeMissingPointOnPointCoincident(); "
+                    f"FreeCAD.ActiveDocument.recompute()\"))"
+                )
         except Exception:
             # Graceful degradation for older FC builds
             pass
 
         return "\n".join(issues)
+
+    def _find_upstream_sketches(self, obj, _visited=None, _sketches=None, _depth=0):
+        """Walk obj.OutList recursively, collecting every Sketcher::SketchObject
+        ancestor reachable in the dependency graph.
+
+        A single sketch can be reached through many independent OutList paths
+        (e.g. several features each importing external geometry from the same
+        master sketch) -- _visited dedupes by object Name so it's returned
+        once regardless of how many paths lead to it. _depth caps recursion
+        (50) as a defensive bound against a document with a pathological
+        dependency graph; real FreeCAD documents never approach that.
+
+        Returns a list of Sketcher::SketchObject, in first-encountered order.
+        """
+        if _visited is None:
+            _visited = set()
+        if _sketches is None:
+            _sketches = []
+        if _depth > 50 or obj is None or obj.Name in _visited:
+            return _sketches
+        _visited.add(obj.Name)
+
+        if obj.TypeId == 'Sketcher::SketchObject':
+            _sketches.append(obj)
+            # A sketch's own OutList (e.g. external-geometry references to
+            # another master sketch) can still lead to further sketches
+            # upstream of it -- keep walking rather than stopping here.
+
+        for upstream in getattr(obj, 'OutList', []):
+            self._find_upstream_sketches(upstream, _visited, _sketches, _depth + 1)
+
+        return _sketches
+
+    def _sketch_health_check(self, sketch) -> str:
+        """Run every FreeCAD-provided sketch validity check against *sketch*
+        and return one structured, actionable report.
+
+        This is the model-layer API the native "Validate Sketch" dialog
+        (TaskSketcherValidation.cpp) itself calls one button at a time --
+        detectMissingPointOnPointConstraints, OpenVertices,
+        evaluateConstraints, detectDegeneratedGeometries -- plus two checks
+        that exist at the model layer but the native dialog never wires up at
+        all: detectMissingVerticalHorizontalConstraints and
+        detectMissingEqualityConstraints. Every method name here was verified
+        live against a running FreeCAD instance before use (several of the
+        "obvious" C++-derived names turned out to be Python properties
+        instead, or to take different arguments than their C++ callers use --
+        see _diagnose_open_wires above for the specifics).
+
+        Reversed external-geometry arcs are NOT checked here: FreeCAD's
+        port_reversedExternalArcs has no Python binding at all (confirmed
+        live), so neither detection nor fix is reachable outside the native
+        GUI's Validate Sketch dialog.
+        """
+        import Part
+
+        lines = [f"Health check for {sketch.Name}" +
+                 (f" ({sketch.Label})" if sketch.Label != sketch.Name else "") + ":"]
+
+        geo_count = sketch.GeometryCount
+        con_count = sketch.ConstraintCount
+        lines.append(f"  Geometry: {geo_count} elements, Constraints: {con_count}")
+
+        dof = sketch.solve()
+        if dof == 0:
+            lines.append("  Fully constrained: Yes")
+        elif dof > 0:
+            lines.append(f"  Under-constrained: {dof} degree(s) of freedom remaining")
+        else:
+            lines.append("  Over-constrained or conflicting constraints")
+
+        problems_found = False
+
+        # --- Open/unclosed wire (the check this repo has the most history
+        # with -- see reference_revolve_shell_validity_open_wire.md) ---
+        open_diag = self._diagnose_open_wires(sketch)
+        if open_diag.strip():
+            problems_found = True
+            lines.append("\nOpen wire / unclosed profile:")
+            lines.append(open_diag)
+        else:
+            lines.append("\nOpen wire / unclosed profile: none found")
+
+        # --- Invalid constraints ---
+        try:
+            if sketch.evaluateConstraints():
+                lines.append("\nInvalid constraints: none found")
+            else:
+                problems_found = True
+                lines.append("\nInvalid constraints: found")
+                lines.append(
+                    f"  Fix: execute_python(code=\"FreeCAD.ActiveDocument.{sketch.Name}"
+                    ".validateConstraints(); "
+                    f"FreeCAD.ActiveDocument.recompute()\")"
+                )
+        except Exception as exc:
+            lines.append(f"\nInvalid constraints: check unavailable ({exc})")
+
+        # --- Degenerate geometry ---
+        try:
+            tol = Part.Precision.confusion()
+            count = sketch.detectDegeneratedGeometries(tol)
+            if count == 0:
+                lines.append("\nDegenerate geometry: none found")
+            else:
+                problems_found = True
+                lines.append(f"\nDegenerate geometry: {count} found")
+                lines.append(
+                    f"  Fix: execute_python(code=\"FreeCAD.ActiveDocument.{sketch.Name}"
+                    f".removeDegeneratedGeometries({tol}); "
+                    f"FreeCAD.ActiveDocument.recompute()\")"
+                )
+        except Exception as exc:
+            lines.append(f"\nDegenerate geometry: check unavailable ({exc})")
+
+        # --- Missing Vertical/Horizontal constraints (not in the native
+        # Validate Sketch dialog at all -- model-layer-only check) ---
+        try:
+            sketch.detectMissingVerticalHorizontalConstraints()
+            vh = sketch.MissingVerticalHorizontalConstraints
+            if not vh:
+                lines.append("\nMissing Vertical/Horizontal constraints: none found")
+            else:
+                problems_found = True
+                lines.append(f"\nMissing Vertical/Horizontal constraints: {len(vh)} found")
+                lines.append(
+                    f"  Fix: execute_python(code=\"FreeCAD.ActiveDocument.{sketch.Name}"
+                    ".makeMissingVerticalHorizontal(); "
+                    f"FreeCAD.ActiveDocument.recompute()\")"
+                )
+        except Exception as exc:
+            lines.append(f"\nMissing Vertical/Horizontal constraints: check unavailable ({exc})")
+
+        # --- Missing equality constraints (line-length and radius; also not
+        # in the native dialog) ---
+        try:
+            sketch.detectMissingEqualityConstraints()
+            eq_lines = sketch.MissingLineEqualityConstraints
+            eq_radii = sketch.MissingRadiusConstraints
+            total = len(eq_lines) + len(eq_radii)
+            if total == 0:
+                lines.append("\nMissing equality constraints: none found")
+            else:
+                problems_found = True
+                lines.append(
+                    f"\nMissing equality constraints: {len(eq_lines)} line-length, "
+                    f"{len(eq_radii)} radius"
+                )
+                lines.append(
+                    f"  Fix: execute_python(code=\"FreeCAD.ActiveDocument.{sketch.Name}"
+                    ".makeMissingEquality(); "
+                    f"FreeCAD.ActiveDocument.recompute()\")"
+                )
+        except Exception as exc:
+            lines.append(f"\nMissing equality constraints: check unavailable ({exc})")
+
+        lines.append(f"\nVerdict: {'PROBLEMS FOUND' if problems_found else 'CLEAN'}")
+        return "\n".join(lines)
 
     @staticmethod
     def _resolve_path(path: str) -> str:

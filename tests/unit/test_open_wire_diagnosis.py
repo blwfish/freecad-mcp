@@ -10,7 +10,7 @@ Run with: python3 -m pytest tests/unit/test_open_wire_diagnosis.py -v
 import os
 import sys
 import types
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, PropertyMock
 
 # ---------------------------------------------------------------------------
 # Minimal FreeCAD mocks — must happen before handler imports
@@ -213,9 +213,14 @@ class TestDiagnoseOpenWires:
     def test_empty_string_when_no_open_vertices(self):
         handler = make_base_handler()
         sketch = _make_sketch([_fake_geo(0, 0, 10, 0)])
-        sketch.getOpenVertices = lambda: []
-        sketch.detectMissingPointOnPointConstraints = MagicMock(return_value=0)
-        result = handler._diagnose_open_wires(sketch)
+        # OpenVertices is a property (plain (x, y, z) tuples), not a
+        # getOpenVertices() method -- confirmed live against FreeCAD 26.3.
+        sketch.OpenVertices = []
+        sketch.detectMissingPointOnPointConstraints = MagicMock(return_value=None)
+        sketch.MissingPointOnPointConstraints = []
+        with patch.object(base_module, 'FreeCAD') as mock_fc:
+            mock_fc.Vector = FakeVectorFactory
+            result = handler._diagnose_open_wires(sketch)
         assert result == ""
 
     def test_reports_open_vertex_with_geo_id(self):
@@ -223,8 +228,9 @@ class TestDiagnoseOpenWires:
         geom = [_fake_geo(0, 0, 10, 0), _fake_geo(10.05, 0, 10, 10)]
         sketch = _make_sketch(geom)
         # Open vertex at the gap between the two lines' endpoints
-        sketch.getOpenVertices = lambda: [FakeVectorCalc(10, 0, 0)]
-        sketch.detectMissingPointOnPointConstraints = MagicMock(return_value=0)
+        sketch.OpenVertices = [(10, 0, 0)]
+        sketch.detectMissingPointOnPointConstraints = MagicMock(return_value=None)
+        sketch.MissingPointOnPointConstraints = []
         with patch.object(base_module, 'FreeCAD') as mock_fc:
             mock_fc.Vector = FakeVectorFactory
             result = handler._diagnose_open_wires(sketch)
@@ -235,26 +241,34 @@ class TestDiagnoseOpenWires:
     def test_includes_suggested_constraints(self):
         handler = make_base_handler()
         sketch = _make_sketch([_fake_geo(0, 0, 10, 0)])
-        sketch.getOpenVertices = lambda: []
-        # Simulate 1 missing constraint
-        c = MagicMock()
-        c.First = 0
-        c.FirstPos = 2
-        c.Second = 1
-        c.SecondPos = 1
-        sketch.detectMissingPointOnPointConstraints = MagicMock(return_value=1)
-        sketch.getMissingPointOnPointConstraints = MagicMock(return_value=[c])
-        result = handler._diagnose_open_wires(sketch)
+        sketch.OpenVertices = []
+        # detectMissingPointOnPointConstraints() takes no args and returns
+        # None; the actual pairs are re-read from the
+        # MissingPointOnPointConstraints property afterward, as plain
+        # 5-tuples (First, FirstPos, Second, SecondPos, Type) -- confirmed
+        # live, not a ConstraintIds object with .First/.FirstPos attributes.
+        sketch.detectMissingPointOnPointConstraints = MagicMock(return_value=None)
+        sketch.MissingPointOnPointConstraints = [(0, 2, 1, 1, 1)]
+        with patch.object(base_module, 'FreeCAD') as mock_fc:
+            mock_fc.Vector = FakeVectorFactory
+            result = handler._diagnose_open_wires(sketch)
         assert "suggested fix" in result
         assert 'constraint_type="Coincident"' in result
         assert "geo_id1=0" in result
         assert "geo_id2=1" in result
 
-    def test_graceful_when_getOpenVertices_missing(self):
+    def test_graceful_when_OpenVertices_missing(self):
         handler = make_base_handler()
         sketch = _make_sketch([])
-        sketch.getOpenVertices = MagicMock(side_effect=AttributeError("no method"))
-        sketch.detectMissingPointOnPointConstraints = MagicMock(return_value=0)
+        # type(sketch).OpenVertices = PropertyMock(...) does not intercept
+        # attribute access on a Mock instance (verified empirically) --
+        # simulate it raising via iteration instead, matching how
+        # _diagnose_open_wires actually consumes this attribute.
+        bad = MagicMock()
+        bad.__iter__.side_effect = AttributeError("no property")
+        sketch.OpenVertices = bad
+        sketch.detectMissingPointOnPointConstraints = MagicMock(return_value=None)
+        sketch.MissingPointOnPointConstraints = []
         # Should not raise
         result = handler._diagnose_open_wires(sketch)
         assert isinstance(result, str)
@@ -262,7 +276,7 @@ class TestDiagnoseOpenWires:
     def test_graceful_when_detectMissing_raises(self):
         handler = make_base_handler()
         sketch = _make_sketch([])
-        sketch.getOpenVertices = lambda: []
+        sketch.OpenVertices = []
         sketch.detectMissingPointOnPointConstraints = MagicMock(
             side_effect=RuntimeError("not available")
         )
@@ -273,9 +287,12 @@ class TestDiagnoseOpenWires:
         handler = make_base_handler()
         sketch = _make_sketch([])
         sketch.GeometryCount = 0
-        sketch.getOpenVertices = lambda: [FakeVectorCalc(99, 99, 0)]
-        sketch.detectMissingPointOnPointConstraints = MagicMock(return_value=0)
-        result = handler._diagnose_open_wires(sketch)
+        sketch.OpenVertices = [(99, 99, 0)]
+        sketch.detectMissingPointOnPointConstraints = MagicMock(return_value=None)
+        sketch.MissingPointOnPointConstraints = []
+        with patch.object(base_module, 'FreeCAD') as mock_fc:
+            mock_fc.Vector = FakeVectorFactory
+            result = handler._diagnose_open_wires(sketch)
         assert "Dangling point" in result
         assert "99" in result
 
@@ -304,8 +321,9 @@ class TestVerifySketchOpenWireDiagnosis:
         sketch.Shape = shape
 
         sketch.getConstruction = MagicMock(return_value=False)
-        sketch.getOpenVertices = MagicMock(return_value=[])
-        sketch.detectMissingPointOnPointConstraints = MagicMock(return_value=0)
+        sketch.OpenVertices = []
+        sketch.detectMissingPointOnPointConstraints = MagicMock(return_value=None)
+        sketch.MissingPointOnPointConstraints = []
         return sketch
 
     def test_verify_sketch_calls_diagnosis_for_open_wire(self):
@@ -349,8 +367,9 @@ class TestVerifySketchOpenWireDiagnosis:
         sketch.solve = MagicMock(return_value=0)
         sketch.Shape = None  # falsy -> the "no valid shape" branch
         sketch.getConstruction = MagicMock(return_value=False)
-        sketch.getOpenVertices = MagicMock(return_value=[])
-        sketch.detectMissingPointOnPointConstraints = MagicMock(return_value=0)
+        sketch.OpenVertices = []
+        sketch.detectMissingPointOnPointConstraints = MagicMock(return_value=None)
+        sketch.MissingPointOnPointConstraints = []
         return sketch
 
     def test_no_shape_returns_invalid_not_error(self):
@@ -392,10 +411,9 @@ class TestPadAutodiagnosis:
         sketch.TypeId = "Sketcher::SketchObject"
         sketch.GeometryCount = 2
         sketch.getConstruction = MagicMock(return_value=False)
-        sketch.getOpenVertices = MagicMock(
-            return_value=[FakeVectorCalc(10, 0, 0)]
-        )
-        sketch.detectMissingPointOnPointConstraints = MagicMock(return_value=0)
+        sketch.OpenVertices = [(10, 0, 0)]
+        sketch.detectMissingPointOnPointConstraints = MagicMock(return_value=None)
+        sketch.MissingPointOnPointConstraints = []
 
         # Body that raises on newObject (simulates the wire-not-closed error)
         body = MagicMock()

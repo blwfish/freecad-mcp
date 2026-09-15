@@ -11,8 +11,64 @@ class MeasurementOpsHandler(BaseHandler):
     _ALLOWED_OPERATIONS = frozenset({
         "measure_distance", "get_volume", "get_bounding_box", "get_mass_properties",
         "get_surface_area", "get_center_of_mass", "count_elements", "list_faces",
-        "check_solid",
+        "check_solid", "diagnose_invalid_shape",
     })
+
+    def diagnose_invalid_shape(self, args: Dict[str, Any]) -> str:
+        """Check whether object_name's Shape is topologically valid
+        (Shape.isValid(), OCCT's BRepCheck_Analyzer) and, if not, walk its
+        dependency graph back to every upstream sketch and run a full
+        sketch_operations(operation="health_check") against each.
+
+        This exists because a shape can be silently invalid with zero
+        visible symptoms at the object that's actually broken -- no error,
+        no tree marker, no console line, Shape.isValid() just quietly False
+        -- and the first sign of trouble is often several features
+        downstream and out of context (a boolean op failing with an
+        unrelated-looking error, or a Measure tool throwing an opaque OCCT
+        message when a specific face is selected). Run this on whatever
+        object the symptom actually showed up on; it traces backward from
+        there rather than requiring the caller to already know which sketch
+        to suspect.
+        """
+        try:
+            object_name = args.get('object_name', '')
+
+            doc, obj, err = self.resolve_object(object_name, attr='Shape')
+            if err:
+                return err
+
+            shape = obj.Shape
+            if shape.isNull():
+                return f"{object_name}: Shape is null (recompute likely failed) -- nothing to check"
+
+            is_valid = shape.isValid()
+            lines = [f"{object_name}: Shape.isValid() = {is_valid}"]
+
+            if is_valid:
+                lines.append("No further diagnosis needed.")
+                return "\n".join(lines)
+
+            sketches = self._find_upstream_sketches(obj)
+            if not sketches:
+                lines.append(
+                    "\nShape is invalid, but no Sketcher::SketchObject was found "
+                    "upstream in the dependency graph -- the cause isn't a sketch "
+                    "profile. Check the feature's own parameters/geometry directly."
+                )
+                return "\n".join(lines)
+
+            lines.append(
+                f"\nWalking {len(sketches)} upstream sketch(es) for the likely cause:"
+            )
+            for sk in sketches:
+                lines.append(f"\n{'=' * 60}")
+                lines.append(self._sketch_health_check(sk))
+
+            return "\n".join(lines)
+
+        except Exception as e:
+            return f"Error diagnosing invalid shape: {e}"
 
     def measure_distance(self, args: Dict[str, Any]) -> str:
         """Measure distance between two objects."""
