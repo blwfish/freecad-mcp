@@ -1804,6 +1804,7 @@ class FreeCADSocketServer:
             "create_sketch": self.sketch_ops.create_sketch,
             "close_sketch": self.sketch_ops.close_sketch,
             "verify_sketch": self.sketch_ops.verify_sketch,
+            "health_check": self.sketch_ops.health_check,
             # Geometry
             "add_line": self.sketch_ops.add_line,
             "add_circle": self.sketch_ops.add_circle,
