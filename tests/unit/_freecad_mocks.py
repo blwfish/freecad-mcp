@@ -1018,6 +1018,12 @@ def make_handler(handler_cls, server=None):
         server.selector.complete_selection = MagicMock(return_value=None)
         server.selector.cancel_selection = MagicMock()
         server._run_on_gui_thread = MagicMock(side_effect=lambda fn, timeout=30.0: fn())
+        # A bare MagicMock() return value here is truthy (not None), so an
+        # unconfigured `if server._gui_unresponsive_error() is not None:`
+        # check would always take the "GUI thread unresponsive" branch by
+        # accident. Default to the real healthy-instance behavior; tests
+        # that specifically want the unresponsive path override this.
+        server._gui_unresponsive_error = MagicMock(return_value=None)
     log_op = MagicMock()
     capture = MagicMock(return_value={})
     return handler_cls(server, log_op, capture)
