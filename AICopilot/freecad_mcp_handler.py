@@ -1119,16 +1119,20 @@ class FreeCADSocketServer:
         for jid in stale:
             del self._async_jobs[jid]
 
-    def _execute_python_async(self, args: Dict[str, Any]) -> str:
-        """Submit Python code for async GUI-safe execution; returns job_id immediately.
+    def _submit_async_job(self, tool: str, task_fn) -> str:
+        """The ONE place an async job record is created.
 
-        Use poll_job(job_id) to check status and retrieve the result.
-        Identical execution semantics to execute_python.
+        Refuses while the GUI heartbeat is stale (a job queued then would sit
+        at "running" forever), cleans up stale jobs, enforces MAX_ASYNC_JOBS,
+        registers the record under `tool` (what list_jobs reports), captures
+        the queue depth BEFORE queueing (so it counts the work ahead of this
+        job, not the job itself), and queues task_fn for the GUI thread
+        through _run_on_gui_thread_async. Returns the submission JSON
+        ({"job_id", "status": "submitted", "queue_depth",
+        "active_connections"}) or an error JSON; a record exists only for a
+        task that was actually queued. Callers are configuration of this
+        policy -- a tool name and a task -- never a second copy of it.
         """
-        code = args.get("code", "")
-        if not code:
-            return json.dumps({"error": "No code provided"})
-
         unresponsive = self._gui_unresponsive_error()
         if unresponsive:
             return unresponsive
@@ -1146,12 +1150,26 @@ class FreeCADSocketServer:
         self._async_jobs[job_id] = {
             "status": "running",
             "started": time.time(),
-            "tool": "execute_python_async",
+            "tool": tool,
         }
 
         queue_depth = self._gui_task_queue.qsize()
-        self._run_on_gui_thread_async(job_id, lambda: self.execute_python_ops.run_code(code))
+        self._run_on_gui_thread_async(job_id, task_fn)
         return self._submission_status(job_id, queue_depth)
+
+    def _execute_python_async(self, args: Dict[str, Any]) -> str:
+        """Submit Python code for async GUI-safe execution; returns job_id immediately.
+
+        Use poll_job(job_id) to check status and retrieve the result.
+        Identical execution semantics to execute_python.
+        """
+        code = args.get("code", "")
+        if not code:
+            return json.dumps({"error": "No code provided"})
+
+        return self._submit_async_job(
+            "execute_python_async", lambda: self.execute_python_ops.run_code(code)
+        )
 
     def _poll_job(self, args: Dict[str, Any]) -> str:
         """Poll status and result of an async job.
@@ -1739,32 +1757,13 @@ class FreeCADSocketServer:
         operations (boolean ops on complex geometry) that would otherwise hit
         the sync timeout and leave the GUI thread stuck.
         """
-        unresponsive = self._gui_unresponsive_error()
-        if unresponsive:
-            return unresponsive
-
-        self._cleanup_stale_async_jobs()
-        if len(self._async_jobs) >= MAX_ASYNC_JOBS:
-            return json.dumps({"error": f"Too many async jobs ({len(self._async_jobs)}). "
-                                        "Use poll_job / cancel_job to clear existing jobs."})
-        job_id = uuid.uuid4().hex[:8]
-        self._async_jobs[job_id] = {
-            "status": "running",
-            "started": time.time(),
-            "label": label,
-            "result": None,
-            "error": None,
-            "elapsed": None,
-        }
         def task():
             try:
                 result = method(args)
                 return {"success": True, "result": result}
             except Exception as e:
                 return {"error": f"{label} error: {e}", "error_id": self.diagnostics_ops.store_traceback(tb_module.format_exc())}
-        queue_depth = self._gui_task_queue.qsize()
-        self._run_on_gui_thread_async(job_id, task)
-        return self._submission_status(job_id, queue_depth)
+        return self._submit_async_job(label, task)
 
     def _call_on_gui_thread_reload(self, timeout: float = 60.0) -> str:
         """Run _reload_handlers() on the Qt GUI thread instead of the socket

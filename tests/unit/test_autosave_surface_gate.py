@@ -252,8 +252,9 @@ SAVE_REGISTER = {
         "why": "explicit: the save_document tool — saveAs when a filename is given, save otherwise",
         "shapes": ["doc.saveAs", "doc.save"],
     },
-    ("handlers/diagnostics_ops.py", "DiagnosticsOpsHandler.restart_freecad"): {
-        "why": "explicit: restart_freecad(save_documents=...) — the caller chose it per call",
+    ("handlers/diagnostics_ops.py", "DiagnosticsOpsHandler.restart_freecad.restart_job"): {
+        "why": "explicit: restart_freecad(save_documents=...) — the caller chose it per call; "
+               "the save runs inside the GUI-thread job body",
         "shapes": ["doc.save"],
     },
     ("handlers/execute_python_ops.py", "ExecutePythonOpsHandler.run_code"): {
