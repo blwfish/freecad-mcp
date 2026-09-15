@@ -288,8 +288,21 @@ SAVE_REGISTER = {
         ],
     },
     ("freecad_mcp_handler.py", "FreeCADSocketServer._reload_handlers"): {
-        "why": "dispatch: rebinds the hand-listed dispatch methods from the reloaded module (a class lookup, never a Document)",
-        "shapes": ["getattr(new_self.FreeCADSocketServer, method_name, None)"],
+        "why": "dispatch: creates the reload lock atomically on the instance (one bytecode under the GIL) so an "
+               "instance born before the lock existed is upgraded by the very reload it serialises",
+        "shapes": ["self.__dict__"],
+    },
+    ("freecad_mcp_handler.py", "FreeCADSocketServer._instantiate_handlers"): {
+        "why": "dispatch: the builder reads back its OWN record of the attributes it placed on the server, so a "
+               "handler the registry no longer names is removed on the next build instead of staying attached "
+               "and callable after a hot reload; the name is a module constant",
+        "shapes": ["getattr(self, HANDLER_RECORD_ATTR, ())"],
+    },
+    ("freecad_mcp_handler.py", "_adopt_reloaded_class"): {
+        "why": "dispatch: on hot reload the instance adopts the reloaded class (the class is the register of "
+               "its methods — no list to rebind); instance-bound methods left by an earlier per-name rebind "
+               "would shadow the new class, so they are found on the instance and dropped",
+        "shapes": ["vars(instance)"],
     },
     ("freecad_mcp_handler.py", "_build_handler_class_map"): {
         "why": "dispatch: resolves handler_registry's class NAMES against the handlers package; a class lookup, never a Document",

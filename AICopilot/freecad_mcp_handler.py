@@ -356,7 +356,7 @@ except ImportError as e:
 # freshly-reloaded package object _reload_handlers builds). Test fixtures
 # that stub `handlers` as MagicMocks import the same registry, so a handler
 # added here can't silently go missing from those fixtures' stub list.
-from handler_registry import _HANDLER_CLASS_NAMES
+from handler_registry import _HANDLER_CLASS_NAMES, _GUI_SENSITIVE
 
 
 def _build_handler_class_map(handlers_module) -> Dict[str, type]:
@@ -367,6 +367,55 @@ def _build_handler_class_map(handlers_module) -> Dict[str, type]:
     itself is defined in exactly one place."""
     return {attr: getattr(handlers_module, cls_name)
             for attr, cls_name in _HANDLER_CLASS_NAMES.items()}
+
+
+# _instantiate_handlers' own record of the attribute names it placed on the
+# server last time. Read back on the next build so an attribute the registry
+# no longer names is REMOVED, not left behind: a hot reload that adds handlers
+# but never deletes one leaves a de-listed instance attached and callable,
+# which is a second, unmanaged home for "which handlers exist". The record is
+# derived from the act itself, never from a second read of the registry, which
+# after a reload is already the NEW one and cannot say what the old one placed.
+HANDLER_RECORD_ATTR = "_instantiated_handler_attrs"
+
+
+def _adopt_reloaded_class(instance, new_cls):
+    """Upgrade a live server instance to its reloaded class. Returns the
+    instance-bound method names it dropped.
+
+    The class IS the register of its methods, so adopting it is the whole
+    rebind: nothing is enumerated, and a method added tomorrow is covered with
+    zero edits. Instance attributes that are methods bound to this instance --
+    the residue of the per-name rebinding an earlier reload performed on a
+    long-running server -- would shadow the new class's methods, so they are
+    removed. Ordinary state (queues, jobs, the handler instances, the reload
+    lock) is untouched. `__class__` assignment is Python's own instance-upgrade
+    path; both classes are plain (no __slots__), which is what makes it legal.
+
+    MODULE-LEVEL, not a method: on a live upgrade the instance still wears the
+    OLD class when the reload reaches this point, so a method defined only on
+    the new class is not reachable through `self`. The reload calls this
+    through the freshly loaded module.
+
+    ORDER: the class is adopted FIRST, the stale bindings dropped AFTER. Tool
+    dispatch runs on other threads outside the reload lock; between the two
+    steps a caller still finds the old instance-bound method (which shadows
+    the new class) and gets the old code -- never an AttributeError. Dropping
+    first would open a window in which the name resolves nowhere.
+
+    SNAPSHOT: the scan runs over `list(vars(instance).items())`, taken in one
+    step, because those same other threads write to the instance (a job
+    result, a stale-request id) while the reload runs, and iterating the live
+    `__dict__` under a concurrent insert raises "dictionary changed size
+    during iteration" -- an unhandled crash halfway through a reload.
+    """
+    import types
+    stale = [name for name, value in list(vars(instance).items())
+             if isinstance(value, types.MethodType) and value.__self__ is instance]
+    instance.__class__ = new_cls
+    for name in stale:
+        delattr(instance, name)
+    return stale
 
 
 try:
@@ -569,16 +618,36 @@ class FreeCADSocketServer:
         pass the classes explicitly rather than this method looking them
         up from module globals, so reload's freshly-reloaded classes are
         used correctly regardless of import-timing/globals subtleties.
+
+        Owns the server's handler attributes in BOTH directions: every
+        attribute it placed on a previous build and does not place now (a
+        handler removed or renamed in the registry) is deleted, so the set
+        of live handler instances is exactly the registry, after every
+        build. Which handlers take the GUI queues is the registry's fact
+        (_GUI_SENSITIVE), not a copy kept here.
+
+        NOT re-entrant, and deliberately not locked here: its two callers
+        are __init__ (before the accept loop starts) and the hot reload,
+        which the server serialises with its own lock -- atomicity belongs
+        to the reload as a whole, and a second lock here would be a second
+        home for that guarantee.
         """
-        _gui_sensitive = {"view_ops", "document_ops"}
+        previous = tuple(getattr(self, HANDLER_RECORD_ATTR, ()))
+        built = []
         for attr_name, cls in handler_classes.items():
-            if attr_name in _gui_sensitive:
+            if attr_name in _GUI_SENSITIVE:
                 setattr(self, attr_name, cls(
                     self, self._gui_task_queue, self._gui_response_queue,
                     _log_operation, _capture_state
                 ))
             else:
                 setattr(self, attr_name, cls(self, _log_operation, _capture_state))
+            built.append(attr_name)
+        built_set = set(built)
+        for attr in previous:
+            if attr not in built_set and hasattr(self, attr):
+                delattr(self, attr)
+        setattr(self, HANDLER_RECORD_ATTR, tuple(built))
 
     # -----------------------------------------------------------------
     # Server lifecycle
@@ -1947,144 +2016,139 @@ class FreeCADSocketServer:
         pyc caches — rsync preserves mtimes, so pyc often appears newer than
         the freshly deployed .py source.
 
-        Also reloads freecad_mcp_handler.py itself and rebinds
-        _execute_tool_inner so dispatch-map changes (new tools, new routing)
-        take effect without a FreeCAD restart.
+        Also reloads freecad_mcp_handler.py itself; the live instance then
+        ADOPTS the reloaded class, so every method (dispatch maps, this
+        reload, anything written later) takes effect without a FreeCAD
+        restart and without a list of names to rebind.
         """
-        import importlib.util, os, types
+        # ONE reload at a time -- the whole of it, module swaps included. Every
+        # client connection runs on its own thread and two clients can share
+        # this server, so two `reload_modules` calls can overlap; an
+        # interleaved reload swaps sys.modules and rebuilds the handler set
+        # half-and-half. The lock's ONE home is here, its only user, created on
+        # the INSTANCE on first use: `dict.setdefault` is one bytecode under the
+        # GIL, so two racing first callers still share one lock, and an
+        # instance constructed BEFORE this code existed -- the very instance a
+        # hot reload upgrades -- gets its lock without a restart. Re-entrant,
+        # so a nested call cannot deadlock on itself.
+        with self.__dict__.setdefault("_reload_lock", threading.RLock()):
+            import importlib.util, os
 
-        def _reload(module_name: str, module) -> object:
-            """Force-load from .py source, update sys.modules, return new module."""
-            src = os.path.realpath(module.__file__)
-            spec = importlib.util.spec_from_file_location(module_name, src)
-            new_mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(new_mod)
-            sys.modules[module_name] = new_mod
-            return new_mod
+            def _reload(module_name: str, module) -> object:
+                """Force-load from .py source, update sys.modules, return new module."""
+                src = os.path.realpath(module.__file__)
+                spec = importlib.util.spec_from_file_location(module_name, src)
+                new_mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(new_mod)
+                sys.modules[module_name] = new_mod
+                return new_mod
 
-        try:
-            # Reload base first (other handlers inherit from it)
-            import handlers.base as _base
-            _reload('handlers.base', _base)
+            try:
+                # Reload base first (other handlers inherit from it)
+                import handlers.base as _base
+                _reload('handlers.base', _base)
 
-            # Reload handler_registry itself and rebind this module's global
-            # _HANDLER_CLASS_NAMES to the fresh dict, BEFORE it's used below.
-            # Without this, a brand-new handler added to handler_registry.py
-            # (a new key in _HANDLER_CLASS_NAMES) is invisible to this whole
-            # method -- `handler_modules` and `_build_handler_class_map` both
-            # read the *stale* dict captured at this module's original
-            # `from handler_registry import _HANDLER_CLASS_NAMES` (line 217),
-            # since plain `import`/`from import` returns whatever's already
-            # in sys.modules rather than re-reading from disk. The new
-            # handler's class then never gets instantiated
-            # (_instantiate_handlers only sees the old key set), while the
-            # freshly-reloaded freecad_mcp_handler.py's dispatch code (e.g.
-            # generic_dispatch_map, a dict LITERAL evaluated unconditionally
-            # on every call) already references `self.<new_handler>` by name
-            # -- crashing EVERY tool call, not just the new handler's, with
-            # `AttributeError: '...' object has no attribute '<new_handler>'`
-            # until FreeCAD is restarted. Reproduced live 2026-08-31 adding
-            # VarSetOpsHandler; see full-review task_fb07efed.
-            global _HANDLER_CLASS_NAMES
-            import handler_registry as _handler_registry_mod
-            _handler_registry_mod = _reload('handler_registry', _handler_registry_mod)
-            _HANDLER_CLASS_NAMES = _handler_registry_mod._HANDLER_CLASS_NAMES
+                # Reload handler_registry itself and rebind this module's global
+                # _HANDLER_CLASS_NAMES to the fresh dict, BEFORE it's used below.
+                # Without this, a brand-new handler added to handler_registry.py
+                # (a new key in _HANDLER_CLASS_NAMES) is invisible to this whole
+                # method -- the module list and `_build_handler_class_map` both
+                # read the *stale* dict captured at this module's original
+                # `from handler_registry import _HANDLER_CLASS_NAMES`, since
+                # plain `import`/`from import` returns whatever's already in
+                # sys.modules rather than re-reading from disk. The new
+                # handler's class then never gets instantiated, while the
+                # freshly-reloaded dispatch code (generic_dispatch_map, a dict
+                # LITERAL evaluated unconditionally on every call) already
+                # references `self.<new_handler>` by name -- crashing EVERY tool
+                # call until FreeCAD is restarted. Reproduced live 2026-08-31
+                # adding VarSetOpsHandler; see full-review task_fb07efed.
+                global _HANDLER_CLASS_NAMES
+                import handler_registry as _handler_registry_mod
+                _handler_registry_mod = _reload('handler_registry', _handler_registry_mod)
+                _HANDLER_CLASS_NAMES = _handler_registry_mod._HANDLER_CLASS_NAMES
 
-            # Reload each handler module. Derived from the same
-            # _HANDLER_CLASS_NAMES dict __init__ uses -- attr_name maps
-            # 1:1 onto its module's dotted path (handlers.<attr_name>).
-            handler_modules = [f'handlers.{attr}' for attr in _HANDLER_CLASS_NAMES]
-            for mod_name in handler_modules:
-                mod = sys.modules.get(mod_name)
-                if mod:
-                    _reload(mod_name, mod)
+                # Reload each handler module the registry names, in its order.
+                # The registry derives the dotted paths; nothing here spells one.
+                handler_modules = list(_handler_registry_mod.module_names())
+                for mod_name in handler_modules:
+                    mod = sys.modules.get(mod_name)
+                    if mod:
+                        _reload(mod_name, mod)
 
-            # Reload the package __init__ so lookups against it resolve to
-            # the freshly-reloaded classes, then rebuild the {attr_name:
-            # class} map against that fresh package object -- same
-            # _build_handler_class_map used at startup, just fed a
-            # different (freshly-reloaded) `handlers` module object.
-            import handlers as _handlers_pkg
-            _handlers_pkg = _reload('handlers', _handlers_pkg)
-            fresh_handler_classes = _build_handler_class_map(_handlers_pkg)
+                # Reload the package __init__ so lookups against it resolve to
+                # the freshly-reloaded classes, then rebuild the {attr_name:
+                # class} map against that fresh package object -- same
+                # _build_handler_class_map used at startup, just fed a
+                # different (freshly-reloaded) `handlers` module object.
+                import handlers as _handlers_pkg
+                _handlers_pkg = _reload('handlers', _handlers_pkg)
+                fresh_handler_classes = _build_handler_class_map(_handlers_pkg)
 
-            # _checkpoints (DocumentOpsHandler), _clip_planes (ViewOpsHandler),
-            # the traceback ring buffer (DiagnosticsOpsHandler), and the
-            # execute_python namespace (ExecutePythonOpsHandler) are
-            # lazily-created plain instance attributes with no persistence
-            # anywhere else. Replacing the handler instances below would
-            # otherwise silently discard them: rollback_to_checkpoint would
-            # report a misleading "no checkpoint named X" for a checkpoint
-            # that genuinely existed before this reload, any pending
-            # clip-plane Coin3D scene-graph node would become unreachable
-            # (its handle only lived in the old instance's list) and leak in
-            # the 3D view forever since nothing could find it to remove it,
-            # get_last_traceback would silently lose crash history from
-            # right before the reload — the exact moment it's most useful —
-            # and execute_python's persistent namespace (variables surviving
-            # across calls, its whole documented point) would silently reset
-            # to empty. That last one used to be a non-issue when the
-            # namespace lived directly on the server (untouched by handler
-            # re-instantiation); moving it into a handler makes it subject
-            # to the same hazard as the others, so it needs the same fix.
-            old_checkpoints = getattr(self, 'document_ops', None) and getattr(self.document_ops, '_checkpoints', None)
-            old_clip_planes = getattr(self, 'view_ops', None) and getattr(self.view_ops, '_clip_planes', None)
-            old_diag = getattr(self, 'diagnostics_ops', None)
-            old_tracebacks = old_diag and old_diag._last_tracebacks
-            old_traceback_counter = old_diag._traceback_counter if old_diag else 0
-            old_python_ns = getattr(self, 'execute_python_ops', None) and getattr(self.execute_python_ops, '_python_namespace', None)
+                # Reload this module itself, under the name it is ACTUALLY loaded
+                # as (InitGui imports it as the top-level `freecad_mcp_handler`;
+                # the class knows which module it came from), and let the live
+                # instance ADOPT the reloaded class: every method -- dispatchers,
+                # this reload, anything written next month -- resolves through
+                # the new class from here on. There is no list of methods to
+                # rebind, because a list was the defect: it named ten methods by
+                # hand and reported success while a forgotten one ran old code.
+                # Through the NEW MODULE, never through self: after the swap the
+                # instance still wears the old class, and a function that exists
+                # only on the new module is not reachable from it.
+                self_name = type(self).__module__
+                new_self = _reload(self_name, sys.modules[self_name])
+                new_cls = new_self.FreeCADSocketServer
+                stale = new_self._adopt_reloaded_class(self, new_cls)
+                if stale:
+                    FreeCAD.Console.PrintMessage(
+                        f"[MCP] reload: dropped {len(stale)} instance-bound method(s) left by an earlier reload\n"
+                    )
 
-            # Re-create handler instances
-            self._instantiate_handlers(fresh_handler_classes)
-            if old_checkpoints:
-                self.document_ops._checkpoints = old_checkpoints
-            if old_clip_planes:
-                self.view_ops._clip_planes = old_clip_planes
-            if old_tracebacks:
-                self.diagnostics_ops._last_tracebacks = old_tracebacks
-            self.diagnostics_ops._traceback_counter = old_traceback_counter
-            if old_python_ns:
-                self.execute_python_ops._python_namespace = old_python_ns
+                # _checkpoints (DocumentOpsHandler), _clip_planes (ViewOpsHandler),
+                # the traceback ring buffer (DiagnosticsOpsHandler), and the
+                # execute_python namespace (ExecutePythonOpsHandler) are
+                # lazily-created plain instance attributes with no persistence
+                # anywhere else. Replacing the handler instances below would
+                # otherwise silently discard them: rollback_to_checkpoint would
+                # report a misleading "no checkpoint named X" for a checkpoint
+                # that genuinely existed before this reload, any pending
+                # clip-plane Coin3D scene-graph node would become unreachable
+                # (its handle only lived in the old instance's list) and leak in
+                # the 3D view forever since nothing could find it to remove it,
+                # get_last_traceback would silently lose crash history from
+                # right before the reload — the exact moment it's most useful —
+                # and execute_python's persistent namespace (variables surviving
+                # across calls, its whole documented point) would silently reset
+                # to empty.
+                old_checkpoints = getattr(self, 'document_ops', None) and getattr(self.document_ops, '_checkpoints', None)
+                old_clip_planes = getattr(self, 'view_ops', None) and getattr(self.view_ops, '_clip_planes', None)
+                old_diag = getattr(self, 'diagnostics_ops', None)
+                old_tracebacks = old_diag and old_diag._last_tracebacks
+                old_traceback_counter = old_diag._traceback_counter if old_diag else 0
+                old_python_ns = getattr(self, 'execute_python_ops', None) and getattr(self.execute_python_ops, '_python_namespace', None)
 
-            # Reload freecad_mcp_handler.py itself and rebind _execute_tool_inner
-            # so dispatch-map changes (new tools added to generic_dispatch_map)
-            # take effect without a FreeCAD restart.
-            #
-            # Imported under its bare name, not AICopilot.freecad_mcp_handler --
-            # InitGui.py appends the AICopilot directory itself to sys.path and
-            # does `from freecad_mcp_handler import ...`, so that's the name
-            # it's actually registered under in sys.modules. The AICopilot
-            # entry that does exist is just the addon's Init.py/workbench
-            # registration, not a real package containing this module.
-            import freecad_mcp_handler as _self_mod
-            new_self = _reload('freecad_mcp_handler', _self_mod)
-            # Rebind all dispatch methods so routing changes take effect immediately.
-            # _execute_tool_inner calls self._dispatch_view_control etc., so those
-            # must be rebound too or the old routing (without new operations) runs.
-            _dispatch_methods = [
-                '_execute_tool_inner',
-                '_dispatch_view_control',
-                '_dispatch_partdesign',
-                '_dispatch_sketch',
-                '_dispatch_part_operations',
-                '_dispatch_to_handler',
-                '_call_on_gui_thread_reload',
-                '_reload_handlers',   # rebind self so future reloads use latest code
-                '_instantiate_handlers',
-                '_continue_selection',
-            ]
-            for method_name in _dispatch_methods:
-                new_fn = getattr(new_self.FreeCADSocketServer, method_name, None)
-                if new_fn:
-                    setattr(self, method_name, types.MethodType(new_fn, self))
+                # Re-create handler instances through the RELOADED builder (it
+                # reads the reloaded registry's _GUI_SENSITIVE); it also drops
+                # any handler the registry no longer names.
+                new_cls._instantiate_handlers(self, fresh_handler_classes)
+                if old_checkpoints:
+                    self.document_ops._checkpoints = old_checkpoints
+                if old_clip_planes:
+                    self.view_ops._clip_planes = old_clip_planes
+                if old_tracebacks:
+                    self.diagnostics_ops._last_tracebacks = old_tracebacks
+                self.diagnostics_ops._traceback_counter = old_traceback_counter
+                if old_python_ns:
+                    self.execute_python_ops._python_namespace = old_python_ns
 
-            n = len(handler_modules) + 1  # +1 for base
-            FreeCAD.Console.PrintMessage(f"[MCP] Reloaded {n} handler modules\n")
-            return json.dumps({
-                "result": f"Reloaded {n} handler modules successfully",
-                "modules_reloaded": n,
-            })
+                n = len(handler_modules) + 2  # + base + registry
+                FreeCAD.Console.PrintMessage(f"[MCP] Reloaded {n} handler modules\n")
+                return json.dumps({
+                    "result": f"Reloaded {n} handler modules successfully",
+                    "modules_reloaded": n,
+                })
 
-        except Exception as e:
-            FreeCAD.Console.PrintError(f"[MCP] Handler reload failed: {e}\n")
-            return json.dumps({"error": f"Handler reload failed: {e}"})
+            except Exception as e:
+                FreeCAD.Console.PrintError(f"[MCP] Handler reload failed: {e}\n")
+                return json.dumps({"error": f"Handler reload failed: {e}"})
