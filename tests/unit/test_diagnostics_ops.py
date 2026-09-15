@@ -160,6 +160,13 @@ class TestRestartFreecad(unittest.TestCase):
             return json.dumps({"job_id": "abcd1234", "status": "submitted"})
 
         server._submit_async_job = MagicMock(side_effect=_submit)
+        # A bare MagicMock() return value is truthy (not None): without this,
+        # `if self.server._gui_unresponsive_error() is not None:` always took
+        # the unresponsive-GUI fallback branch (real subprocess.Popen + a
+        # real threading.Timer -> os._exit(0) half a second later, which
+        # silently killed the whole pytest process). Default to the healthy
+        # case, matching a real fresh FreeCAD instance.
+        server._gui_unresponsive_error = MagicMock(return_value=None)
         self.handler = make_handler(DiagnosticsOpsHandler, server=server)
         # Patch restart_freecad's OWN __globals__ dict rather than whatever
         # sys.modules['handlers.diagnostics_ops'] currently holds: a reload test
@@ -273,6 +280,129 @@ class TestRestartFreecad(unittest.TestCase):
                     self.submitted[0][1]()
             popen.assert_not_called()
             self.qtcore.QTimer.singleShot.assert_not_called()
+
+
+class TestRestartFreecadUnresponsiveGuiFallback(unittest.TestCase):
+    """restart_freecad's fallback for a genuinely hung Qt GUI thread.
+
+    Submitting through _submit_async_job (TestRestartFreecad above) depends
+    on the GUI thread being alive to drain the queue -- but restart_freecad
+    is documented elsewhere (poll_job/cancel_job) as THE recovery tool for
+    exactly the case where it isn't. This exercises the branch that runs
+    entirely on the calling thread instead: real subprocess.Popen and a real
+    threading.Timer -> os._exit(0) half a second later, so EVERY test here
+    must patch both before calling restart_freecad, or it kills the pytest
+    process outright (confirmed the hard way while writing these)."""
+
+    def setUp(self):
+        reset_mocks()
+        server = MagicMock()
+        server.selector = MagicMock()
+        server._gui_unresponsive_error = MagicMock(
+            return_value="GUI thread appears unresponsive"
+        )
+        server._submit_async_job = MagicMock(
+            side_effect=AssertionError("should not submit a job on the unresponsive-GUI path")
+        )
+        self.server = server
+        self.handler = make_handler(DiagnosticsOpsHandler, server=server)
+        self.func_globals = self.handler.restart_freecad.__func__.__globals__
+
+    def _gui(self, tmp):
+        import os, pathlib
+        bin_dir = pathlib.Path(tmp) / "bin"
+        bin_dir.mkdir()
+        exe = bin_dir / ("FreeCAD.exe" if os.name == "nt" else "FreeCAD")
+        exe.write_text("")
+        exe.chmod(0o755)
+        doc = MagicMock()
+        doc.FileName = str(pathlib.Path(tmp) / "part.FCStd")
+        mock_FreeCAD.GuiUp = True
+        mock_FreeCAD.listDocuments = MagicMock(return_value={"part": doc})
+        mock_FreeCAD.getHomePath = MagicMock(return_value=str(tmp) + os.sep)
+        return doc, str(exe)
+
+    @staticmethod
+    def _norm(paths):
+        import os
+        return [os.path.normcase(p) for p in paths]
+
+    def _call(self, args=None):
+        """restart_freecad() with subprocess.Popen and the exit timer both
+        patched -- never call the method under test outside this helper."""
+        with patch("subprocess.Popen") as popen, patch("threading.Timer") as timer_cls:
+            result = json.loads(self.handler.restart_freecad(args or {}))
+        return result, popen, timer_cls
+
+    def test_skips_the_job_queue_entirely(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            self._gui(tmp)
+            result, popen, _timer = self._call()
+        self.server._submit_async_job.assert_not_called()
+        popen.assert_called_once()
+        self.assertTrue(result["gui_was_unresponsive"])
+
+    def test_does_not_save_documents(self):
+        """Saving from off the GUI thread while it may be mid-mutation of
+        that same document is the exact risk this path exists to avoid."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            doc, _exe = self._gui(tmp)
+            result, _popen, _timer = self._call()
+        doc.save.assert_not_called()
+        self.assertEqual(result["saved_documents"], [])
+
+    def test_reopens_documents_by_path(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            doc, exe = self._gui(tmp)
+            result, popen, _timer = self._call()
+        self.assertEqual(self._norm(popen.call_args.args[0]), self._norm([exe, doc.FileName]))
+        self.assertEqual(result["reopened_documents"], [doc.FileName])
+
+    def test_reopen_documents_false_spawns_bare(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _doc, exe = self._gui(tmp)
+            result, popen, _timer = self._call({"reopen_documents": False})
+        self.assertEqual(self._norm(popen.call_args.args[0]), self._norm([exe]))
+        self.assertEqual(result["reopened_documents"], [])
+
+    def test_exit_is_scheduled_via_a_plain_timer_and_really_calls_os_exit(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            self._gui(tmp)
+            _result, _popen, timer_cls = self._call()
+        timer_cls.assert_called_once()
+        delay, callback = timer_cls.call_args.args
+        self.assertEqual(delay, 0.5)
+        with patch("os._exit") as exit_mock:
+            callback()
+        exit_mock.assert_called_once_with(0)
+
+    def test_spawn_failure_is_a_real_error_and_does_not_schedule_exit(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            self._gui(tmp)
+            with patch("subprocess.Popen", side_effect=OSError("no such file")), \
+                 patch("threading.Timer") as timer_cls:
+                result = json.loads(self.handler.restart_freecad({}))
+        assert_error_contains(self, result, "failed to spawn")
+        timer_cls.assert_not_called()
+
+    def test_document_path_read_failure_still_restarts(self):
+        """A read failure while enumerating documents must not block the
+        restart -- this path exists because the process is already in
+        trouble; best-effort reopening beats refusing to recover at all."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            self._gui(tmp)
+            mock_FreeCAD.listDocuments = MagicMock(side_effect=RuntimeError("GIL contention"))
+            result, popen, timer_cls = self._call()
+        popen.assert_called_once()
+        timer_cls.assert_called_once()
+        self.assertEqual(result["reopened_documents"], [])
 
 
 if __name__ == "__main__":
