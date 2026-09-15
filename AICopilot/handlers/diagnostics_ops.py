@@ -155,17 +155,37 @@ class DiagnosticsOpsHandler(BaseHandler):
         decision (new workbench UI surface), not a small addition — left
         here rather than guessed at. See GlobalAIService in InitGui.py for
         the equivalent GUI-path lifecycle this would need to hook into.
+
+        The whole restart body runs on the Qt GUI thread as an async job
+        submitted through the server's one job chokepoint: saving documents
+        is GUI-thread work, and a QTimer started from the socket thread
+        never fires (the previous version scheduled do_restart that way and
+        reported success while nothing restarted). The reply is the job
+        submission -- the job id -- or a named failure if nothing was queued;
+        it never claims the restart happened.
         """
         if not FreeCAD.GuiUp:
             return json.dumps({"error": "restart_freecad is not available in headless mode"})
 
+        import shutil
         import subprocess
 
         save_docs = args.get("save_documents", True)
         reopen_docs = args.get("reopen_documents", True)
 
-        doc_paths = []
-        try:
+        # Resolve the binary here (pure path lookup, no GUI work): a missing
+        # binary is a named failure and nothing is queued. shutil.which is
+        # PATHEXT-aware, so FreeCAD.exe is found on Windows.
+        fc_bin = (
+            shutil.which("FreeCAD", path=os.path.join(FreeCAD.getHomePath(), "bin"))
+            or shutil.which("FreeCAD")
+            or shutil.which("freecad")
+        )
+        if not fc_bin:
+            return json.dumps({"error": "Cannot find FreeCAD binary for restart"})
+
+        def restart_job():
+            doc_paths = []
             for doc_name, doc in FreeCAD.listDocuments().items():
                 path = doc.FileName
                 if path:
@@ -174,37 +194,15 @@ class DiagnosticsOpsHandler(BaseHandler):
                         FreeCAD.Console.PrintMessage(f"[MCP] Saved {doc_name}: {path}\n")
                     if reopen_docs:
                         doc_paths.append(path)
-        except Exception as e:
-            return json.dumps({"error": f"Failed to save documents: {e}"})
+            subprocess.Popen([fc_bin] + doc_paths, env=os.environ.copy(), start_new_session=True)
+            FreeCAD.Console.PrintMessage("[MCP] New FreeCAD instance spawned, exiting...\n")
+            # We are on the Qt thread now, so this timer fires. Give the socket
+            # reply time to leave, then close this instance.
+            QtCore.QTimer.singleShot(500, lambda: FreeCADGui.getMainWindow().close())
+            return {
+                "success": True,
+                "result": f"New FreeCAD instance spawned with {len(doc_paths)} document(s); "
+                          f"this instance closes in 500 ms.",
+            }
 
-        # Build the command to restart FreeCAD
-        # Use sys.executable for the Python, but we need the FreeCAD binary
-        fc_bin = FreeCAD.getHomePath() + "bin/FreeCAD"
-        if not os.path.exists(fc_bin):
-            # Try platform-specific locations
-            import shutil
-            fc_bin = shutil.which("FreeCAD") or shutil.which("freecad")
-        if not fc_bin:
-            return json.dumps({"error": "Cannot find FreeCAD binary for restart"})
-
-        # Schedule the restart on the GUI thread (after response is sent)
-        def do_restart():
-            try:
-                cmd = [fc_bin] + doc_paths
-                env = os.environ.copy()
-                subprocess.Popen(cmd, env=env, start_new_session=True)
-                FreeCAD.Console.PrintMessage("[MCP] New FreeCAD instance spawned, exiting...\n")
-                # Give the response time to be sent, then quit
-                if QtCore:
-                    QtCore.QTimer.singleShot(500, lambda: FreeCADGui.getMainWindow().close())
-            except Exception as e:
-                FreeCAD.Console.PrintError(f"[MCP] Restart failed: {e}\n")
-
-        if QtCore:
-            QtCore.QTimer.singleShot(100, do_restart)
-
-        return json.dumps({
-            "result": f"Restarting FreeCAD. Saved {len(doc_paths)} documents. "
-                      f"New instance will reconnect on same socket.",
-            "saved_documents": doc_paths,
-        })
+        return self.server._submit_async_job("restart_freecad", restart_job)
