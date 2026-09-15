@@ -142,74 +142,137 @@ class TestTracebackRingBuffer(unittest.TestCase):
 
 
 class TestRestartFreecad(unittest.TestCase):
-    """restart_freecad previously had only a routing test (server.
-    _restart_freecad mocked out entirely) — no test exercised the actual
-    headless short-circuit or the subprocess-spawn/document-save path."""
+    """restart_freecad runs its whole body on the Qt GUI thread as an async job
+    submitted through the server's one chokepoint (_submit_async_job).
+
+    The defect this pins (blwfish/freecad-mcp#75): QTimer.singleShot called
+    from the socket thread never fires, so the tool reported success and
+    nothing restarted; it also saved every document on the socket thread."""
 
     def setUp(self):
         reset_mocks()
-        self.handler = make_handler(DiagnosticsOpsHandler)
+        self.submitted = []          # (tool, task) pairs the server chokepoint received
+        server = MagicMock()
+        server.selector = MagicMock()
+
+        def _submit(tool, task):
+            self.submitted.append((tool, task))
+            return json.dumps({"job_id": "abcd1234", "status": "submitted"})
+
+        server._submit_async_job = MagicMock(side_effect=_submit)
+        self.handler = make_handler(DiagnosticsOpsHandler, server=server)
+        # Patch restart_freecad's OWN __globals__ dict rather than whatever
+        # sys.modules['handlers.diagnostics_ops'] currently holds: a reload test
+        # elsewhere in the session may have re-exec'd the module, orphaning the
+        # globals this handler's class was bound to.
+        self.func_globals = self.handler.restart_freecad.__func__.__globals__
+        self.qtcore = MagicMock()
+        self.gui = MagicMock()
+
+    def _gui(self, tmp):
+        """A GUI-mode FreeCAD whose home has a real bin/FreeCAD(.exe) and one
+        file-backed document."""
+        import os, pathlib
+        bin_dir = pathlib.Path(tmp) / "bin"
+        bin_dir.mkdir()
+        exe = bin_dir / ("FreeCAD.exe" if os.name == "nt" else "FreeCAD")
+        exe.write_text("")
+        exe.chmod(0o755)
+        doc = MagicMock()
+        doc.FileName = str(pathlib.Path(tmp) / "part.FCStd")
+        mock_FreeCAD.GuiUp = True
+        mock_FreeCAD.listDocuments = MagicMock(return_value={"part": doc})
+        mock_FreeCAD.getHomePath = MagicMock(return_value=str(tmp) + os.sep)
+        return doc, str(exe)
+
+    def _patched(self):
+        return patch.dict(self.func_globals, {"QtCore": self.qtcore, "FreeCADGui": self.gui})
+
+    @staticmethod
+    def _norm(paths):
+        import os
+        return [os.path.normcase(p) for p in paths]
 
     def test_headless_mode_returns_error_not_available(self):
         mock_FreeCAD.GuiUp = False
         result = self.handler.restart_freecad({})
         assert_error_contains(self, result, "headless")
+        self.assertEqual(self.submitted, [])
 
-    def test_gui_mode_saves_documents_and_spawns_subprocess(self):
-        # Patch restart_freecad's OWN __globals__ dict directly rather than
-        # whatever `sys.modules['handlers.diagnostics_ops']` currently
-        # holds. If a reload test elsewhere in the session
-        # (TestReloadHandlersPreservesState) already re-exec'd
-        # handlers/diagnostics_ops.py via spec_from_file_location, that
-        # produces a brand-new module/class/globals-dict; self.handler
-        # here was built from whichever class this test FILE's own
-        # collection-time `from handlers.diagnostics_ops import
-        # DiagnosticsOpsHandler` bound, which may be a DIFFERENT (now
-        # orphaned) globals dict than the current sys.modules entry —
-        # patching the sys.modules one would silently no-op.
-        func_globals = self.handler.restart_freecad.__func__.__globals__
-
-        doc = MagicMock()
-        doc.FileName = "/tmp/fake.FCStd"
-        mock_FreeCAD.GuiUp = True
-        mock_FreeCAD.listDocuments = MagicMock(return_value={"fake": doc})
-        mock_FreeCAD.getHomePath = MagicMock(return_value="/opt/freecad/")
-        mock_qtcore = MagicMock()
-        mock_qtcore.QTimer.singleShot = MagicMock(
-            side_effect=lambda delay, fn: fn()
-        )
-
-        with patch.object(func_globals["os"].path, "exists", return_value=True), \
-             patch.dict(func_globals, {"QtCore": mock_qtcore}), \
-             patch("subprocess.Popen") as mock_popen:
-            result = json.loads(self.handler.restart_freecad({}))
-
-        doc.save.assert_called_once()
-        mock_popen.assert_called_once()
-        spawned_cmd = mock_popen.call_args.args[0]
-        self.assertEqual(spawned_cmd[0], "/opt/freecad/bin/FreeCAD")
-        self.assertIn("/tmp/fake.FCStd", spawned_cmd)
-        self.assertEqual(result["saved_documents"], ["/tmp/fake.FCStd"])
-
-    def test_gui_mode_save_documents_false_skips_save(self):
-        func_globals = self.handler.restart_freecad.__func__.__globals__
-
-        doc = MagicMock()
-        doc.FileName = "/tmp/fake.FCStd"
-        mock_FreeCAD.GuiUp = True
-        mock_FreeCAD.listDocuments = MagicMock(return_value={"fake": doc})
-        mock_FreeCAD.getHomePath = MagicMock(return_value="/opt/freecad/")
-        mock_qtcore = MagicMock()
-        mock_qtcore.QTimer.singleShot = MagicMock(
-            side_effect=lambda delay, fn: fn()
-        )
-
-        with patch.object(func_globals["os"].path, "exists", return_value=True), \
-             patch.dict(func_globals, {"QtCore": mock_qtcore}), \
-             patch("subprocess.Popen"):
-            self.handler.restart_freecad({"save_documents": False})
-
+    def test_missing_binary_is_a_named_failure_and_nothing_is_submitted(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            doc, _exe = self._gui(tmp)
+            with self._patched(), patch("shutil.which", return_value=None):
+                result = json.loads(self.handler.restart_freecad({}))
+        self.assertEqual(result["error"], "Cannot find FreeCAD binary for restart")
+        self.assertEqual(self.submitted, [])
         doc.save.assert_not_called()
+
+    def test_submits_the_restart_as_a_gui_job_and_fires_no_timer_from_the_socket_thread(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            doc, _exe = self._gui(tmp)
+            with self._patched():
+                result = json.loads(self.handler.restart_freecad({}))
+        self.assertEqual(result["status"], "submitted")
+        self.assertEqual([t for t, _ in self.submitted], ["restart_freecad"])
+        self.qtcore.QTimer.singleShot.assert_not_called()
+        doc.save.assert_not_called()          # saving is GUI-thread work: it lives in the job
+
+    def test_the_gui_job_saves_spawns_and_schedules_the_close(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            doc, exe = self._gui(tmp)
+            with self._patched(), patch("subprocess.Popen") as popen:
+                self.handler.restart_freecad({})
+                _tool, task = self.submitted[0]
+                result = task()
+                # The scheduled close runs while the patched QtCore/FreeCADGui are still in place.
+                self.qtcore.QTimer.singleShot.assert_called_once()
+                delay, close = self.qtcore.QTimer.singleShot.call_args.args
+                self.assertEqual(delay, 500)
+                close()
+                self.gui.getMainWindow.return_value.close.assert_called_once()
+            doc.save.assert_called_once()
+            popen.assert_called_once()
+            self.assertEqual(self._norm(popen.call_args.args[0]), self._norm([exe, doc.FileName]))
+            self.assertTrue(result["success"])
+            self.assertIn("1 document", result["result"])
+
+    def test_save_documents_false_skips_the_save_but_reopens(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            doc, exe = self._gui(tmp)
+            with self._patched(), patch("subprocess.Popen") as popen:
+                self.handler.restart_freecad({"save_documents": False})
+                self.submitted[0][1]()
+            doc.save.assert_not_called()
+            self.assertEqual(self._norm(popen.call_args.args[0]), self._norm([exe, doc.FileName]))
+
+    def test_reopen_documents_false_spawns_bare(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _doc, exe = self._gui(tmp)
+            with self._patched(), patch("subprocess.Popen") as popen:
+                self.handler.restart_freecad({"reopen_documents": False})
+                self.submitted[0][1]()
+            self.assertEqual(self._norm(popen.call_args.args[0]), self._norm([exe]))
+
+    def test_a_save_failure_propagates_from_the_job_and_spawns_nothing(self):
+        """The server's job runner records a raising task as status "error"
+        with its traceback; the job must raise, not swallow, and must not
+        spawn or schedule the close once a save has failed."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            doc, _exe = self._gui(tmp)
+            doc.save.side_effect = RuntimeError("disk full")
+            with self._patched(), patch("subprocess.Popen") as popen:
+                self.handler.restart_freecad({})
+                with self.assertRaises(RuntimeError):
+                    self.submitted[0][1]()
+            popen.assert_not_called()
+            self.qtcore.QTimer.singleShot.assert_not_called()
 
 
 if __name__ == "__main__":
