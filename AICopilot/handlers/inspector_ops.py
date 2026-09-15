@@ -21,7 +21,7 @@ import sys
 import FreeCAD
 from typing import Dict, Any, List, Optional
 
-from .base import BaseHandler
+from .base import BaseHandler, AICOPILOT_PREF_PATH
 
 
 _FALLBACK_PATHS = [
@@ -34,7 +34,7 @@ def _ensure_inspector_importable() -> str:
     """Add FC-tools to sys.path if needed. Returns the path used, or raises."""
     # 1. FreeCAD preference
     try:
-        pref = FreeCAD.ParamGet('User parameter:BaseApp/Preferences/Mod/AICopilot')
+        pref = FreeCAD.ParamGet(AICOPILOT_PREF_PATH)
         p = pref.GetString('InspectorPath', '')
         if p and os.path.isdir(p):
             if p not in sys.path:
