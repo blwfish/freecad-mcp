@@ -48,3 +48,18 @@ _HANDLER_CLASS_NAMES = {
     'view_ops': 'ViewOpsHandler',
     'document_ops': 'DocumentOpsHandler',
 }
+
+# The handlers whose constructors take the server's GUI task queues
+# (cls(server, gui_task_queue, gui_response_queue, log, capture)); every
+# other handler is cls(server, log, capture). The registry states WHICH,
+# next to WHAT exists, so the server never carries its own copy of the
+# family; tests/unit/test_handler_registry_gate.py derives the expected
+# kind from each class's own __init__ signature and fails on a mismatch.
+_GUI_SENSITIVE = frozenset({'view_ops', 'document_ops'})
+
+
+def module_names():
+    """Fully qualified module names in registry order: attr_name maps 1:1
+    onto handlers.<attr_name>. The reload iterates this; the derivation
+    lives here so the server never spells a `handlers.<x>` path itself."""
+    return tuple(f'handlers.{attr}' for attr in _HANDLER_CLASS_NAMES)

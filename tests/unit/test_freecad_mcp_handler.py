@@ -1810,6 +1810,143 @@ class TestReloadHandlersPreservesState:
             "(and any future reload) reads this same global"
         )
 
+    def test_a_handler_the_registry_no_longer_names_is_dropped_by_the_reload(self, server):
+        """The other direction of the stale-registry case: a handler REMOVED
+        from handler_registry.py must not stay attached and callable after a
+        hot reload. Simulated by leaving a de-listed instance on the server
+        under a name the on-disk registry does not have."""
+        server.retired_ops = MagicMock()
+        server._instantiated_handler_attrs = tuple(server._instantiated_handler_attrs) + ("retired_ops",)
+
+        snapshot = dict(sys.modules)
+        try:
+            self._drop_fake_handlers_package()
+            result = json.loads(server._reload_handlers())
+        finally:
+            sys.modules.clear()
+            sys.modules.update(snapshot)
+
+        assert "error" not in result, result
+        assert not hasattr(server, "retired_ops"), "a de-listed handler stayed attached after reload"
+
+    def test_every_method_resolves_through_the_reloaded_class_after_reload(self, server):
+        """No list of methods to rebind: the instance adopts the reloaded
+        class, so a method the old class never had is reachable, and a stale
+        instance-bound method left by an earlier per-name rebind is gone."""
+        old_cls = type(server)
+        server._execute_tool_inner = types.MethodType(lambda self, *a: "stale", server)
+
+        snapshot = dict(sys.modules)
+        try:
+            self._drop_fake_handlers_package()
+            result = json.loads(server._reload_handlers())
+        finally:
+            sys.modules.clear()
+            sys.modules.update(snapshot)
+
+        assert "error" not in result, result
+        assert type(server) is not old_cls
+        assert type(server).__name__ == "FreeCADSocketServer"
+        assert "_execute_tool_inner" not in vars(server), "the stale instance-bound method must be dropped"
+        assert server._execute_tool_inner is not None
+
+
+# ---------------------------------------------------------------------------
+# _adopt_reloaded_class + _instantiate_handlers own the server's method/handler sets
+# ---------------------------------------------------------------------------
+
+class TestAdoptReloadedClass:
+    """Hot reload: the live instance adopts the reloaded class, so the class is the register of
+    methods and nothing is enumerated (a hand list of ten method names had already missed one)."""
+
+    def test_every_method_old_or_new_resolves_through_the_reloaded_class(self, server, ss_module):
+        old_cls = type(server)
+        server.instance_uuid = "keep-me"                     # ordinary state survives
+        # The residue of an earlier per-name rebind on a long-running server: a bound method
+        # stored on the INSTANCE, which would shadow the new class's method.
+        server._execute_tool_inner = types.MethodType(lambda self, *a: "stale", server)
+        assert server._execute_tool_inner() == "stale"
+
+        class Reloaded(old_cls):
+            def _execute_tool_inner(self, *a):
+                return "new"
+            def _method_written_next_month(self):
+                return "reachable with zero edits"
+
+        # Called through the MODULE, never through the instance: on a live upgrade the instance
+        # still wears the old class, which has no such method.
+        dropped = ss_module._adopt_reloaded_class(server, Reloaded)
+
+        assert type(server) is Reloaded
+        assert dropped == ["_execute_tool_inner"]
+        assert "_execute_tool_inner" not in vars(server)
+        assert server._execute_tool_inner() == "new"
+        assert server._method_written_next_month() == "reachable with zero edits"
+        assert server.instance_uuid == "keep-me"
+        record = getattr(server, ss_module.HANDLER_RECORD_ATTR)
+        assert record                                         # the builder's record survives
+        assert all(hasattr(server, a) for a in record)
+
+    def test_adoption_keeps_non_method_state_and_unbound_callables(self, server, ss_module):
+        old_cls = type(server)
+        server._async_jobs["j1"] = {"status": "running"}
+        server.plain_callable = lambda: "not a bound method"
+        other = object()
+        server.foreign = types.MethodType(lambda s: "bound elsewhere", other)   # bound to ANOTHER object
+
+        dropped = ss_module._adopt_reloaded_class(server, old_cls)
+
+        assert dropped == []
+        assert server._async_jobs["j1"]["status"] == "running"
+        assert server.plain_callable() == "not a bound method"
+        assert server.foreign() == "bound elsewhere"
+
+
+class TestInstantiateHandlersOwnsTheSet:
+    """_instantiate_handlers owns the server's handler attributes in BOTH directions and takes the
+    GUI-sensitive fact from the registry, never from its own copy."""
+
+    def test_a_rebuild_removes_handlers_the_registry_no_longer_names(self, server, ss_module):
+        make = lambda *a: ("instance", a[0] is server)
+        server._instantiate_handlers({"alpha": make, "beta": make})
+        assert hasattr(server, "alpha") and hasattr(server, "beta")
+        # beta removed, alpha RENAMED to gamma: both old attributes must go, the record must follow.
+        server._instantiate_handlers({"gamma": make})
+        assert not hasattr(server, "beta"), "a handler removed from the registry stayed attached"
+        assert not hasattr(server, "alpha"), "a renamed handler's old attribute stayed attached"
+        assert server.gamma == ("instance", True)
+        assert getattr(server, ss_module.HANDLER_RECORD_ATTR) == ("gamma",)
+
+    def test_the_record_is_what_was_placed_never_a_second_read_of_the_registry(self, ss_module):
+        """A server that was never built carries no record, and a first build deletes nothing it
+        did not create."""
+        bare = ss_module.FreeCADSocketServer.__new__(ss_module.FreeCADSocketServer)
+        bare._gui_task_queue = bare._gui_response_queue = None
+        bare.unrelated = "keep me"
+        assert not hasattr(bare, ss_module.HANDLER_RECORD_ATTR)
+        bare._instantiate_handlers({"alpha": lambda *a: None})
+        assert bare.unrelated == "keep me"
+        assert getattr(bare, ss_module.HANDLER_RECORD_ATTR) == ("alpha",)
+
+    def test_gui_sensitive_handlers_get_the_queues_as_the_registry_says(self, server):
+        calls = {}
+
+        def cls_for(name):
+            def cls(*args):
+                calls[name] = args
+                return name
+            return cls
+
+        # The module the server's class was loaded from (the `server` and `ss_module` fixtures
+        # each import afresh, so the log/capture functions are compared within ONE module).
+        mod = sys.modules[type(server).__module__]
+        gui_attr = next(iter(mod._GUI_SENSITIVE))
+        plain_attr = next(a for a in mod._HANDLER_CLASS_NAMES if a not in mod._GUI_SENSITIVE)
+        server._instantiate_handlers({gui_attr: cls_for(gui_attr), plain_attr: cls_for(plain_attr)})
+        assert calls[gui_attr] == (server, server._gui_task_queue, server._gui_response_queue,
+                                   mod._log_operation, mod._capture_state)
+        assert calls[plain_attr] == (server, mod._log_operation, mod._capture_state)
+
 
 # ---------------------------------------------------------------------------
 # Interactive selection subsystem (UniversalSelector + continue_selection)
