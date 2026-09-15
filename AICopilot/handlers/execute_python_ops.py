@@ -18,7 +18,7 @@ if FreeCAD.GuiUp:
 else:
     FreeCADGui = None
 
-from .base import BaseHandler
+from .base import BaseHandler, autosave_before
 
 
 class ExecutePythonOpsHandler(BaseHandler):
@@ -139,15 +139,12 @@ class ExecutePythonOpsHandler(BaseHandler):
             pass
         namespace = self._python_namespace
 
-        # Auto-save active document before executing user code.
+        # Auto-save active document before executing user code, IF the
+        # operator allows it: the policy (preference, refusals, reporting)
+        # has one home in handlers.base.autosave_before; this is a member.
         # If the code triggers a crash (e.g., .check() on huge compounds,
         # boolean ops on 1000+ solids), the saved file survives.
-        try:
-            doc = FreeCAD.ActiveDocument
-            if doc and getattr(doc, 'FileName', ''):
-                doc.save()
-        except Exception:
-            pass  # non-fatal; proceed with execution
+        autosave_before(FreeCAD.ActiveDocument, "execute_python")
 
         result_value = None
         old_stdout = sys.stdout

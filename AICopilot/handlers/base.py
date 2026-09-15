@@ -26,6 +26,101 @@ def mm_min_to_mm_s(value):
     return float(value) / 60.0
 
 
+# ---------------------------------------------------------------------------
+# THE AUTOSAVE CHOKEPOINT — the one home for every UNREQUESTED document save.
+#
+# Two hand-written copies of "save the active document before crash-prone
+# work" lived in the addon: ExecutePythonOpsHandler.run_code and
+# save_before_risky_op.  Neither could be switched off, and on 2026-09-14
+# that rewrote a version-controlled CAD master three times in two minutes
+# while the operator was only reading it.  Members of the family now CALL
+# this function; they never save on their own.  tests/unit/
+# test_autosave_surface_gate.py enumerates every `.save(` on the surface and
+# fails on any site the register there does not claim.
+# ---------------------------------------------------------------------------
+AICOPILOT_PREF_PATH = 'User parameter:BaseApp/Preferences/Mod/AICopilot'
+AUTOSAVE_PREF_KEY = 'AutoSaveBeforeRiskyOp'
+AUTOSAVE_DEFAULT = True   # upstream behaviour: save unless the operator switches it off
+
+AUTOSAVE_OUTCOMES = frozenset({
+    'saved',             # the document was written to its FileName
+    'disabled',          # preference is off — nothing written
+    'no_document',       # nothing active to save
+    'unsaved_document',  # active document has no FileName — never invent a path
+    'pref_unreadable',   # the preference store could not be read — nothing written
+    'failed',            # save raised — reported, not swallowed
+})
+
+
+def _report(level: str, make_message) -> None:
+    """Write to the Report View and NEVER raise — including while BUILDING the
+    message.  `make_message` is a callable, so the formatting of hostile
+    values (an exception whose __str__ raises, a path object whose __format__
+    raises) happens inside this boundary and not in the caller's argument
+    list, where it would escape before any try could see it.  A logging
+    failure must not change an outcome that was already decided, and must not
+    stop the caller's own work — the Report View is a witness, not a
+    participant."""
+    try:
+        message = make_message()
+    except Exception:
+        message = f"[MCP] autosave: a report could not be formatted ({level})\n"
+    try:
+        getattr(FreeCAD.Console, level)(message)
+    except Exception:
+        pass
+
+
+def _autosave(doc, reason: str) -> str:
+    if doc is None:
+        return 'no_document'
+    path = getattr(doc, 'FileName', '') or ''
+    if not path:
+        return 'unsaved_document'
+    try:
+        enabled = FreeCAD.ParamGet(AICOPILOT_PREF_PATH).GetBool(AUTOSAVE_PREF_KEY, AUTOSAVE_DEFAULT)
+    except Exception as e:
+        _report('PrintWarning', lambda: (
+            f"[MCP] autosave[{reason}]: preference {AUTOSAVE_PREF_KEY} unreadable ({e}); "
+            f"NOT saving {path}\n"))
+        return 'pref_unreadable'
+    if not enabled:
+        _report('PrintLog', lambda: f"[MCP] autosave[{reason}]: disabled; not saving {path}\n")
+        return 'disabled'
+    try:
+        doc.save()
+    except Exception as e:
+        _report('PrintError', lambda: f"[MCP] autosave[{reason}]: save FAILED for {path}: {e}\n")
+        return 'failed'
+    _report('PrintMessage', lambda: f"[MCP] autosave[{reason}]: saved {path}\n")
+    return 'saved'
+
+
+def autosave_before(doc, reason: str) -> str:
+    """Save `doc` before crash-prone work IF the operator allows it.
+
+    Returns one of AUTOSAVE_OUTCOMES.  Never raises — the contract is held by
+    the boundary below, not by the hope that every attribute read and every
+    Report View write succeeds (a stale document wrapper raises on
+    `FileName`; a detached Report View can raise on print).  Never invents a
+    path for an unsaved document.  If the preference cannot be read, the
+    choice is unknown, and the only irreversible act here is the write — so it
+    refuses the write and says so.
+
+    `reason` names the caller for the Report View line ("execute_python",
+    "risky_op"), so an operator can tell which tool wrote a file.
+    """
+    try:
+        return _autosave(doc, reason)
+    except Exception as e:
+        # Reached only by an exception OUTSIDE the save call itself (the save
+        # has its own boundary above), so nothing is known to have been
+        # written: `failed` is the honest outcome and the cause is named —
+        # by type first, so a cause whose __str__ raises still gets a name.
+        _report('PrintError', lambda: f"[MCP] autosave[{reason}]: aborted before saving — {type(e).__name__}: {e}\n")
+        return 'failed'
+
+
 class BaseHandler:
     """Base class for all FreeCAD operation handlers.
 
@@ -275,19 +370,16 @@ class BaseHandler:
                 return path
         return ''
 
-    def save_before_risky_op(self, doc: FreeCAD.Document = None):
+    def save_before_risky_op(self, doc: FreeCAD.Document = None) -> str:
         """Auto-save document before a potentially crashy operation.
 
-        Boolean operations on large compounds can crash FreeCAD.
-        Saving first ensures the user doesn't lose work.
+        Boolean operations on large compounds can crash FreeCAD.  A member of
+        the autosave family: routes through `autosave_before`, which owns the
+        preference and the refusals.  Returns the chokepoint's outcome.
         """
         if doc is None:
             doc = FreeCAD.ActiveDocument
-        try:
-            if doc and getattr(doc, 'FileName', ''):
-                doc.save()
-        except Exception:
-            pass  # non-fatal
+        return autosave_before(doc, 'risky_op')
 
     def check_complexity(self, objs, max_solids=500, max_faces=10000):
         """Check if objects are too complex for boolean operations.

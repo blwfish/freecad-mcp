@@ -22,6 +22,14 @@ def mock_freecad(monkeypatch):
     fc.getUserAppDataDir = MagicMock(return_value="/tmp/fake_freecad")
     fc.Document = type("Document", (), {})  # type stub for annotations
 
+    # Preference store: an EMPTY store, so GetBool/GetString return the
+    # default the caller passed. A test that needs a set preference replaces
+    # fc.ParamGet on this fixture (see test_base_handler.TestAutosaveBefore).
+    pref = MagicMock()
+    pref.GetBool = MagicMock(side_effect=lambda key, default=False: default)
+    pref.GetString = MagicMock(side_effect=lambda key, default="": default)
+    fc.ParamGet = MagicMock(return_value=pref)
+
     # Create mock FreeCADGui
     fcgui = types.ModuleType("FreeCADGui")
 
