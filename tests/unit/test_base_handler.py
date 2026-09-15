@@ -546,6 +546,188 @@ class TestSaveBeforeRiskyOp:
         mock_freecad.ActiveDocument = doc
         base_handler.save_before_risky_op()  # should not raise
 
+    def test_delegates_to_chokepoint_and_honours_preference(self, base_handler, mock_freecad):
+        """save_before_risky_op is a MEMBER of the autosave family, not a
+        second implementation of it: with the preference off it must not
+        save, and it must report the chokepoint's outcome."""
+        pref = MagicMock()
+        pref.GetBool = MagicMock(return_value=False)
+        mock_freecad.ParamGet = MagicMock(return_value=pref)
+        doc = MagicMock()
+        doc.FileName = "/tmp/test.FCStd"
+        mock_freecad.ActiveDocument = doc
+        outcome = base_handler.save_before_risky_op()
+        doc.save.assert_not_called()
+        assert outcome == "disabled"
+
+
+# ---------------------------------------------------------------------------
+# autosave_before — THE ONE chokepoint for every unrequested document save
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def base_module():
+    """Return the freshly imported handlers.base module."""
+    if "handlers.base" in sys.modules:
+        del sys.modules["handlers.base"]
+    import handlers.base as base
+    return base
+
+
+def _set_pref(mock_freecad, value):
+    pref = MagicMock()
+    pref.GetBool = MagicMock(return_value=value)
+    mock_freecad.ParamGet = MagicMock(return_value=pref)
+    return pref
+
+
+class TestAutosaveBefore:
+    def _doc(self, filename="/tmp/test.FCStd"):
+        doc = MagicMock()
+        doc.FileName = filename
+        doc.Name = "TestDoc"
+        return doc
+
+    def test_outcome_register_is_frozen_and_complete(self, base_module):
+        assert isinstance(base_module.AUTOSAVE_OUTCOMES, frozenset)
+        assert base_module.AUTOSAVE_OUTCOMES == frozenset({
+            "saved", "disabled", "no_document", "unsaved_document",
+            "pref_unreadable", "failed",
+        })
+
+    def test_default_preference_is_upstream_behaviour(self, base_module, mock_freecad):
+        """With no preference set, GetBool returns the default — and the
+        default must be the upstream behaviour (save), so an installation
+        that never touched the preference is unchanged."""
+        doc = self._doc()
+        outcome = base_module.autosave_before(doc, "unit")
+        assert base_module.AUTOSAVE_DEFAULT is True
+        mock_freecad.ParamGet.assert_called_with(base_module.AICOPILOT_PREF_PATH)
+        mock_freecad.ParamGet.return_value.GetBool.assert_called_with(
+            base_module.AUTOSAVE_PREF_KEY, base_module.AUTOSAVE_DEFAULT)
+        doc.save.assert_called_once()
+        assert outcome == "saved"
+
+    def test_preference_path_is_the_addon_preference_group(self, base_module):
+        assert base_module.AICOPILOT_PREF_PATH == "User parameter:BaseApp/Preferences/Mod/AICopilot"
+        assert base_module.AUTOSAVE_PREF_KEY == "AutoSaveBeforeRiskyOp"
+
+    def test_disabled_never_saves(self, base_module, mock_freecad):
+        _set_pref(mock_freecad, False)
+        doc = self._doc()
+        assert base_module.autosave_before(doc, "unit") == "disabled"
+        doc.save.assert_not_called()
+
+    def test_enabled_saves_and_reports(self, base_module, mock_freecad):
+        _set_pref(mock_freecad, True)
+        doc = self._doc()
+        assert base_module.autosave_before(doc, "unit") == "saved"
+        doc.save.assert_called_once()
+        mock_freecad.Console.PrintMessage.assert_called()
+        msg = mock_freecad.Console.PrintMessage.call_args[0][0]
+        assert "autosave" in msg and "unit" in msg and "/tmp/test.FCStd" in msg
+
+    def test_no_document(self, base_module, mock_freecad):
+        _set_pref(mock_freecad, True)
+        assert base_module.autosave_before(None, "unit") == "no_document"
+
+    def test_unsaved_document_is_never_given_a_path(self, base_module, mock_freecad):
+        _set_pref(mock_freecad, True)
+        doc = self._doc(filename="")
+        assert base_module.autosave_before(doc, "unit") == "unsaved_document"
+        doc.save.assert_not_called()
+        doc.saveAs.assert_not_called()
+
+    def test_unreadable_preference_does_not_write(self, base_module, mock_freecad):
+        """An absence is not an observation: if the preference store cannot
+        be read we do not know the operator's choice, and the only act that
+        cannot be undone is the write — so refuse it, loudly."""
+        mock_freecad.ParamGet = MagicMock(side_effect=RuntimeError("no prefs"))
+        doc = self._doc()
+        assert base_module.autosave_before(doc, "unit") == "pref_unreadable"
+        doc.save.assert_not_called()
+        mock_freecad.Console.PrintWarning.assert_called()
+
+    def test_failed_save_is_reported_not_swallowed(self, base_module, mock_freecad):
+        _set_pref(mock_freecad, True)
+        doc = self._doc()
+        doc.save.side_effect = IOError("disk full")
+        assert base_module.autosave_before(doc, "unit") == "failed"
+        mock_freecad.Console.PrintError.assert_called()
+        assert "disk full" in mock_freecad.Console.PrintError.call_args[0][0]
+
+    # -- the never-raises contract is a BOUNDARY, not a hope --
+
+    def test_report_view_failure_after_a_successful_save_still_reports_saved(self, base_module, mock_freecad):
+        _set_pref(mock_freecad, True)
+        mock_freecad.Console.PrintMessage = MagicMock(side_effect=RuntimeError("report view gone"))
+        doc = self._doc()
+        assert base_module.autosave_before(doc, "unit") == "saved"
+        doc.save.assert_called_once()
+
+    def test_report_view_failure_on_unreadable_pref_still_refuses_the_write(self, base_module, mock_freecad):
+        mock_freecad.ParamGet = MagicMock(side_effect=RuntimeError("no prefs"))
+        mock_freecad.Console.PrintWarning = MagicMock(side_effect=RuntimeError("report view gone"))
+        doc = self._doc()
+        assert base_module.autosave_before(doc, "unit") == "pref_unreadable"
+        doc.save.assert_not_called()
+
+    def test_a_document_whose_filename_raises_is_failed_not_an_exception(self, base_module, mock_freecad):
+        """A stale FreeCAD wrapper raises on attribute access. The caller
+        (execute_python) must still run the user's code."""
+        _set_pref(mock_freecad, True)
+        doc = MagicMock()
+        type(doc).FileName = PropertyMock(side_effect=ReferenceError("stale wrapper"))
+        assert base_module.autosave_before(doc, "unit") == "failed"
+        doc.save.assert_not_called()
+        mock_freecad.Console.PrintError.assert_called()
+        assert "ReferenceError" in mock_freecad.Console.PrintError.call_args[0][0]
+
+    # -- and the boundary covers MESSAGE CONSTRUCTION, not only the print --
+
+    class _HostileError(Exception):
+        def __str__(self):
+            raise RuntimeError("stringify boom")
+
+    class _HostilePath(str):
+        """A FileName whose formatting raises — after the save has already happened."""
+        def __format__(self, spec):
+            raise RuntimeError("format boom")
+        def __str__(self):
+            raise RuntimeError("str boom")
+
+    def test_hostile_exception_on_filename_still_returns_failed(self, base_module, mock_freecad):
+        _set_pref(mock_freecad, True)
+        doc = MagicMock()
+        type(doc).FileName = PropertyMock(side_effect=self._HostileError())
+        assert base_module.autosave_before(doc, "unit") == "failed"
+        doc.save.assert_not_called()
+        # the report was still made, with a name for the cause
+        assert "_HostileError" in mock_freecad.Console.PrintError.call_args[0][0] or \
+               "could not be formatted" in mock_freecad.Console.PrintError.call_args[0][0]
+
+    def test_hostile_exception_from_the_preference_store_is_single_cause(self, base_module, mock_freecad):
+        mock_freecad.ParamGet = MagicMock(side_effect=self._HostileError())
+        doc = self._doc()
+        assert base_module.autosave_before(doc, "unit") == "pref_unreadable"
+        doc.save.assert_not_called()
+
+    def test_hostile_path_formatting_after_a_successful_save_still_reports_saved(self, base_module, mock_freecad):
+        _set_pref(mock_freecad, True)
+        doc = MagicMock()
+        doc.FileName = self._HostilePath("x.FCStd")
+        assert base_module.autosave_before(doc, "unit") == "saved"
+        doc.save.assert_called_once()
+
+    def test_every_return_is_a_registered_outcome(self, base_module, mock_freecad):
+        cases = []
+        _set_pref(mock_freecad, True); cases.append(base_module.autosave_before(self._doc(), "u"))
+        _set_pref(mock_freecad, False); cases.append(base_module.autosave_before(self._doc(), "u"))
+        cases.append(base_module.autosave_before(None, "u"))
+        cases.append(base_module.autosave_before(self._doc(""), "u"))
+        for c in cases:
+            assert c in base_module.AUTOSAVE_OUTCOMES
+
 
 # ---------------------------------------------------------------------------
 # check_complexity
