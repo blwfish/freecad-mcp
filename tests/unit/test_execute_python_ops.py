@@ -15,9 +15,10 @@ dedicated test alongside the behavior tests ported from the original file.
 
 import json
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from tests.unit._freecad_mocks import (
+    mock_FreeCAD,
     reset_mocks,
     make_handler,
 )
@@ -56,6 +57,38 @@ class TestExecutePython(unittest.TestCase):
     def _run_python(self, code):
         response = self.handler.execute({"code": code})
         return json.loads(response)
+
+    # -- the pre-run autosave routes through the ONE chokepoint --------------
+    # Measured 2026-09-14: run_code carried its own inline `doc.save()` and
+    # rewrote a version-controlled master on every call.  The policy has one
+    # home (handlers.base.autosave_before); this handler may only CALL it.
+
+    def _patched_autosave(self):
+        # Patch run_code's OWN globals (see test_diagnostics_ops for why a
+        # reload elsewhere in the session can orphan the sys.modules entry).
+        func_globals = self.handler.run_code.__func__.__globals__
+        return patch.dict(func_globals, {"autosave_before": MagicMock(return_value="disabled")}), func_globals
+
+    def test_run_code_routes_autosave_through_the_chokepoint_and_never_saves_itself(self):
+        doc = MagicMock()
+        doc.FileName = "/tmp/master.FCStd"
+        mock_FreeCAD.ActiveDocument = doc
+        ctx, func_globals = self._patched_autosave()
+        with ctx:
+            result = self._run_python("x = 1")
+            func_globals["autosave_before"].assert_called_once_with(doc, "execute_python")
+        self.assertIn("result", result)
+        doc.save.assert_not_called()
+        doc.saveAs.assert_not_called()
+
+    def test_chokepoint_is_called_even_with_no_document(self):
+        """The decision (no document -> no save) belongs to the chokepoint,
+        not to this caller: it is passed whatever is active, including None."""
+        mock_FreeCAD.ActiveDocument = None
+        ctx, func_globals = self._patched_autosave()
+        with ctx:
+            self._run_python("x = 1")
+            func_globals["autosave_before"].assert_called_once_with(None, "execute_python")
 
     def test_expression_evaluation(self):
         result = self._run_python("1 + 1")
