@@ -1104,7 +1104,7 @@ async def main():
                         "description": "Sketch operation to perform",
                         "enum": [
                             # Lifecycle
-                            "create_sketch", "close_sketch", "verify_sketch",
+                            "create_sketch", "close_sketch", "verify_sketch", "health_check",
                             # Geometry
                             "add_line", "add_circle", "add_rectangle", "add_arc",
                             "add_polygon", "add_slot", "add_fillet",
@@ -1665,7 +1665,10 @@ async def main():
         ),
         types.Tool(
             name="measurement_operations",
-            description="Inspect object geometry: face normals/centroids, bounding boxes, volume, surface area, center of mass, element counts",
+            description="Inspect object geometry: face normals/centroids, bounding boxes, volume, surface area, center of mass, element counts. "
+                        "diagnose_invalid_shape checks whether the object's Shape is topologically valid and, if not, traces back through "
+                        "the dependency graph to the upstream sketch(es) and runs a full health check on each -- use it on whatever object "
+                        "the symptom (a boolean-op failure, an opaque OCCT error on a specific face, etc.) actually showed up on.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1676,7 +1679,7 @@ async def main():
                             "list_faces", "get_bounding_box", "get_volume",
                             "get_surface_area", "get_center_of_mass",
                             "get_mass_properties", "count_elements",
-                            "check_solid", "measure_distance"
+                            "check_solid", "measure_distance", "diagnose_invalid_shape"
                         ]
                     },
                     "object_name": {"type": "string", "description": "Object to inspect"},

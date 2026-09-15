@@ -95,6 +95,36 @@ class SketchOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error closing sketch: {e}"
 
+    def health_check(self, args: Dict[str, Any]) -> str:
+        """Run every FreeCAD-provided sketch validity check and return one
+        structured, actionable report -- open/unclosed wire, invalid
+        constraints, degenerate geometry, missing Vertical/Horizontal
+        constraints, missing equality constraints. See
+        BaseHandler._sketch_health_check for what each check does and why.
+
+        Unlike verify_sketch (closed-profile-for-extrusion only), this
+        covers everything the native Validate Sketch dialog does, plus two
+        checks that dialog never wires up at all.
+        """
+        try:
+            sketch_name = args.get('sketch_name', '')
+
+            doc = self.get_document()
+            if not doc:
+                return "No active document"
+
+            sketch = self.get_object(sketch_name, doc)
+            if not sketch:
+                return f"Sketch not found: {sketch_name}"
+
+            if sketch.TypeId != 'Sketcher::SketchObject':
+                return f"Object {sketch_name} is not a sketch (type: {sketch.TypeId})"
+
+            return self._sketch_health_check(sketch)
+
+        except Exception as e:
+            return f"Error running sketch health check: {e}"
+
     def verify_sketch(self, args: Dict[str, Any]) -> str:
         """Verify sketch validity for extrusion/pad operations."""
         try:
