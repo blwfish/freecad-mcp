@@ -156,19 +156,30 @@ class DiagnosticsOpsHandler(BaseHandler):
         here rather than guessed at. See GlobalAIService in InitGui.py for
         the equivalent GUI-path lifecycle this would need to hook into.
 
-        The whole restart body runs on the Qt GUI thread as an async job
+        The restart body normally runs on the Qt GUI thread as an async job
         submitted through the server's one job chokepoint: saving documents
         is GUI-thread work, and a QTimer started from the socket thread
-        never fires (the previous version scheduled do_restart that way and
+        never fires (an earlier version scheduled do_restart that way and
         reported success while nothing restarted). The reply is the job
         submission -- the job id -- or a named failure if nothing was queued;
         it never claims the restart happened.
+
+        That path depends on the GUI thread actually being alive to run the
+        queued job, though -- and restart_freecad is also documented
+        elsewhere (poll_job/cancel_job's "GUI thread may still be blocked"
+        guidance) as THE recovery tool for a genuinely hung Qt main thread,
+        e.g. stuck inside a long OCCT boolean call that never returns to
+        the event loop. Queuing a job in that state would just sit at
+        "running" forever -- the exact silent-failure shape this method
+        exists to fix, relocated rather than solved. So the GUI heartbeat
+        is checked first: if it's stale, this skips the queue entirely and
+        falls back to _restart_unresponsive_gui, which needs nothing from
+        the GUI thread to work.
         """
         if not FreeCAD.GuiUp:
             return json.dumps({"error": "restart_freecad is not available in headless mode"})
 
         import shutil
-        import subprocess
 
         save_docs = args.get("save_documents", True)
         reopen_docs = args.get("reopen_documents", True)
@@ -183,6 +194,11 @@ class DiagnosticsOpsHandler(BaseHandler):
         )
         if not fc_bin:
             return json.dumps({"error": "Cannot find FreeCAD binary for restart"})
+
+        if self.server._gui_unresponsive_error() is not None:
+            return self._restart_unresponsive_gui(fc_bin, reopen_docs)
+
+        import subprocess
 
         def restart_job():
             doc_paths = []
@@ -206,3 +222,61 @@ class DiagnosticsOpsHandler(BaseHandler):
             }
 
         return self.server._submit_async_job("restart_freecad", restart_job)
+
+    def _restart_unresponsive_gui(self, fc_bin: str, reopen_docs: bool) -> str:
+        """Recovery path for restart_freecad when the Qt GUI thread itself
+        is unresponsive (stale heartbeat) -- see restart_freecad's
+        docstring for why this can't go through the normal GUI-thread job
+        queue. Runs entirely on the calling (socket) thread: read-only
+        document inspection, spawning the replacement process, and exiting
+        this one, none of which need the Qt event loop to be alive.
+
+        Deliberately does NOT call doc.save(). Writing to a document from
+        this thread while the GUI thread may be mid-mutation of that same
+        document -- plausibly the actual cause of it being stuck -- is a
+        real corruption risk, and the whole reason this path exists is that
+        we can no longer safely ask the GUI thread to do it for us instead.
+        Any unsaved work in the stuck instance is genuinely at risk here;
+        the response says so rather than implying a normal, safe restart.
+
+        threading.Timer + os._exit() (not QTimer, not the GUI task queue):
+        both work unconditionally regardless of whether the Qt event loop,
+        or any other thread, is responding at all.
+        """
+        import subprocess
+        import threading
+
+        doc_paths = []
+        if reopen_docs:
+            try:
+                for doc in FreeCAD.listDocuments().values():
+                    path = doc.FileName
+                    if path:
+                        doc_paths.append(path)
+            except Exception as e:
+                FreeCAD.Console.PrintWarning(
+                    f"[MCP] Could not read document paths during unresponsive-GUI restart: {e}\n"
+                )
+
+        try:
+            subprocess.Popen([fc_bin] + doc_paths, env=os.environ.copy(), start_new_session=True)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to spawn new FreeCAD instance: {e}"})
+
+        FreeCAD.Console.PrintWarning(
+            "[MCP] GUI thread unresponsive -- restarting WITHOUT saving; "
+            "any unsaved changes in the stuck instance are at risk.\n"
+        )
+        threading.Timer(0.5, lambda: os._exit(0)).start()
+
+        return json.dumps({
+            "result": (
+                f"GUI thread was unresponsive, so this restarted WITHOUT saving documents "
+                f"first (saving from outside the stuck GUI thread risks corrupting them). "
+                f"Reopened {len(doc_paths)} document(s) by their last-saved path. "
+                f"New instance will reconnect on same socket."
+            ),
+            "saved_documents": [],
+            "reopened_documents": doc_paths,
+            "gui_was_unresponsive": True,
+        })
