@@ -1,7 +1,8 @@
 # Measurement operation handlers for FreeCAD MCP
 
+import re
 import FreeCAD
-from typing import Dict, Any
+from typing import Any, Dict
 from .base import BaseHandler
 
 
@@ -11,8 +12,22 @@ class MeasurementOpsHandler(BaseHandler):
     _ALLOWED_OPERATIONS = frozenset({
         "measure_distance", "get_volume", "get_bounding_box", "get_mass_properties",
         "get_surface_area", "get_center_of_mass", "count_elements", "list_faces",
-        "check_solid", "diagnose_invalid_shape",
+        "check_solid", "diagnose_invalid_shape", "find_root_cause",
     })
+
+    # OCCT's own enum-like BOP error class names (e.g. "BOPAlgo_SelfIntersect"),
+    # embedded in the text shape.check(True) raises on failure as
+    # "Error in <ElementType>: <ErrorClass>" lines. Extracting this token is
+    # reading a structured identifier out of an exception message, not
+    # inferring meaning from prose -- see CLAUDE.md's "No Log Scraping" rule.
+    # The class name itself is NOT reliably one whitespace-free token --
+    # confirmed live 2026-09-15: the same FreeCAD build raises
+    # "BOPAlgo_InvalidCurveOnSurface" (underscore) from one call site and
+    # "BOPAlgo SelfIntersect" (space) from another -- so this captures the
+    # whole rest of the line rather than stopping at the first space, or
+    # "BOPAlgo SelfIntersect" silently truncates to just "BOPAlgo" and
+    # collides with every other space-separated class.
+    _BOP_ERROR_LINE = re.compile(r'Error in \w+:\s*(.+?)\s*$')
 
     def diagnose_invalid_shape(self, args: Dict[str, Any]) -> str:
         """Check whether object_name's Shape is topologically valid
@@ -69,6 +84,168 @@ class MeasurementOpsHandler(BaseHandler):
 
         except Exception as e:
             return f"Error diagnosing invalid shape: {e}"
+
+    def _classify_shape_findings(self, obj) -> Dict[str, Any]:
+        """Return every anomaly obj's OWN Shape shows, independent of its
+        inputs. Empty dict means clean. Keys are structured kinds:
+          'sketch_open_wire' -- str diagnosis (Sketcher::SketchObject only)
+          'null_shape'       -- str (Shape.isNull())
+          'invalid_topology' -- str (Shape.isValid() False)
+          'not_solid'        -- str (has Faces but zero Solids -- a Shell
+                                 or Face masquerading as a solid feature)
+          'bop_errors'       -- {error_class: count}, parsed from
+                                 shape.check(True) -- self-intersections,
+                                 invalid-curve-on-surface, etc.
+
+        Checks every anomaly independently rather than stopping at the
+        first one found -- a single object can be simultaneously not-solid
+        AND carrying inherited BOP errors, and find_root_cause needs both
+        signals to attribute each to the right place in the tree.
+        """
+        findings: Dict[str, Any] = {}
+
+        if obj.TypeId == 'Sketcher::SketchObject':
+            open_diag = self._diagnose_open_wires(obj)
+            if open_diag.strip():
+                findings['sketch_open_wire'] = open_diag
+            return findings
+
+        shape = getattr(obj, 'Shape', None)
+        if shape is None:
+            return findings
+        if shape.isNull():
+            findings['null_shape'] = "Shape is null (recompute likely failed)"
+            return findings
+
+        if not shape.isValid():
+            findings['invalid_topology'] = "Shape.isValid() == False (BRepCheck_Analyzer failure)"
+
+        if len(shape.Faces) > 0 and len(shape.Solids) == 0:
+            findings['not_solid'] = (
+                f"{len(shape.Faces)} face(s) / {len(shape.Shells)} shell(s) "
+                f"but 0 Solids -- produced a Shell/Face, not a Solid"
+            )
+
+        try:
+            shape.check(True)
+        except Exception as e:
+            counts: Dict[str, int] = {}
+            for line in str(e).splitlines():
+                m = self._BOP_ERROR_LINE.search(line)
+                if m:
+                    counts[m.group(1)] = counts.get(m.group(1), 0) + 1
+            findings['bop_errors'] = counts or {'unparsed': str(e)[:200]}
+
+        return findings
+
+    def find_root_cause(self, args: Dict[str, Any]) -> str:
+        """Walk object_name's full dependency subtree (via OutList) and
+        report which object(s) FIRST introduce each defect, instead of just
+        the symptom at object_name itself.
+
+        Exists because a boolean/CAM/export failure almost always surfaces
+        at the top of a dependency tree, but the actual defect is usually
+        several features upstream and out of context -- diagnosing it by
+        hand means running check_solid/check_geometry on every object in
+        the subtree one at a time until something flags (see
+        reference_revolve_shell_validity_open_wire.md and the "Compound"
+        investigation this operation grew out of). This automates that
+        walk: every shape-bearing object and every sketch in the subtree is
+        checked independently with the same primitives check_solid /
+        diagnose_invalid_shape / check_geometry already use, then an
+        object is only reported as a ROOT CAUSE for a given defect if none
+        of its own DIRECT inputs already show that same defect -- otherwise
+        it's reported as inheriting/propagating it, so fixing one upstream
+        object doesn't get reported N more times as N separate problems.
+
+        A subtree can have more than one INDEPENDENT root cause -- e.g. one
+        feature with a bad fillet, and separately, a downstream Compound
+        whose siblings don't quite meet at the seam. Both are reported,
+        each with their own propagation chain.
+        """
+        try:
+            object_name = args.get('object_name', '')
+
+            doc, obj, err = self.resolve_object(object_name)
+            if err:
+                return err
+
+            order = []
+            findings_by_name: Dict[str, Any] = {}
+            objects_by_name: Dict[str, Any] = {}
+            visited = set()
+
+            def walk(o, depth=0):
+                if o is None or o.Name in visited or depth > 60:
+                    return
+                visited.add(o.Name)
+                for upstream in getattr(o, 'OutList', []):
+                    walk(upstream, depth + 1)
+                if o.TypeId == 'Sketcher::SketchObject' or hasattr(o, 'Shape'):
+                    objects_by_name[o.Name] = o
+                    findings_by_name[o.Name] = self._classify_shape_findings(o)
+                    order.append(o.Name)
+
+            walk(obj)
+
+            flagged_names = [n for n in order if findings_by_name[n]]
+            if not flagged_names:
+                return (f"{object_name}: no anomalies found across "
+                        f"{len(order)} shape-bearing object(s) in its dependency subtree.")
+
+            def immediate_flagged_inputs(name):
+                return [u.Name for u in getattr(objects_by_name[name], 'OutList', [])
+                        if u.Name in findings_by_name and findings_by_name[u.Name]]
+
+            root_blocks = []
+            propagating_lines = []
+
+            for name in flagged_names:
+                own = findings_by_name[name]
+                input_findings = [findings_by_name[i] for i in immediate_flagged_inputs(name)]
+
+                new_kinds: Dict[str, Any] = {}
+                for kind, detail in own.items():
+                    if kind == 'bop_errors':
+                        upstream_classes = set()
+                        for inp_f in input_findings:
+                            upstream_classes.update(inp_f.get('bop_errors', {}).keys())
+                        new_classes = {c: n for c, n in detail.items() if c not in upstream_classes}
+                        if new_classes:
+                            new_kinds['bop_errors'] = new_classes
+                    elif not any(kind in inp_f for inp_f in input_findings):
+                        new_kinds[kind] = detail
+
+                if new_kinds:
+                    o = objects_by_name[name]
+                    label2 = getattr(o, 'Label2', '') or ''
+                    header = f"{name} ({o.TypeId}" + (f", Label2='{label2}'" if label2 else "") + ")"
+                    lines = [f"ROOT CAUSE: {header}"]
+                    for kind, detail in new_kinds.items():
+                        if kind == 'bop_errors':
+                            for cls, count in detail.items():
+                                lines.append(f"  bop_errors: {cls} x{count}")
+                        else:
+                            lines.append(f"  {kind}: {detail}")
+                    root_blocks.append("\n".join(lines))
+                else:
+                    propagating_lines.append(
+                        f"  {name} ({objects_by_name[name].TypeId}) -- inherits: "
+                        + ", ".join(own.keys())
+                    )
+
+            lines = [f"Root-cause scan of {object_name}'s dependency subtree "
+                     f"({len(order)} object(s) checked, {len(flagged_names)} flagged):", ""]
+            lines.append("\n\n".join(root_blocks))
+            if propagating_lines:
+                lines.append(f"\n{len(propagating_lines)} downstream object(s) inheriting "
+                              f"the above (fix root cause(s) first, then recheck):")
+                lines.extend(propagating_lines)
+
+            return "\n".join(lines)
+
+        except Exception as e:
+            return f"Error finding root cause: {e}"
 
     def measure_distance(self, args: Dict[str, Any]) -> str:
         """Measure distance between two objects."""

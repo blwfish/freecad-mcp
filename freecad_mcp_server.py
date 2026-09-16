@@ -1668,7 +1668,11 @@ async def main():
             description="Inspect object geometry: face normals/centroids, bounding boxes, volume, surface area, center of mass, element counts. "
                         "diagnose_invalid_shape checks whether the object's Shape is topologically valid and, if not, traces back through "
                         "the dependency graph to the upstream sketch(es) and runs a full health check on each -- use it on whatever object "
-                        "the symptom (a boolean-op failure, an opaque OCCT error on a specific face, etc.) actually showed up on.",
+                        "the symptom (a boolean-op failure, an opaque OCCT error on a specific face, etc.) actually showed up on. "
+                        "find_root_cause walks object_name's entire dependency subtree (not the whole document) checking every object "
+                        "independently -- sketch wire closure, Shape.isValid(), solid-vs-shell, and the same BOP check the native Check "
+                        "Geometry dialog uses -- and reports which object(s) FIRST introduce each defect vs. which ones just inherited it, "
+                        "so a symptom that only shows up on e.g. a Compound doesn't get misdiagnosed as the Compound's own fault.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1679,7 +1683,8 @@ async def main():
                             "list_faces", "get_bounding_box", "get_volume",
                             "get_surface_area", "get_center_of_mass",
                             "get_mass_properties", "count_elements",
-                            "check_solid", "measure_distance", "diagnose_invalid_shape"
+                            "check_solid", "measure_distance", "diagnose_invalid_shape",
+                            "find_root_cause"
                         ]
                     },
                     "object_name": {"type": "string", "description": "Object to inspect"},
