@@ -392,7 +392,15 @@ warning anywhere. The steps above (`view_control` / `list_objects` /
 `measurement_operations` / `get_debug_logs`) don't surface these because
 the symptom is on the OCCT side, not the FreeCAD side.
 
-For diagnosing this class of failure (silent Boolean drops, edge-coincident
+Before reaching for an external library, try
+`measurement_operations(operation="find_root_cause", object_name="...")` —
+it walks the object's own dependency subtree and will already catch a bad
+`Fillet`, a `Revolution` silently producing a Shell instead of a Solid, or
+a `Compound` whose children only touch at a seam without being fused. See
+section 9 below for the full walkthrough, including why `check_solid`
+alone can miss all three.
+
+For diagnosing a deeper, subtler class of failure (silent Boolean drops, edge-coincident
 fuse failures, accumulated-history drift, deprecated-property warnings the
 user missed, orphaned-feature parametric-link breakage), see
 [Poirot2](https://github.com/blwfish/Poirot2) — a diagnostic library +
@@ -597,13 +605,64 @@ execute_python("""
 Objects in FreeCAD have dependencies — a Pad depends on a Sketch, a Boolean depends
 on its inputs. An invalid object invalidates everything downstream. Find the earliest
 invalid object in the dependency chain; fixing that one will often fix everything
-downstream automatically after recompute.
+downstream automatically after recompute. `measurement_operations(operation=
+"find_root_cause", object_name="...")` automates exactly this trace — see section 9
+below — so you don't have to walk `OutList` and re-check each object by hand.
 
 **Step 4 — Read the Report View:**
 ```
 view_control(operation="get_report_view", tail=50, filter="recompute")
 ```
 FreeCAD logs which objects failed recompute and why.
+
+---
+
+## 9. Diagnosing a Failure That Surfaced Far From Its Cause
+
+**Symptom:** A boolean operation, CAM job, or export fails (or FreeCAD's native
+Check Geometry reports errors) on an object built from many upstream features —
+a `Part::Compound`, a long chain of Fuse/Cut operations, a body assembled from
+several sketches and revolves — and `check_solid` or `diagnose_invalid_shape`
+on that object either reports "fine" or reports an error without saying which
+upstream feature actually caused it.
+
+**Step 1 — walk the object's own dependency subtree instead of guessing:**
+```
+measurement_operations(operation="find_root_cause", object_name="...")
+```
+This checks every sketch (open/unclosed wires — the same check `verify_sketch`
+runs) and every shape-bearing feature in that object's `OutList` subtree
+independently: null shape, `Shape.isValid()`, whether a feature that produced
+Faces actually produced any Solids (a `Revolution` or `Extrusion` with
+`Solid=False` silently produces a Shell instead), and `shape.check(True)` — the
+same boolean-operation check the native Check Geometry dialog runs, which
+catches self-intersections and invalid-curve-on-surface defects that
+`Shape.isValid()` alone misses. It reports which object(s) actually
+**introduced** each defect versus which ones are only **inheriting/
+propagating** it from upstream, so you get "the Fillet produced an invalid
+curve" instead of "the Compound is broken" — the object where the symptom
+showed up is rarely where the defect originated.
+
+**Step 2 — know check_solid's blind spot before trusting it alone:**
+
+`check_solid` (and `Shape.isValid()`) on a `Part::Compound`, or any object with
+multiple children, answers "does at least one Solid exist somewhere in this
+shape" — not "is every child actually a Solid." A Compound built from two real
+solids and one bare Shell (the `Solid=False` case above) will report **"Is a
+closed solid,"** because the check only requires *a* Solid to be present, not
+*all* children to be Solids. The same object can also pass `isClosed()`
+cleanly at the top level while containing a self-intersection that only
+exists at the seam between two touching-but-unfused children — neither defect
+shows up until something downstream assumes "this is a solid" and breaks.
+`find_root_cause` doesn't share this blind spot, because it checks each child
+independently rather than asking whether a Solid exists anywhere in the tree.
+
+**Step 3 — if find_root_cause finds nothing, or the failure looks like
+representation-layer drift rather than an obvious topology error:**
+
+See the Poirot2 pointer in section 4 above — that's a heavier, separate
+diagnostic library for a subtler class of failure (silent Boolean drops,
+accumulated-history corruption) than the one `find_root_cause` targets.
 
 ---
 
@@ -621,6 +680,11 @@ place usually propagates the problem to downstream features.
 `common`, call `measurement_operations(operation="check_solid")` on the result.
 Boolean operations on invalid input silently produce invalid output. Building further
 features on invalid geometry leads to cascading failures that are hard to diagnose.
+**On a `Part::Compound` or any result assembled from multiple children,
+`check_solid` only confirms that *a* Solid exists somewhere in the shape — not
+that every child is one** (see section 9). Use `find_root_cause` instead of a
+bare `check_solid` call whenever the object being checked has more than one
+meaningful child.
 
 **Use checkpoints before risky operations.** Before any operation that could crash
 or corrupt the document:
