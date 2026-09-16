@@ -55,12 +55,21 @@ import freecad_mcp_server
 # Shared server setup
 # ---------------------------------------------------------------------------
 
-def _build_server() -> Server:
-    """Run main() without starting stdio to get a Server with all handlers registered."""
+def _build_server() -> tuple[Server, dict]:
+    """Run main() without starting stdio to get a Server with all handlers
+    registered, plus whatever main() passed to Server.run() (notably
+    InitializationOptions, so tests can inspect what actually goes out on
+    the wire during the initialize handshake — e.g. `instructions`)."""
     captured: dict = {}
 
     async def noop_run(self, *args, **kwargs):
         captured["server"] = self
+        # main() calls server.run(read_stream, write_stream, init_options) —
+        # positionally, per the real call site.
+        if len(args) >= 3:
+            captured["init_options"] = args[2]
+        elif "initialization_options" in kwargs:
+            captured["init_options"] = kwargs["initialization_options"]
 
     @asynccontextmanager
     async def fake_stdio():
@@ -72,10 +81,10 @@ def _build_server() -> Server:
                 await freecad_mcp_server.main()
 
     asyncio.run(_setup())
-    return captured["server"]
+    return captured["server"], captured.get("init_options")
 
 
-_SERVER: Server = _build_server()
+_SERVER, _INIT_OPTIONS = _build_server()
 
 
 def _list_tools() -> list[types.Tool]:
@@ -358,3 +367,35 @@ class TestCamToolControllersToolNumberOmission:
             "anyway -- a JSON-schema default is leaking through the MCP "
             "dispatch layer"
         )
+
+
+# ---------------------------------------------------------------------------
+# initialize handshake — server-level `instructions`
+# ---------------------------------------------------------------------------
+
+
+class TestInitializeInstructions:
+    """`instructions` is the one channel that reaches every MCP client
+    regardless of which assistant/editor is on the other end (unlike
+    CLAUDE.md, which only Claude Code auto-loads, and only for someone who
+    has this exact repo checked out). Pin that it's actually wired up and
+    says the things it needs to say -- an empty or missing instructions
+    field defeats the entire point silently, with no error anywhere."""
+
+    def test_instructions_is_set(self):
+        assert _INIT_OPTIONS is not None, "main() didn't pass InitializationOptions positionally as expected"
+        assert isinstance(_INIT_OPTIONS.instructions, str)
+        assert len(_INIT_OPTIONS.instructions) > 0
+
+    def test_instructions_names_find_root_cause(self):
+        assert "find_root_cause" in _INIT_OPTIONS.instructions
+
+    def test_instructions_flags_the_check_solid_compound_blind_spot(self):
+        assert "check_solid" in _INIT_OPTIONS.instructions
+        assert "Compound" in _INIT_OPTIONS.instructions
+
+    def test_instructions_points_to_the_full_runbook(self):
+        assert "AGENT-DEBUGGING.md" in _INIT_OPTIONS.instructions
+
+    def test_instructions_mentions_verify_sketch(self):
+        assert "verify_sketch" in _INIT_OPTIONS.instructions
