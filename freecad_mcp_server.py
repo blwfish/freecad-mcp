@@ -893,6 +893,48 @@ except ImportError:
             return func
         return decorator
 
+
+# Sent verbatim in the `initialize` handshake's InitializeResult.instructions
+# field -- the one channel that reaches EVERY MCP client regardless of which
+# assistant or editor is on the other end, unlike this repo's own CLAUDE.md
+# (auto-loaded only by Claude Code, and only for someone who has this exact
+# repo checked out) or a human operator's private notes (never shipped at
+# all). Deliberately short -- this is the spec's own "hint to the model"
+# field, not a manual -- and deliberately points at AGENT-DEBUGGING.md for
+# the full runbook rather than trying to inline it here.
+#
+# Exists because of a concrete gap: diagnosing a live document in Sep 2026
+# needed manually walking a ~40-object dependency tree by hand, running
+# shape.check(True) at every level, before find_root_cause existed to
+# automate it -- and a Part::Compound's own check_solid()/isValid() reported
+# completely clean the whole time despite carrying a real defect, because
+# both checks ask "does a Solid exist somewhere in this shape" rather than
+# "is EVERY child actually a Solid". That's not a one-off fact about one
+# document; it's a standing blind spot in the two most obvious verification
+# calls, worth surfacing to every session before it burns another hour.
+BRIDGE_INSTRUCTIONS = (
+    "When a boolean, CAM, or export operation fails on an object built from "
+    "several upstream features, don't diagnose the object where the symptom "
+    "appeared -- call measurement_operations(operation=\"find_root_cause\", "
+    "object_name=<that object>). It walks that object's own dependency "
+    "subtree (not the whole document), checks every sketch (open/unclosed "
+    "wires) and every shape-bearing feature (null shape, topological "
+    "validity, shell-vs-solid, and the same boolean-operation check "
+    "FreeCAD's native Check Geometry dialog uses) independently, and "
+    "reports which object actually introduced each defect versus which ones "
+    "are just inheriting it downstream.\n\n"
+    "check_solid and Shape.isValid() on a Part::Compound (or any multi-child "
+    "container) can report clean even when one child is a Shell instead of "
+    "a Solid, or when siblings only touch at a seam without being fused -- "
+    "both checks ask whether a Solid exists somewhere in the shape, not "
+    "whether every child actually is one. find_root_cause checks each child "
+    "independently instead.\n\n"
+    "See AGENT-DEBUGGING.md for the full diagnostic runbook, and "
+    "sketch_operations(operation=\"verify_sketch\") to catch an open-wire "
+    "sketch before it ever reaches a Pad/Revolution."
+)
+
+
 async def main():
     """Run MCP server for FreeCAD integration"""
     try:
@@ -3304,6 +3346,7 @@ async def main():
                         notification_options=NotificationOptions(),
                         experimental_capabilities={},
                     ),
+                    instructions=BRIDGE_INSTRUCTIONS,
                 ),
             )
     finally:
