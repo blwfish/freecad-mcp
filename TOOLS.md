@@ -9,6 +9,7 @@ MCP tools for controlling FreeCAD, grouped by function.
 | Tool | Description |
 |---|---|
 | `check_freecad_connection` | Check whether FreeCAD is running with AICopilot loaded. Call this before any operation. |
+| `get_usage_guidance` | Read before your first other operation in a new session: known issues to avoid, best practices, and a strategy/tactics overview. No arguments, no side effects. |
 | `restart_freecad` | Save open documents, spawn a fresh FreeCAD instance, and exit the current one. Use when FreeCAD is unresponsive. |
 | `reload_modules` | Hot-reload all handler modules without restarting FreeCAD. Use after deploying updated code. |
 | `manage_connection` | Bridge-side diagnostics that work even when FreeCAD is down. Actions: `status` (connection health, crash-loop detection), `clear_recovery` (remove corrupt autosave files that cause crash loops), `validate_fcstd` (check a `.FCStd` file's ZIP integrity). |
