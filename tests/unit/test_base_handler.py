@@ -274,7 +274,10 @@ class TestResolveObject:
         doc, obj, err = base_handler.resolve_object("Box")
         assert doc is None
         assert obj is None
-        assert err == "No active document"
+        # Result-level escalation, same pattern as check_solid ->
+        # find_root_cause: the error names the exact fix, not just the problem.
+        assert "No active document" in err
+        assert "create_document" in err
 
     def test_fetches_active_document_when_none_given(self, base_handler, mock_freecad):
         obj = MagicMock(Label="Box")
@@ -389,6 +392,29 @@ class TestResolveObject:
 
         with pytest.raises(ValueError, match="Ambiguous label 'Tab'"):
             base_handler.resolve_object("Tab", doc)
+
+
+# ---------------------------------------------------------------------------
+# NO_ACTIVE_DOCUMENT_ERROR — shared constant used across every handler's
+# "no document yet" error (102 sites, 14 files, generalized from phrasing
+# already established ad-hoc in primitives.py/sketch_ops.py/mesh_ops.py).
+# Same result-level, same-task escalation pattern proven for check_solid ->
+# find_root_cause this session: name the fix in the response of the exact
+# call that just failed, not a separate channel.
+# ---------------------------------------------------------------------------
+
+
+class TestNoActiveDocumentError:
+    def test_names_the_actual_fix(self):
+        from handlers.base import NO_ACTIVE_DOCUMENT_ERROR
+        assert "create_document" in NO_ACTIVE_DOCUMENT_ERROR
+        assert "view_control" in NO_ACTIVE_DOCUMENT_ERROR
+
+    def test_get_document_failure_uses_the_shared_constant(self, base_handler, mock_freecad):
+        from handlers.base import NO_ACTIVE_DOCUMENT_ERROR
+        mock_freecad.ActiveDocument = None
+        doc, obj, err = base_handler.resolve_object("Box")
+        assert err == NO_ACTIVE_DOCUMENT_ERROR
 
 
 # ---------------------------------------------------------------------------

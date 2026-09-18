@@ -3,7 +3,7 @@
 import os
 import FreeCAD
 from typing import Dict, Any
-from .base import BaseHandler
+from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
 
 
 class DraftOpsHandler(BaseHandler):
@@ -200,7 +200,7 @@ class DraftOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             import Draft
 
@@ -250,7 +250,7 @@ class DraftOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             import Draft
 

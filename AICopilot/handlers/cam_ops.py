@@ -3,7 +3,7 @@
 import FreeCAD
 import time
 from typing import Dict, Any
-from .base import BaseHandler
+from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
 
 
 class CAMOpsHandler(BaseHandler):
@@ -1275,7 +1275,7 @@ class CAMOpsHandler(BaseHandler):
         """
         doc = self.get_document()
         if not doc:
-            raise RuntimeError("No active document")
+            raise RuntimeError(NO_ACTIVE_DOCUMENT_ERROR)
 
         job_name = args.get('job_name', '')
         job = self.get_object(job_name, doc) if job_name else None

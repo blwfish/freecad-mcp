@@ -4,7 +4,7 @@ import json
 import queue
 import FreeCAD
 from typing import Dict, Any
-from .base import BaseHandler
+from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
 
 # Conditional GUI import (not available in console/headless mode) -- see
 # base.py's identical pattern. An unconditional import here loads
@@ -106,7 +106,7 @@ class DocumentOpsHandler(BaseHandler):
         try:
             doc = FreeCAD.ActiveDocument
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             # Clamp pagination args. limit is a maximum: 0 legitimately means
             # "count only" (returns no objects), negative collapses to 0 — but it
@@ -261,7 +261,7 @@ class DocumentOpsHandler(BaseHandler):
 
             doc = FreeCAD.ActiveDocument
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             group = doc.addObject("App::DocumentObjectGroup", name)
 
@@ -294,7 +294,7 @@ class DocumentOpsHandler(BaseHandler):
 
             doc = FreeCAD.ActiveDocument
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             obj = self.get_object(object_name, doc)
             if not obj:
@@ -326,7 +326,7 @@ class DocumentOpsHandler(BaseHandler):
             label = args.get('name', 'default')
             doc = FreeCAD.ActiveDocument
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
             names = [obj.Name for obj in doc.Objects]
             if not hasattr(self, '_checkpoints'):
                 self._checkpoints = {}
@@ -347,7 +347,7 @@ class DocumentOpsHandler(BaseHandler):
                 return f"No checkpoint named '{label}'"
             doc = FreeCAD.ActiveDocument
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
             saved = set(self._checkpoints[label])
             to_remove = [obj.Name for obj in doc.Objects if obj.Name not in saved]
             for obj_name in to_remove:
@@ -395,7 +395,7 @@ class DocumentOpsHandler(BaseHandler):
 
             dst_doc = FreeCAD.ActiveDocument
             if not dst_doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             obj_name = name or f"{source_object}_ref"
             import Part
@@ -423,7 +423,7 @@ class DocumentOpsHandler(BaseHandler):
 
             doc = FreeCAD.ActiveDocument
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             obj = self.get_object(object_name, doc)
             if not obj:

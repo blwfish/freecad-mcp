@@ -4,7 +4,7 @@ import FreeCAD
 import json
 import math
 from typing import Dict, Any
-from .base import BaseHandler
+from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
 
 
 class SketchOpsHandler(BaseHandler):
@@ -76,7 +76,7 @@ class SketchOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
@@ -111,7 +111,7 @@ class SketchOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
@@ -132,7 +132,7 @@ class SketchOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
@@ -237,7 +237,7 @@ class SketchOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
@@ -266,7 +266,7 @@ class SketchOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
@@ -313,7 +313,7 @@ class SketchOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
@@ -369,7 +369,7 @@ class SketchOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
@@ -414,7 +414,7 @@ class SketchOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
@@ -476,7 +476,7 @@ class SketchOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
@@ -558,7 +558,7 @@ class SketchOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
@@ -616,7 +616,7 @@ class SketchOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
@@ -747,7 +747,7 @@ class SketchOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
@@ -771,7 +771,7 @@ class SketchOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
@@ -839,7 +839,7 @@ class SketchOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
