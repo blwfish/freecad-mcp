@@ -145,8 +145,9 @@ _FREECAD_SPEC = [
 ]
 _PART_SPEC = [
     'ArcOfCircle', 'Circle', 'export', 'Face', 'insert', 'LineSegment',
-    'makeBox', 'makeCompound', 'makeLongHelix', 'makePlane', 'makeSolid',
-    'makeWireString', 'Shape',
+    'makeBox', 'makeCompound', 'makeCone', 'makeCylinder', 'makeLongHelix',
+    'makePlane', 'makeSolid', 'makeSphere', 'makeTorus', 'makeWireString',
+    'Shape',
 ]
 _DRAFT_SPEC = [
     'make_clone', 'make_ortho_array', 'make_path_array', 'make_point_array',

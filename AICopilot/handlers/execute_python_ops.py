@@ -21,6 +21,51 @@ else:
 from .base import BaseHandler, autosave_before
 
 
+# CLAUDE.md's "prefer primary tool over execute_python" rule, made
+# observable instead of just documented -- same result-level, same-task
+# escalation pattern proven for check_solid -> find_root_cause and
+# verify_no_self_intersection this session (see other-llms/README.md,
+# sibling claude/ directory): name the dedicated tool in the response of
+# the exact call that just duplicated its job, not a separate channel.
+# Unlike those two, this is the one CLAUDE.md rule that was never actually
+# tested this session (the test case used was too obvious to distinguish
+# anything) -- shipping this is itself the test.
+_PRIMITIVE_MAKE_METHODS = {
+    'makeBox': 'part_operations(operation="box")',
+    'makeCylinder': 'part_operations(operation="cylinder")',
+    'makeSphere': 'part_operations(operation="sphere")',
+    'makeCone': 'part_operations(operation="cone")',
+    'makeTorus': 'part_operations(operation="torus")',
+}
+_BOOLEAN_METHODS = {
+    'fuse': 'part_operations(operation="fuse")',
+    'cut': 'part_operations(operation="cut")',
+    'common': 'part_operations(operation="common")',
+}
+
+
+def _detect_primary_tool_alternatives(tree: ast.AST) -> list:
+    """Walk the already-parsed AST for calls that duplicate a dedicated
+    tool's job. Returns a sorted list of (method_name, tool_suggestion)
+    pairs, empty if nothing matched.
+
+    AST-based, not string/regex matching, deliberately -- reuses the same
+    parse tree run_code() already builds to execute the code, the single
+    canonical representation of what it actually does (Syntactic-Semantic
+    Seam Rule): a regex over the raw text would drift from what the code
+    really calls (e.g. matching "makeBox" inside a comment or a string).
+    """
+    all_methods = {**_PRIMITIVE_MAKE_METHODS, **_BOOLEAN_METHODS}
+    found = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        method = node.func.attr
+        if method in all_methods:
+            found.add((method, all_methods[method]))
+    return sorted(found)
+
+
 class ExecutePythonOpsHandler(BaseHandler):
     """Handler for execute_python: parses/execs/evals user code in a
     persistent namespace, capturing stdout and the last expression's
@@ -183,6 +228,19 @@ class ExecutePythonOpsHandler(BaseHandler):
             parts.append(f"[FreeCAD Console]\n{console_stderr}")
         if result_value is not None:
             parts.append(repr(result_value))
+
+        # Only on success -- an already-failed call doesn't need a second
+        # thing to think about alongside its error.
+        matches = _detect_primary_tool_alternatives(tree)
+        if matches:
+            methods = ", ".join(m for m, _ in matches)
+            tools = ", ".join(sorted({tool for _, tool in matches}))
+            parts.append(
+                f"Tip: this code calls {methods} directly -- a dedicated "
+                f"tool already covers this with validation and GUI-thread "
+                f"dispatch safety: {tools}. Prefer it for future calls; "
+                f"keep execute_python for genuine one-offs."
+            )
 
         if parts:
             return {"success": True, "result": "\n".join(parts)}
