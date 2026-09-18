@@ -21,7 +21,7 @@ import sys
 import FreeCAD
 from typing import Dict, Any, List, Optional
 
-from .base import BaseHandler, AICOPILOT_PREF_PATH
+from .base import BaseHandler, AICOPILOT_PREF_PATH, NO_ACTIVE_DOCUMENT_ERROR
 
 
 _FALLBACK_PATHS = [

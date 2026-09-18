@@ -13,7 +13,7 @@
 
 import FreeCAD
 from typing import Dict, Any, Optional
-from .base import BaseHandler
+from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
 
 # Mirrors JointObject.JointTypes exactly (JointObject.py) -- index order is
 # load-bearing, since Joint(joint, type_index) takes a positional index, not
@@ -89,7 +89,7 @@ class AssemblyOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             assembly = doc.addObject("Assembly::AssemblyObject", name)
             # Not automatic: FreeCAD's own CommandCreateAssembly.py sets this by
@@ -150,7 +150,7 @@ class AssemblyOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             container = doc
             if container_name:
@@ -240,7 +240,7 @@ class AssemblyOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             src_search_doc = doc
             if source_doc:
@@ -337,7 +337,7 @@ class AssemblyOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             assembly, err = self._resolve_assembly(assembly_name, doc)
             if err:
@@ -569,7 +569,7 @@ class AssemblyOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             assembly, err = self._resolve_assembly(assembly_name, doc)
             if err:
@@ -680,7 +680,7 @@ class AssemblyOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             obj = self.get_object(object_name, doc)
             if not obj:
@@ -746,7 +746,7 @@ class AssemblyOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             assembly, err = self._resolve_assembly(assembly_name, doc)
             if err:
@@ -778,7 +778,7 @@ class AssemblyOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             assembly, err = self._resolve_assembly(assembly_name, doc)
             if err:
@@ -913,7 +913,7 @@ class AssemblyOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             obj = self.get_object(object_name, doc)
             if not obj:
@@ -1003,7 +1003,7 @@ class AssemblyOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             joint, err = self._resolve_joint(joint_name, doc)
             if err:
@@ -1054,7 +1054,7 @@ class AssemblyOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             joint, err = self._resolve_joint(joint_name, doc)
             if err:

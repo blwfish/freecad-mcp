@@ -2,7 +2,7 @@
 
 import FreeCAD
 from typing import Dict, Any
-from .base import BaseHandler
+from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
 
 
 class BooleanOpsHandler(BaseHandler):
@@ -19,7 +19,7 @@ class BooleanOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             # Get object references
             objs = []
@@ -66,7 +66,7 @@ class BooleanOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             # Get object references
             _, base_obj, err = self.resolve_object(base, doc, noun='Base object')
@@ -119,7 +119,7 @@ class BooleanOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             # Get object references
             objs = []

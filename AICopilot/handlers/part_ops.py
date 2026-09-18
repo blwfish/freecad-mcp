@@ -2,7 +2,7 @@
 
 import FreeCAD
 from typing import Dict, Any
-from .base import BaseHandler
+from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
 
 
 class PartOpsHandler(BaseHandler):
@@ -245,7 +245,7 @@ class PartOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch_objs = []
             for sketch_name in sketches:
@@ -280,7 +280,7 @@ class PartOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             _, profile, err = self.resolve_object(profile_sketch, doc, noun='Profile sketch')
             if err:
@@ -317,7 +317,7 @@ class PartOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             import Part
 
@@ -360,7 +360,7 @@ class PartOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             font = self.find_font(font_file)
             if not font:

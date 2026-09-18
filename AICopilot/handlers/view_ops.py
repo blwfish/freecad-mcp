@@ -4,7 +4,7 @@ import json
 import platform
 import FreeCAD
 from typing import Dict, Any
-from .base import BaseHandler
+from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
 
 # Conditional GUI import -- unconditional import here loaded Coin3D
 # regardless of GuiUp and could SIGSEGV on later weekly builds
@@ -87,7 +87,7 @@ class ViewOpsHandler(BaseHandler):
         """
         try:
             if not FreeCADGui.ActiveDocument:
-                return "No active document for view change"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             view_type = args.get('view_type', 'isometric').lower()
 
@@ -121,7 +121,7 @@ class ViewOpsHandler(BaseHandler):
         """
         try:
             if not FreeCADGui.ActiveDocument:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
             FreeCADGui.SendMsgToActiveView("ViewFit")
             return "View fitted to all objects"
         except Exception as e:
@@ -139,7 +139,7 @@ class ViewOpsHandler(BaseHandler):
                 FreeCADGui.activeDocument().activeView().zoomIn()
                 return "Zoomed in"
             else:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
         except Exception as e:
             return f"Error zooming in: {e}"
 
@@ -150,7 +150,7 @@ class ViewOpsHandler(BaseHandler):
                 FreeCADGui.activeDocument().activeView().zoomOut()
                 return "Zoomed out"
             else:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
         except Exception as e:
             return f"Error zooming out: {e}"
 
@@ -163,7 +163,7 @@ class ViewOpsHandler(BaseHandler):
 
             doc = FreeCAD.ActiveDocument
             if not doc:
-                return "Error: No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             obj = self.get_object(object_name, doc)
             if not obj:
@@ -250,13 +250,13 @@ class ViewOpsHandler(BaseHandler):
                 if not FreeCAD.GuiUp:
                     return json.dumps({"success": False, "error": "Screenshot not available in headless mode"})
                 if FreeCAD.ActiveDocument is None:
-                    return json.dumps({"success": False, "error": "No active document"})
+                    return json.dumps({"success": False, "error": NO_ACTIVE_DOCUMENT_ERROR})
             else:
                 if not FreeCAD.GuiUp:
                     return json.dumps({"success": False, "error": "Screenshot not available in headless mode"})
                 doc = FreeCADGui.activeDocument()
                 if doc is None:
-                    return json.dumps({"success": False, "error": "No active document"})
+                    return json.dumps({"success": False, "error": NO_ACTIVE_DOCUMENT_ERROR})
                 view = doc.activeView()
                 if view is None:
                     return json.dumps({"success": False, "error": "No active view"})
@@ -338,7 +338,7 @@ class ViewOpsHandler(BaseHandler):
                 return "Error: object_name parameter required"
             doc = FreeCAD.ActiveDocument
             if not doc:
-                return "Error: No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
             obj = self.get_object(object_name, doc)
             if not obj:
                 return f"Error: Object '{object_name}' not found"
@@ -355,7 +355,7 @@ class ViewOpsHandler(BaseHandler):
                 return "Error: object_name parameter required"
             doc = FreeCAD.ActiveDocument
             if not doc:
-                return "Error: No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
             obj = self.get_object(object_name, doc)
             if not obj:
                 return f"Error: Object '{object_name}' not found"
@@ -372,7 +372,7 @@ class ViewOpsHandler(BaseHandler):
                 return "Error: object_name parameter required"
             doc = FreeCAD.ActiveDocument
             if not doc:
-                return "Error: No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
             obj = self.get_object(object_name, doc)
             if not obj:
                 return f"Error: Object '{object_name}' not found"
@@ -421,7 +421,7 @@ class ViewOpsHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                return "Error: No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             object_name = args.get('object_name', '')
             force = bool(args.get('force', True))
@@ -462,7 +462,7 @@ class ViewOpsHandler(BaseHandler):
         try:
             doc = FreeCAD.ActiveDocument
             if not doc:
-                return "Error: No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
             doc.undo()
             return "Undo completed"
         except Exception as e:
@@ -473,7 +473,7 @@ class ViewOpsHandler(BaseHandler):
         try:
             doc = FreeCAD.ActiveDocument
             if not doc:
-                return "Error: No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
             doc.redo()
             return "Redo completed"
         except Exception as e:

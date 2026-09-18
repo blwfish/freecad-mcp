@@ -42,6 +42,17 @@ AICOPILOT_PREF_PATH = 'User parameter:BaseApp/Preferences/Mod/AICopilot'
 AUTOSAVE_PREF_KEY = 'AutoSaveBeforeRiskyOp'
 AUTOSAVE_DEFAULT = True   # upstream behaviour: save unless the operator switches it off
 
+# Shared single source of truth for the "no document exists yet" error,
+# matching the phrasing already established ad-hoc in primitives.py/
+# sketch_ops.py/mesh_ops.py -- generalizes it to every other handler's bare
+# `return "No active document"` (76 sites across 14 files, none of which
+# told the caller what to do about it). Same result-level, same-task
+# escalation pattern proven for check_solid -> find_root_cause this session
+# (9/10 vs 0/10 for redirecting to an unrelated tool instead): the fix
+# arrives in the response of the exact call that just failed, not a
+# separate channel the model has to go looking for.
+NO_ACTIVE_DOCUMENT_ERROR = "No active document. Call view_control(operation='create_document') first."
+
 AUTOSAVE_OUTCOMES = frozenset({
     'saved',             # the document was written to its FileName
     'disabled',          # preference is off — nothing written
@@ -300,7 +311,7 @@ class BaseHandler:
         if doc is None:
             doc = self.get_document()
         if not doc:
-            return None, None, "No active document"
+            return None, None, NO_ACTIVE_DOCUMENT_ERROR
 
         obj = self.get_object(object_name, doc)
         if not obj:
