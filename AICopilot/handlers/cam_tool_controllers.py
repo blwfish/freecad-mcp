@@ -3,7 +3,7 @@
 import FreeCAD
 import time
 from typing import Dict, Any
-from .base import BaseHandler, mm_min_to_mm_s
+from .base import BaseHandler, mm_min_to_mm_s, NO_ACTIVE_DOCUMENT_ERROR
 
 
 class CAMToolControllersHandler(BaseHandler):
@@ -44,7 +44,7 @@ class CAMToolControllersHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                error = Exception("No active document")
+                error = Exception(NO_ACTIVE_DOCUMENT_ERROR)
                 return self.log_and_return("add_tool_controller", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('job_name', '')
@@ -146,7 +146,7 @@ class CAMToolControllersHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                error = Exception("No active document")
+                error = Exception(NO_ACTIVE_DOCUMENT_ERROR)
                 return self.log_and_return("list_tool_controllers", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('job_name', '')
@@ -198,7 +198,7 @@ class CAMToolControllersHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                error = Exception("No active document")
+                error = Exception(NO_ACTIVE_DOCUMENT_ERROR)
                 return self.log_and_return("get_tool_controller", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('job_name', '')
@@ -269,7 +269,7 @@ class CAMToolControllersHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                error = Exception("No active document")
+                error = Exception(NO_ACTIVE_DOCUMENT_ERROR)
                 return self.log_and_return("update_tool_controller", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('job_name', '')
@@ -345,7 +345,7 @@ class CAMToolControllersHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                error = Exception("No active document")
+                error = Exception(NO_ACTIVE_DOCUMENT_ERROR)
                 return self.log_and_return("remove_tool_controller", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('job_name', '')

@@ -12,7 +12,7 @@ import math
 import re
 import FreeCAD
 from typing import Dict, Any, List, Tuple
-from .base import BaseHandler
+from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
 
 # OCCT Precision::Confusion() — the linear tolerance below which OCCT's boolean
 # operations consider two points identical.  Overlaps thinner than this in any
@@ -53,7 +53,7 @@ class SpatialOpsHandler(BaseHandler):
 
         doc = self.get_document()
         if not doc:
-            return None, None, None, "No active document"
+            return None, None, None, NO_ACTIVE_DOCUMENT_ERROR
 
         obj1 = self.get_object(obj1_name, doc)
         obj2 = self.get_object(obj2_name, doc)
@@ -419,7 +419,7 @@ class SpatialOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             # Resolve all objects, collecting non-solid warnings
             shapes = {}

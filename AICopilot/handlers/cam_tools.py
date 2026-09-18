@@ -3,7 +3,7 @@
 import FreeCAD
 import time
 from typing import Dict, Any, List
-from .base import BaseHandler
+from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
 
 
 class CAMToolsHandler(BaseHandler):
@@ -97,7 +97,7 @@ class CAMToolsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "Error: No active document to attach tool"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             # ToolBit.from_dict() hands "parameter" values straight to
             # PathUtil.setProperty() (Path/Tool/toolbit/models/base.py's

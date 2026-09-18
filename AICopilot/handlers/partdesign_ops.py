@@ -5,7 +5,7 @@ import math
 import FreeCAD
 import Part
 from typing import Dict, Any
-from .base import BaseHandler
+from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
 
 
 class PartDesignOpsHandler(BaseHandler):
@@ -21,7 +21,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
@@ -84,7 +84,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
@@ -150,7 +150,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             obj = self.get_object(object_name, doc)
             if not obj:
@@ -192,7 +192,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             obj = self.get_object(object_name, doc)
             if not obj:
@@ -238,7 +238,7 @@ class PartDesignOpsHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             obj = self.get_object(object_name, doc)
             if not obj:
@@ -293,7 +293,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             obj = self.get_object(object_name, doc)
             if not obj:
@@ -368,7 +368,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             obj = self.get_object(object_name, doc)
             if not obj:
@@ -415,7 +415,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             obj = self.get_object(object_name, doc)
             if not obj:
@@ -492,7 +492,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             base_obj = self.get_object(object_name, doc)
             if not base_obj:
@@ -657,7 +657,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             feature = self.get_object(feature_name, doc)
             if not feature:
@@ -766,7 +766,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             feature = self.get_object(feature_name, doc)
             if not feature:
@@ -864,7 +864,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             feature = self.get_object(feature_name, doc)
             if not feature:
@@ -978,7 +978,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
@@ -1071,7 +1071,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
@@ -1132,7 +1132,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch_objs = []
             for sketch_name in sketches:
@@ -1168,7 +1168,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             profile = self.get_object(profile_sketch, doc)
             if not profile:
@@ -1203,7 +1203,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             profile = self.get_object(profile_sketch, doc)
             if not profile:
@@ -1245,7 +1245,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch_objs = []
             body = None
@@ -1297,7 +1297,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             profile = self.get_object(profile_sketch, doc)
             if not profile:
@@ -1350,7 +1350,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             obj = self.get_object(object_name, doc)
             if not obj:
@@ -1384,7 +1384,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             obj = self.get_object(object_name, doc)
             if not obj:
@@ -1461,7 +1461,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             obj = self.get_object(object_name, doc)
             if not obj:
@@ -1510,7 +1510,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             obj = self.get_object(object_name, doc)
             if not obj:
@@ -1566,7 +1566,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             obj = self.get_object(object_name, doc)
             if not obj:
@@ -1599,7 +1599,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             obj = self.get_object(object_name, doc)
             if not obj:
@@ -1667,7 +1667,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
@@ -1777,7 +1777,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             sketch = self.get_object(sketch_name, doc)
             if not sketch:
@@ -1848,7 +1848,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             body = self.create_body_if_needed(doc)
             if not body:
@@ -1908,7 +1908,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             body = self.create_body_if_needed(doc)
             if not body:
@@ -1962,7 +1962,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             body = self.create_body_if_needed(doc)
             if not body:
@@ -2016,7 +2016,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             obj = self.get_object(object_name, doc)
             if not obj:
