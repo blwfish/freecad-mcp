@@ -363,6 +363,75 @@ class TestCheckSolid(unittest.TestCase):
 
         assert_success_contains(self, result, "Not a closed solid")
 
+    def test_single_input_no_escalation_note(self):
+        """One upstream input is the ordinary case (a Pad from one sketch,
+        say) -- not the multi-child-compound blind spot this note exists
+        for. Threshold: exactly 1 input must NOT trigger it."""
+        box = make_box_object("Box1")
+        box.OutList = [MagicMock(Name="Sketch")]
+        doc = make_mock_doc([box])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.check_solid({'object_name': 'Box1'})
+
+        self.assertNotIn("find_root_cause", result)
+
+    def test_zero_inputs_no_escalation_note(self):
+        box = make_box_object("Box1")
+        box.OutList = []
+        doc = make_mock_doc([box])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.check_solid({'object_name': 'Box1'})
+
+        self.assertNotIn("find_root_cause", result)
+
+    def test_two_inputs_and_clean_result_adds_escalation_note(self):
+        """Threshold: exactly 2 inputs (the boundary, not comfortably above
+        it) is enough to trigger -- this is the multi-child-compound shape
+        the note exists for."""
+        compound = make_box_object("Compound1")
+        compound.OutList = [MagicMock(Name="Part1"), MagicMock(Name="Part2")]
+        doc = make_mock_doc([compound])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.check_solid({'object_name': 'Compound1'})
+
+        assert_success_contains(self, result, "find_root_cause",
+                                "more than one upstream input")
+
+    def test_multiple_inputs_but_not_solid_suppresses_escalation_note(self):
+        """The note only makes sense when the check reported clean -- if
+        check_solid already found a problem, the model doesn't need
+        redirecting to a different tool."""
+        compound = make_box_object("Compound1")
+        compound.OutList = [MagicMock(Name="Part1"), MagicMock(Name="Part2")]
+        compound.Shape.isClosed = MagicMock(return_value=False)
+        doc = make_mock_doc([compound])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.check_solid({'object_name': 'Compound1'})
+
+        self.assertNotIn("find_root_cause", result)
+
+    def test_unconfigured_outlist_mock_does_not_crash(self):
+        """Regression guard for the exact bug class this note risked
+        introducing: OutList is guaranteed to be a real list on any live
+        FreeCAD object, but a test double (or, hypothetically, an SDK/API
+        edge case) that leaves it as an unconfigured MagicMock must not
+        blow up len() inside check_solid."""
+        box = make_box_object("Box1")
+        # Deliberately NOT setting box.OutList -- MagicMock auto-creates it
+        # as a non-list attribute, exactly the case the isinstance guard
+        # exists for.
+        doc = make_mock_doc([box])
+        mock_FreeCAD.ActiveDocument = doc
+
+        result = self.handler.check_solid({'object_name': 'Box1'})
+
+        assert_success_contains(self, result, "Is a closed solid", "Shape is valid")
+        self.assertNotIn("Error checking solid", result)
+
 
 class TestGetMassProperties(unittest.TestCase):
     def setUp(self):

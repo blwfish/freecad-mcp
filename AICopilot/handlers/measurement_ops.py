@@ -443,7 +443,43 @@ class MeasurementOpsHandler(BaseHandler):
             else:
                 status.append("Shape has errors")
 
-            return f"Solid check for {object_name}:\n  " + "\n  ".join(status)
+            result = f"Solid check for {object_name}:\n  " + "\n  ".join(status)
+
+            # This check only asks "does a Solid exist somewhere in the
+            # shape", not "is every child actually a Solid" -- on an object
+            # built from more than one upstream input (Part::Compound or any
+            # other multi-child container), a clean result here can still
+            # hide a Shell masquerading as a Solid among the children (see
+            # BRIDGE_INSTRUCTIONS in freecad_mcp_server.py). Only surface
+            # this when the check reported clean -- if it already found a
+            # problem, the model doesn't need redirecting.
+            #
+            # Empirically the strongest lever found for getting a model to
+            # actually use find_root_cause: escalation embedded in the
+            # result of the tool it just called (9/10, same-task, directly
+            # relevant) beat escalation redirecting from an unrelated tool
+            # toward unrelated general guidance (0/10, 0/10, 1/10 across
+            # three tries) -- see other-llms/README.md's "check_solid
+            # response escalation" experiment, sibling claude/ directory.
+            #
+            # OutList is guaranteed to be a real list on any live FreeCAD
+            # object; the isinstance guard exists only because unit-test
+            # mocks (tests/unit/_freecad_mocks.py) don't all set it
+            # explicitly, and an unconfigured MagicMock attribute would
+            # otherwise blow up len() here.
+            outlist = getattr(obj, 'OutList', None)
+            if is_solid and is_valid and isinstance(outlist, (list, tuple)) and len(outlist) > 1:
+                result += (
+                    "\n\nNote: this object has more than one upstream input. "
+                    "This check only verifies a Solid exists somewhere in the "
+                    "shape, not that every child is one -- for a boolean/CAM/"
+                    "export failure involving this object, "
+                    "measurement_operations(operation=\"find_root_cause\") "
+                    "checks each upstream object independently and is more "
+                    "likely to find the actual defect."
+                )
+
+            return result
 
         except Exception as e:
             return f"Error checking solid: {e}"
