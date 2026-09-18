@@ -1973,6 +1973,16 @@ class FreeCADSocketServer:
             # Document mutations — must run on GUI thread (recompute touches Qt)
             "rollback_to_checkpoint": self.document_ops.rollback_to_checkpoint,
             "insert_shape":           self.document_ops.insert_shape,
+            # create_group/make_link/make_link_array all doc.addObject() +
+            # doc.recompute(), same tree-mutation profile as insert_shape
+            # above. Implemented in document_ops.py since commit 51a6824 but
+            # never wired into any dispatcher — an oversight from the
+            # legacy-socket_server.py trim in d01546d, not an intentional
+            # removal (see git history: the methods and their tests never
+            # stopped existing, only the dispatch entries were dropped).
+            "create_group":           self.document_ops.create_group,
+            "make_link":              self.document_ops.make_link,
+            "make_link_array":        self.document_ops.make_link_array,
             # save()/saveAs() emit modified/title signals the GUI observes; on
             # macOS a save from the socket thread trips the main-thread assert.
             "save_document":          self.document_ops.save_document,
