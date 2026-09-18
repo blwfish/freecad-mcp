@@ -41,6 +41,7 @@ HANDLER_PY = os.path.join(REPO_ROOT, 'AICopilot', 'freecad_mcp_handler.py')
 BRIDGE_ONLY_TOOLS = frozenset({
     "check_freecad_connection",
     "test_echo",
+    "get_usage_guidance",
     "manage_connection",
     "spawn_freecad_instance",
     "list_freecad_instances",
