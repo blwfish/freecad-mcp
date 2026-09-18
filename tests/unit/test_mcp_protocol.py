@@ -399,3 +399,62 @@ class TestInitializeInstructions:
 
     def test_instructions_mentions_verify_sketch(self):
         assert "verify_sketch" in _INIT_OPTIONS.instructions
+
+
+# ---------------------------------------------------------------------------
+# tools/call — get_usage_guidance
+# ---------------------------------------------------------------------------
+
+
+class TestGetUsageGuidance:
+    """get_usage_guidance is a second, tool-schema-visible channel for the
+    same category of guidance as `instructions` above -- added because
+    LM Studio's MCP client was confirmed to silently drop the `instructions`
+    field entirely (fetches tool schemas, never surfaces `instructions` to
+    the model). A callable tool is the one channel verified to reach every
+    MCP client tested so far, not just spec-compliant ones."""
+
+    def test_tool_is_registered(self):
+        names = [t.name for t in _list_tools()]
+        assert "get_usage_guidance" in names
+
+    def test_tool_takes_no_required_arguments(self):
+        tool = next(t for t in _list_tools() if t.name == "get_usage_guidance")
+        assert tool.input_schema.get("required", []) == []
+
+    def test_response_is_valid_json(self):
+        content = _call_tool("get_usage_guidance")
+        parsed = json.loads(content[0].text)
+        assert isinstance(parsed, dict)
+
+    def test_response_has_all_four_top_level_keys(self):
+        # "Always present, even if empty" is the point -- avoid_these_issues
+        # existing but empty on some future call is a valid state; the key
+        # being silently absent is the failure mode this guards against.
+        parsed = json.loads(_call_tool("get_usage_guidance")[0].text)
+        for key in ("avoid_these_issues", "best_practices", "strategy", "tactics"):
+            assert key in parsed
+
+    def test_avoid_these_issues_is_a_list(self):
+        parsed = json.loads(_call_tool("get_usage_guidance")[0].text)
+        assert isinstance(parsed["avoid_these_issues"], list)
+
+    def test_avoid_these_issues_entries_have_confidence_field(self):
+        parsed = json.loads(_call_tool("get_usage_guidance")[0].text)
+        for entry in parsed["avoid_these_issues"]:
+            assert "issue" in entry
+            assert "guidance" in entry
+            assert "confidence" in entry
+
+    def test_avoid_these_issues_includes_find_root_cause(self):
+        # Same underlying finding as BRIDGE_INSTRUCTIONS -- confirmed
+        # empirically (other-llms/ experiments, sibling claude/ directory)
+        # to change tool choice, unlike the two rules that turned out stale.
+        parsed = json.loads(_call_tool("get_usage_guidance")[0].text)
+        assert any("find_root_cause" in e["guidance"] for e in parsed["avoid_these_issues"])
+
+    def test_best_practices_is_a_nonempty_list_of_strings(self):
+        parsed = json.loads(_call_tool("get_usage_guidance")[0].text)
+        assert isinstance(parsed["best_practices"], list)
+        assert len(parsed["best_practices"]) > 0
+        assert all(isinstance(item, str) for item in parsed["best_practices"])
