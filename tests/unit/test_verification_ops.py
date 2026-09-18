@@ -350,6 +350,79 @@ class TestVerifyNoSelfIntersection(unittest.TestCase):
         r = _parse(self.h.verify_no_self_intersection({'object_name': 'Box1'}))
         self.assertTrue(r['ok'], r['message'])
 
+    # --- multi-input escalation note (same false-negative shape as
+    # check_solid in measurement_ops.py -- this check only verifies THIS
+    # object's own shape, not every upstream input that built it) ---
+
+    def test_single_input_no_escalation_note(self):
+        """One upstream input is the ordinary case -- not the multi-child
+        blind spot this note exists for. Threshold: exactly 1 must NOT
+        trigger it."""
+        obj = make_part_object("Box1")
+        obj.Shape.isValid = MagicMock(return_value=True)
+        obj.Shape.check = MagicMock(return_value=None)
+        obj.OutList = [MagicMock(Name="Sketch")]
+        doc = make_mock_doc([obj])
+        mock_FreeCAD.ActiveDocument = doc
+
+        r = _parse(self.h.verify_no_self_intersection({'object_name': 'Box1'}))
+        self.assertNotIn('find_root_cause', r['message'])
+
+    def test_zero_inputs_no_escalation_note(self):
+        obj = make_part_object("Box1")
+        obj.Shape.isValid = MagicMock(return_value=True)
+        obj.Shape.check = MagicMock(return_value=None)
+        obj.OutList = []
+        doc = make_mock_doc([obj])
+        mock_FreeCAD.ActiveDocument = doc
+
+        r = _parse(self.h.verify_no_self_intersection({'object_name': 'Box1'}))
+        self.assertNotIn('find_root_cause', r['message'])
+
+    def test_two_inputs_and_clean_result_adds_escalation_note(self):
+        """Threshold: exactly 2 inputs is enough to trigger -- the
+        multi-child-compound shape the note exists for."""
+        obj = make_part_object("Compound1")
+        obj.Shape.isValid = MagicMock(return_value=True)
+        obj.Shape.check = MagicMock(return_value=None)
+        obj.OutList = [MagicMock(Name="Part1"), MagicMock(Name="Part2")]
+        doc = make_mock_doc([obj])
+        mock_FreeCAD.ActiveDocument = doc
+
+        r = _parse(self.h.verify_no_self_intersection({'object_name': 'Compound1'}))
+        self.assertTrue(r['ok'])
+        self.assertIn('find_root_cause', r['message'])
+        self.assertIn('more than one upstream input', r['message'])
+
+    def test_multiple_inputs_but_not_ok_suppresses_escalation_note(self):
+        """The note only makes sense when the check reported clean -- if it
+        already found a problem, the model doesn't need redirecting."""
+        obj = make_part_object("Compound1")
+        obj.Shape.isValid = MagicMock(return_value=False)
+        obj.Shape.check = MagicMock(return_value=None)
+        obj.OutList = [MagicMock(Name="Part1"), MagicMock(Name="Part2")]
+        doc = make_mock_doc([obj])
+        mock_FreeCAD.ActiveDocument = doc
+
+        r = _parse(self.h.verify_no_self_intersection({'object_name': 'Compound1'}))
+        self.assertFalse(r['ok'])
+        self.assertNotIn('find_root_cause', r['message'])
+
+    def test_unconfigured_outlist_mock_does_not_crash(self):
+        """Regression guard: OutList is guaranteed to be a real list on any
+        live FreeCAD object, but a test double that leaves it as an
+        unconfigured MagicMock must not blow up len() here."""
+        obj = make_part_object("Box1")
+        obj.Shape.isValid = MagicMock(return_value=True)
+        obj.Shape.check = MagicMock(return_value=None)
+        # Deliberately NOT setting obj.OutList.
+        doc = make_mock_doc([obj])
+        mock_FreeCAD.ActiveDocument = doc
+
+        r = _parse(self.h.verify_no_self_intersection({'object_name': 'Box1'}))
+        self.assertTrue(r['ok'], r['message'])
+        self.assertNotIn('Error', r['message'])
+
     # --- known-bad fixture ---
 
     def test_invalid_shape_fails(self):

@@ -403,6 +403,26 @@ class VerificationOpsHandler(BaseHandler):
             if ok:
                 msg = (f"Shape {object_name} is valid: no self-intersections detected. "
                        f"({face_count} faces, {solid_count} solids)")
+                # Same false-negative shape as check_solid (measurement_ops.py):
+                # this check only asks whether THIS object's own shape is
+                # self-intersection-free, not whether every upstream input that
+                # built it is too -- a clean result on a multi-input object
+                # (Part::Compound or similar) can still hide a defect in one of
+                # its children. Empirically the strongest lever found this
+                # session for getting a model to use find_root_cause: escalation
+                # in the result of the tool it just called (see
+                # other-llms/README.md, sibling claude/ directory).
+                outlist = getattr(obj, 'OutList', None)
+                if isinstance(outlist, (list, tuple)) and len(outlist) > 1:
+                    msg += (
+                        " Note: this object has more than one upstream input. "
+                        "This check only verifies THIS shape has no self-"
+                        "intersections, not that every upstream object is clean "
+                        "-- for a boolean/CAM/export failure involving this "
+                        "object, measurement_operations(operation=\"find_root_cause\") "
+                        "checks each upstream object independently and is more "
+                        "likely to find the actual defect."
+                    )
             else:
                 problems = []
                 if not is_valid:
