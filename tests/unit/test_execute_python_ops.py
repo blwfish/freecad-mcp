@@ -156,6 +156,66 @@ class TestExecutePython(unittest.TestCase):
         self.assertEqual(second["result"], "198")
 
 
+class TestPrimaryToolAlternativeDetection(unittest.TestCase):
+    """CLAUDE.md's "prefer primary tool over execute_python" rule, made
+    observable instead of just documented -- the one such rule never
+    actually tested this session (the earlier test case, adding a cylinder,
+    was too obvious a match to distinguish anything). Same result-level,
+    same-task escalation pattern as check_solid -> find_root_cause and
+    verify_no_self_intersection."""
+
+    def setUp(self):
+        reset_mocks()
+        server = MagicMock()
+        server.selector = MagicMock()
+        server._run_on_gui_thread = MagicMock(side_effect=_run_on_gui_thread_headless)
+        self.handler = make_handler(ExecutePythonOpsHandler, server=server)
+
+    def _run_python(self, code):
+        response = self.handler.execute({"code": code})
+        return json.loads(response)
+
+    def test_make_box_gets_a_tip(self):
+        result = self._run_python("Part.makeBox(10, 10, 10)")
+        self.assertIn("part_operations", result["result"])
+        self.assertIn("box", result["result"])
+
+    def test_make_cylinder_gets_a_tip(self):
+        result = self._run_python("Part.makeCylinder(5, 20)")
+        self.assertIn("part_operations", result["result"])
+        self.assertIn("cylinder", result["result"])
+
+    def test_boolean_fuse_gets_a_tip(self):
+        result = self._run_python("a = Part.makeBox(1, 1, 1)\nb = Part.makeBox(1, 1, 1)\na.fuse(b)")
+        self.assertIn("fuse", result["result"])
+
+    def test_unrelated_code_gets_no_tip(self):
+        result = self._run_python("x = 1 + 1")
+        self.assertNotIn("part_operations", result["result"])
+        self.assertNotIn("Tip:", result["result"])
+
+    def test_matching_call_that_errors_gets_no_tip(self):
+        """Only on success -- an already-failed call doesn't need a second
+        thing to think about alongside its error."""
+        result = self._run_python("Part.makeBox(1/0, 1, 1)")
+        self.assertIn("error", result)
+        self.assertNotIn("Tip:", str(result))
+
+    def test_multiple_matches_are_deduplicated(self):
+        """Calling the same primitive twice in one snippet must not repeat
+        the same tool suggestion twice."""
+        result = self._run_python("Part.makeBox(1,1,1)\nPart.makeBox(2,2,2)")
+        self.assertEqual(result["result"].count('part_operations(operation="box")'), 1)
+
+    def test_makebox_mentioned_only_inside_a_string_gets_no_tip(self):
+        """AST-based detection, not text search -- "makeBox" appearing
+        inside a string literal (not an actual call) must not match. This
+        is exactly the class of bug the Syntactic-Semantic Seam Rule exists
+        to prevent: a regex over raw text would have caught this."""
+        result = self._run_python("s = 'call Part.makeBox to make a box'\ns")
+        self.assertNotIn("Tip:", result["result"])
+
+
 class TestConsoleStderrCapture(unittest.TestCase):
     """FreeCAD's own C++ Console output (Console.PrintWarning/PrintError/
     etc, and warnings FreeCAD emits internally as a side effect of property
