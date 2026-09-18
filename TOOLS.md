@@ -57,7 +57,7 @@ MCP tools for controlling FreeCAD, grouped by function.
 | `geometric_verification` | Self-verify generated geometry: rotation matrix handedness (det ≈ +1), face normal orientation, OCCT-level shape validity (no self-intersections), and flexible topology constraints (face/edge/vertex counts, volume range). All operations return `{"ok": bool, "details": {...}, "message": str}`. |
 | `fixture_operations` | Snapshot-style geometric regression for generator output. `save_fixture` captures topology summary (face/edge/vertex counts, volume, bbox, is_solid, is_closed), STL export, optional screenshot, and `fixture.md` under `fixtures/<fixture_name>/`. `compare_to_fixture` compares current shape topology against the saved fixture, returning a structured diff with an `ok` boolean. Tolerances: counts exact; volume within 0.1%; bbox within 0.001 mm — all overridable. |
 | `run_inspector` | Run design-rule checks on the active document via the FC-tools inspector. |
-| `view_control` | View management, screenshots, document operations (create, save, undo/redo), object listing, checkpoint/rollback, cross-document shape insertion, clip planes (section views). |
+| `view_control` | View management, screenshots, document operations (create, save, undo/redo), object listing, checkpoint/rollback, cross-document shape insertion, clip planes (section views), document organization (`App::DocumentObjectGroup` groups, `App::Link` references and link arrays). |
 
 ---
 

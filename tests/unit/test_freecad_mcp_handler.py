@@ -1459,6 +1459,35 @@ class TestDispatchViewControlExtended:
             )
             assert result["result"] == "Opened document: Test"
 
+    def test_create_group_is_gui_op(self, server):
+        """create_group, make_link, and make_link_array were implemented in
+        document_ops.py (commit 51a6824) but dropped from the dispatch table
+        during the socket_server.py legacy trim (commit d01546d) and never
+        re-added -- callable methods with no route to reach them, exactly
+        like open_document above."""
+        with patch.object(server, '_call_on_gui_thread_async',
+                          return_value=json.dumps({"result": "Created group: Group"})):
+            result = json.loads(
+                server._dispatch_view_control({"operation": "create_group"})
+            )
+            assert result["result"] == "Created group: Group"
+
+    def test_make_link_is_gui_op(self, server):
+        with patch.object(server, '_call_on_gui_thread_async',
+                          return_value=json.dumps({"result": "Created link: Box_Link -> Box"})):
+            result = json.loads(
+                server._dispatch_view_control({"operation": "make_link"})
+            )
+            assert result["result"] == "Created link: Box_Link -> Box"
+
+    def test_make_link_array_is_gui_op(self, server):
+        with patch.object(server, '_call_on_gui_thread_async',
+                          return_value=json.dumps({"result": "Created link array: 3 instances of Box"})):
+            result = json.loads(
+                server._dispatch_view_control({"operation": "make_link_array"})
+            )
+            assert result["result"] == "Created link array: 3 instances of Box"
+
     def test_clip_plane_ops(self, server):
         for op in ("add_clip_plane", "remove_clip_plane"):
             with patch.object(server, '_run_on_gui_thread',
