@@ -114,7 +114,7 @@
 #                   message); headless_server.py went from 0% to 84% unit
 #                   coverage.
 
-__version__ = "7.6.0"
+__version__ = "8.0.0"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
