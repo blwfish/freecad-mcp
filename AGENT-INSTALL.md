@@ -26,6 +26,14 @@ There are two components to install:
 
 Both must be installed. FreeCAD must be running with the addon loaded for tools to work.
 
+The bridge also depends on [`mcp-events`](https://github.com/blwfish/mcp-events), a small
+structured-signaling package: instead of a soft failure (a response that couldn't be
+parsed as JSON, an image that couldn't be extracted, an instance whose metadata couldn't
+be enriched) getting silently swallowed or dumped into a free-text log line, it gets
+accumulated as a typed event and merged into that same tool call's response under a
+top-level `events` key. See [AGENT-DEBUGGING.md](AGENT-DEBUGGING.md)'s "Your Debugging
+Toolkit" section for how to read it.
+
 ## Prerequisites
 
 The following must be present on the system. Check each one. Install anything missing.
@@ -54,7 +62,8 @@ The MCP bridge runs on the system Python (not FreeCAD's bundled Python).
 
 ### 3. MCP Python packages (required)
 
-The bridge depends on the `mcp` and `mcp-events` packages.
+The bridge depends on the `mcp` package (protocol implementation) and `mcp-events`
+(structured warning signals — see Architecture above).
 
 **Install:** `pip3 install mcp>=2.0.0 mcp-events>=0.1.0`
 

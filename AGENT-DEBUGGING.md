@@ -36,6 +36,18 @@ arguments, duration, and a snapshot of the result or error.
  "result": "{\"status\": \"done\", \"result\": \"...\"}"}
 ```
 
+### A response's top-level `events` field
+
+Some tool responses carry a top-level `events` array even when the call otherwise
+looks like it succeeded — this is [`mcp-events`](https://github.com/blwfish/mcp-events),
+a structured-signaling package the bridge uses instead of swallowing a soft failure or
+burying it in a free-text log line. Today it fires for things like a FreeCAD response
+that couldn't be parsed as JSON, an image that couldn't be extracted from a response, or
+spawned-instance metadata that couldn't be enriched — none of which necessarily fail the
+call outright, but all of which explain a result that's present but incomplete or off.
+**Check for an `events` key before assuming a response with no `error` field is fully
+clean**, especially under "Operation Succeeded But Result Looks Wrong" below.
+
 ### `view_control(operation="get_report_view", tail=N, filter="...", clear=False)`
 
 Reads FreeCAD's Report View — the panel where FreeCAD logs recompute warnings, OCCT
