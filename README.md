@@ -46,7 +46,7 @@ parametric generator that tiles any roof surface from a spreadsheet of parameter
 
 > **FreeCAD version support:** All tools except CAM are supported on FreeCAD 1.1.x (current stable). CAM toolpath generation requires a current FreeCAD weekly development build (what used to be called "1.2-dev" before upstream moved to calendar-based versioning, e.g. `26.3.x`) — the Path workbench API changed incompatibly between 1.1 and the dev series. This project tracks the latest weekly.
 
-Developed on macOS with Claude Code. The code handles macOS, Windows, and Linux — other platforms *should* work but are less tested. PRs for other agents and platforms will be considered.
+Developed on macOS with Claude Code. The code handles macOS, Windows, and Linux — other platforms *should* work but are less tested. PRs for other agents and platforms will be considered. It's also been manually smoke-tested against LM Studio's native MCP client (`qwen/qwen2.5-coder-14b`, `qwen/qwen3-32b`, `google/gemma-4-e4b`) to confirm the protocol round-trips cleanly outside of Claude — see AGENT-INSTALL.md for details and caveats.
 
 Tell your AI agent:
 
