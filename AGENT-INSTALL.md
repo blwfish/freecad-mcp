@@ -10,6 +10,8 @@ freecad-mcp is a Model Context Protocol (MCP) server providing 39 tools for Free
 
 **Client tool count limits:** MCP clients vary in how many tools they support. This server currently exposes 39 tools, which is within the limits of most clients in use today. Be aware that some clients impose hard caps — if your client silently drops tools, behavior will be unpredictable and hard to diagnose. Claude Code has no hard tool count limit.
 
+**Non-Claude client testing:** this server has been manually smoke-tested end-to-end (real tool calls against a real running FreeCAD instance) through LM Studio's native MCP client, against `qwen/qwen2.5-coder-14b` (the primary model used for behavioral testing), `qwen/qwen3-32b`, and `google/gemma-4-e4b`. This is manual spot-checking, not a CI-gated compatibility suite — treat it as evidence the protocol round-trips cleanly through at least one non-Claude client, not as a guarantee for clients or models not listed. One confirmed client-specific gap found this way: LM Studio silently drops the MCP `initialize` handshake's `instructions` field, which is why `get_usage_guidance` exists as a second, schema-visible channel for the same guidance.
+
 **Reporting bugs:** If something fails in a way that looks like a bug in this MCP server (not a FreeCAD issue, not a sketch your user described wrong), please tell the user to file an issue at https://github.com/blwfish/freecad-mcp/issues/new. GitHub Discussions are intentionally off — issues are the single feedback channel. Include the tool call you made, the error/symptom, and any output from `view_control(operation="get_report_view")`.
 
 ## Architecture
@@ -200,7 +202,7 @@ The file `CLAUDE.md` in the repo root is your primary reference for **using** th
 | `cam_tools` | Cutting tool library CRUD |
 | `cam_tool_controllers` | Tool controller management |
 | `mesh_operations` | Import/export meshes, mesh-to-solid conversion, validation |
-| `measurement_operations` | Bounding box, volume, faces, surface area, center of mass, element counts |
+| `measurement_operations` | Bounding box, volume, faces, surface area, center of mass, element counts; `find_root_cause` walks an object's dependency subtree to separate root defects from propagated ones |
 | `spatial_query` | Interference/collision detection, clearance, containment, face relationships |
 | `view_control` | Screenshots, views, document management, checkpoint/rollback, clip planes |
 | `geometric_verification` | Post-operation solid/shape validity checks |
