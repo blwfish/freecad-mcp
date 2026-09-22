@@ -113,8 +113,27 @@
 #                   found and fixed a `set -e` bug hiding its own error
 #                   message); headless_server.py went from 0% to 84% unit
 #                   coverage.
+# Version: 8.1.0 - mcp-agent-notes integration: get_usage_guidance gained
+#                   strategy/tactics/find operations for full-detail lookup
+#                   by topic or free-text symptom, replacing the hand-
+#                   maintained payload; the initialize handshake's
+#                   instructions field is now rendered from the same
+#                   structured Notes. mcp-builder audit fix: _call_on_gui_
+#                   thread_async's task() wrapped ANY non-raising handler
+#                   return as success -- including the majority of handlers,
+#                   which catch their own exceptions internally and return a
+#                   plain "Error <doing X>: <e>" string instead of raising.
+#                   That string landed under poll_job's "result" key on a
+#                   "done" job, indistinguishable from genuine success; now
+#                   detected via the established "Error" prefix convention
+#                   and routed to the "error" key instead. Also from the
+#                   audit: macro_operations(list) gained the same limit/
+#                   offset/has_more pagination contract document_ops.
+#                   list_objects already established; continue_selection's
+#                   tool-schema description (what the model actually sees at
+#                   call time) now matches TOOLS.md's fuller phrasing.
 
-__version__ = "8.0.0"
+__version__ = "8.1.0"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
