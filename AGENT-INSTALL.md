@@ -237,10 +237,18 @@ The file `CLAUDE.md` in the repo root is your primary reference for **using** th
 
 ### Critical Rules
 
-1. **Always check connection first.** Call `check_freecad_connection()` before any other tool if you haven't verified the connection in this session.
-2. **Create documents before objects.** Use `view_control(operation="create_document")` before creating any geometry.
-3. **Use execute_python as escape hatch.** If a dedicated tool doesn't cover what you need, `execute_python` gives full access to FreeCAD's Python API.
-4. **Handle interactive selection.** Fillet, chamfer, and hole operations require edge/face selection — follow the `continue_selection` workflow described in CLAUDE.md.
+The list below is authored once as `CRITICAL` entries in `usage_guidance.py`'s
+`NOTES` — the same data that renders into the server's `initialize`
+handshake (`SERVER_INSTRUCTIONS`) and the `get_usage_guidance` tool. This
+section is a generated view of that data, not independently authored; run
+`python scripts/sync_agent_notes_docs.py` after changing a `CRITICAL` note
+and commit the result.
+
+<!-- agent-notes:critical -->
+1. Call check_freecad_connection() before any other operation -- confirms FreeCAD is running with AICopilot loaded before anything else can fail confusingly.
+2. When a boolean, CAM, or export operation fails on an object built from several upstream features, don't diagnose the object where the symptom appeared -- call measurement_operations(operation="find_root_cause", object_name=<that object>) instead.
+3. Don't use execute_python as a substitute for a dedicated tool method that already does the job -- e.g. don't call Part.extrude() via raw execute_python when partdesign_operations already has a pad/extrude operation.
+<!-- /agent-notes:critical -->
 
 ## Health and Debugging
 

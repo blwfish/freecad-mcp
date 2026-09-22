@@ -19,6 +19,9 @@ import urllib.request
 import uuid
 from typing import Any
 from mcp_events import event_context, emit_event
+from mcp_agent_notes import render_instructions
+
+import usage_guidance
 
 
 # =============================================================================
@@ -899,100 +902,16 @@ except ImportError:
 # assistant or editor is on the other end, unlike this repo's own CLAUDE.md
 # (auto-loaded only by Claude Code, and only for someone who has this exact
 # repo checked out) or a human operator's private notes (never shipped at
-# all). Deliberately short -- this is the spec's own "hint to the model"
-# field, not a manual -- and deliberately points at AGENT-DEBUGGING.md for
-# the full runbook rather than trying to inline it here.
-#
-# Exists because of a concrete gap: diagnosing a live document in Sep 2026
-# needed manually walking a ~40-object dependency tree by hand, running
-# shape.check(True) at every level, before find_root_cause existed to
-# automate it -- and a Part::Compound's own check_solid()/isValid() reported
-# completely clean the whole time despite carrying a real defect, because
-# both checks ask "does a Solid exist somewhere in this shape" rather than
-# "is EVERY child actually a Solid". That's not a one-off fact about one
-# document; it's a standing blind spot in the two most obvious verification
-# calls, worth surfacing to every session before it burns another hour.
-BRIDGE_INSTRUCTIONS = (
-    "When a boolean, CAM, or export operation fails on an object built from "
-    "several upstream features, don't diagnose the object where the symptom "
-    "appeared -- call measurement_operations(operation=\"find_root_cause\", "
-    "object_name=<that object>). It walks that object's own dependency "
-    "subtree (not the whole document), checks every sketch (open/unclosed "
-    "wires) and every shape-bearing feature (null shape, topological "
-    "validity, shell-vs-solid, and the same boolean-operation check "
-    "FreeCAD's native Check Geometry dialog uses) independently, and "
-    "reports which object actually introduced each defect versus which ones "
-    "are just inheriting it downstream.\n\n"
-    "check_solid and Shape.isValid() on a Part::Compound (or any multi-child "
-    "container) can report clean even when one child is a Shell instead of "
-    "a Solid, or when siblings only touch at a seam without being fused -- "
-    "both checks ask whether a Solid exists somewhere in the shape, not "
-    "whether every child actually is one. find_root_cause checks each child "
-    "independently instead.\n\n"
-    "See AGENT-DEBUGGING.md for the full diagnostic runbook, and "
-    "sketch_operations(operation=\"verify_sketch\") to catch an open-wire "
-    "sketch before it ever reaches a Pad/Revolution."
+# all). `usage_guidance.py` is the single authored source for this content
+# (mcp-agent-notes, mirroring kicad-mcp/jmri-mcp) -- render_instructions()
+# renders a small, bounded, priority/recency-sorted slice of it, deliberately
+# never the full detail (see its own docstring: it must stay small
+# regardless of corpus size).
+SERVER_INSTRUCTIONS = render_instructions(
+    usage_guidance.NOTES,
+    capability_statement=usage_guidance.CAPABILITY_STATEMENT,
+    query_tool_name=usage_guidance.QUERY_TOOL_NAME,
 )
-
-
-# Backing content for the get_usage_guidance tool -- a second, tool-schema-
-# visible channel for the same category of guidance as BRIDGE_INSTRUCTIONS
-# above, added because LM Studio's MCP client was confirmed (2026-09-18,
-# other-llms/README.md in the sibling claude/ directory) to silently drop the
-# `initialize` handshake's `instructions` field entirely -- fetches tool
-# schemas, never surfaces `instructions` to the model. A client that drops
-# that field still sees every tool in tools/list, so a callable tool is the
-# one channel empirically verified to reach every MCP client tested so far,
-# not just spec-compliant ones.
-#
-# Structure follows an "always present, even if empty" convention rather than
-# folding this into an existing tool's description: `avoid_these_issues` is
-# meant to hold zero items, not be silently absent, when nothing currently
-# needs a warning -- the empty-vs-missing distinction is the point (see the
-# CLAUDE.md Data-Capture rule this mirrors: no item gets a fourth label of
-# "didn't check").
-#
-# Each `avoid_these_issues` entry carries a `confidence` field distinguishing
-# an empirically-tested finding from an untested-but-reasonable rule --
-# earned the hard way this session: two other CLAUDE.md "Mandatory Rules"
-# (GIL deadlock on document creation, recompute-from-socket-thread) looked
-# identically severe in prose but turned out to be stale, already fixed at
-# the code level (base.py get_document(), freecad_mcp_handler.py's GUI-thread
-# dispatch chokepoint) -- confirmed by reading the code, not by asking the
-# model. Don't add an item here on suspicion alone; verify against the
-# current code first, the same way those two were ruled out.
-def _usage_guidance_payload() -> dict:
-    return {
-        "avoid_these_issues": [
-            {
-                "issue": "Diagnosing a failed boolean/CAM/export operation on the object where the symptom appeared, instead of its dependency tree",
-                "guidance": BRIDGE_INSTRUCTIONS,
-                "confidence": "confirmed gap -- tested empirically without this guidance present, a model defaults to check_solid/isValid on the symptom object every time, which is the specific case known to report false-clean results",
-            },
-        ],
-        "best_practices": [
-            "Call check_freecad_connection before any other operation -- confirms FreeCAD is running with AICopilot loaded before anything else can fail confusingly.",
-            "Create a document with view_control(operation=\"create_document\") in its own call before creating objects in it. A historical GIL deadlock this protected against has since been fixed in code (get_document() no longer auto-creates), but keeping the two calls separate still makes operation sequencing clear and easy to debug.",
-            "Prefer a dedicated tool method (part_operations, partdesign_operations, sketch_operations, etc.) over execute_python when one exists for the task -- primary methods carry validation and GUI-thread dispatch safety that ad-hoc code bypasses. execute_python is the right choice for genuine one-offs, debugging, and direct property edits that have no dedicated method.",
-        ],
-        "strategy": (
-            "This server drives a real, running FreeCAD instance for parametric CAD "
-            "modeling -- sketches, solids, booleans, assemblies, CAM toolpaths -- not "
-            "a headless geometry library. Prefer it over hand-written FreeCAD Python "
-            "scripts for anything that isn't a genuine one-off, since the dedicated "
-            "tools carry validation and thread-safety the raw API doesn't."
-        ),
-        "tactics": (
-            "Common workflow: check_freecad_connection -> view_control(create_document) "
-            "-> sketch_operations(create_sketch/add_geometry/add_constraint/close_sketch) "
-            "-> sketch_operations(verify_sketch) -> partdesign_operations(pad) or "
-            "part_operations(fuse/cut/common) for booleans. Use measurement_operations "
-            "to inspect geometry, spatial_query to check fit/collision, and "
-            "assembly_operations for multi-part joints. See a tool's own inputSchema "
-            "for its full operation enum -- this list is a starting point, not "
-            "exhaustive."
-        ),
-    }
 
 
 async def main():
@@ -1054,14 +973,34 @@ async def main():
         types.Tool(
             name="get_usage_guidance",
             description=(
-                "Read this before your first other operation in a new session: "
-                "known issues to avoid, general best practices, and a strategy/"
-                "tactics overview for using this server well. Costs nothing to "
-                "call, takes no arguments, has no side effects."
+                "Query onboarding knowledge: known gotchas, best practices, "
+                "workflow. Call with no arguments (operation=\"strategy\") "
+                "once at the start of a session -- costs nothing, no side "
+                "effects. operation=\"strategy\"(topic=None): tiered "
+                "overview of high-level guidance. operation=\"tactics\""
+                "(topic=None): list of tactical topics; "
+                "tactics(topic=\"...\") for full detail on one. "
+                "operation=\"find\"(problem=\"...\"): notes ranked by "
+                "relevance to a free-text problem description."
             ),
             inputSchema={
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["strategy", "tactics", "find"],
+                        "default": "strategy",
+                        "description": "Which query to run: strategy (default), tactics, or find.",
+                    },
+                    "topic": {
+                        "type": "string",
+                        "description": "Optional topic filter for strategy/tactics operations.",
+                    },
+                    "problem": {
+                        "type": "string",
+                        "description": "Free-text problem description, required for operation=\"find\".",
+                    },
+                },
             },
             annotations=types.ToolAnnotations(
                 readOnlyHint=True,
@@ -2758,9 +2697,14 @@ async def main():
             )]
 
         elif name == "get_usage_guidance":
+            args = arguments or {}
             return [types.TextContent(
                 type="text",
-                text=json.dumps(_usage_guidance_payload())
+                text=usage_guidance.query(
+                    args.get("operation", "strategy"),
+                    topic=args.get("topic"),
+                    problem=args.get("problem"),
+                )
             )]
 
         elif name == "restart_freecad":
@@ -3441,7 +3385,7 @@ async def main():
                         notification_options=NotificationOptions(),
                         experimental_capabilities={},
                     ),
-                    instructions=BRIDGE_INSTRUCTIONS,
+                    instructions=SERVER_INSTRUCTIONS,
                 ),
             )
     finally:

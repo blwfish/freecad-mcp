@@ -450,7 +450,8 @@ class MeasurementOpsHandler(BaseHandler):
             # built from more than one upstream input (Part::Compound or any
             # other multi-child container), a clean result here can still
             # hide a Shell masquerading as a Solid among the children (see
-            # BRIDGE_INSTRUCTIONS in freecad_mcp_server.py). Only surface
+            # the "find-root-cause-not-symptom" Note in usage_guidance.py).
+            # Only surface
             # this when the check reported clean -- if it already found a
             # problem, the model doesn't need redirecting.
             #

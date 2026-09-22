@@ -22,6 +22,12 @@ requires-python = ">=3.10"
 dependencies = [
     "mcp>=2.2.0",
     "mcp-events>=0.1.0",
+    # Not yet published to PyPI -- pinned to a commit, not a version, as a
+    # PEP 508 direct reference (not a [tool.uv.sources] override) so plain
+    # `pip install -e .` resolves it too, not just `uv sync`. Same pin as
+    # kicad-mcp and jmri-mcp use, for consistency across the three servers
+    # sharing this package.
+    "mcp-agent-notes @ git+https://github.com/blwfish/mcp-agent-notes.git@dd83adf8bb97755f91dbfcf857dbaeb987883f8f",
 ]
 
 [project.urls]
@@ -31,6 +37,13 @@ Issues = "https://github.com/blwfish/freecad-mcp/issues"
 
 [dependency-groups]
 dev = ["pytest>=9.1.1", "pip-audit>=2.10.1", "pytest-cov>=7.1.0"]
+
+[tool.hatch.metadata]
+# Required for the mcp-agent-notes PEP 508 direct reference above --
+# Hatchling refuses a `pkg @ url` dependency by default. (This repo has
+# package = false below so this table never actually triggers a build, but
+# uv still validates project metadata against it at sync/lock time.)
+allow-direct-references = true
 
 [tool.uv]
 # This repo ships as flat scripts + the AICopilot addon (no console-script

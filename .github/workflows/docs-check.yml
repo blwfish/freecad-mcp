@@ -14,6 +14,23 @@ jobs:
         with:
           fetch-depth: 2  # Need parent commit for diff
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install mcp-agent-notes@git+https://github.com/blwfish/mcp-agent-notes.git@dd83adf8bb97755f91dbfcf857dbaeb987883f8f
+
+      - name: Verify agent-notes critical-rules docs are in sync
+        run: |
+          python scripts/sync_agent_notes_docs.py
+          if ! git diff --exit-code; then
+            echo ""
+            echo "::error::AGENT-INSTALL.md's Critical Rules section is out of sync with usage_guidance.NOTES."
+            echo "Run 'python scripts/sync_agent_notes_docs.py' locally and commit the result."
+            exit 1
+          fi
+
       - name: Check if tool files changed without TOOLS.md update
         run: |
           # Get changed files vs parent commit

@@ -380,7 +380,14 @@ class TestInitializeInstructions:
     CLAUDE.md, which only Claude Code auto-loads, and only for someone who
     has this exact repo checked out). Pin that it's actually wired up and
     says the things it needs to say -- an empty or missing instructions
-    field defeats the entire point silently, with no error anywhere."""
+    field defeats the entire point silently, with no error anywhere.
+
+    Since the mcp-agent-notes migration, `instructions` is a compact,
+    priority/recency-sorted render (usage_guidance.NOTES via
+    render_instructions()) -- summaries only, never full detail. Full
+    detail (check_solid/Compound blind spot, AGENT-DEBUGGING.md pointer,
+    etc.) lives behind get_usage_guidance's tactics/find operations instead;
+    see TestGetUsageGuidance below."""
 
     def test_instructions_is_set(self):
         assert _INIT_OPTIONS is not None, "main() didn't pass InitializationOptions positionally as expected"
@@ -390,15 +397,14 @@ class TestInitializeInstructions:
     def test_instructions_names_find_root_cause(self):
         assert "find_root_cause" in _INIT_OPTIONS.instructions
 
-    def test_instructions_flags_the_check_solid_compound_blind_spot(self):
-        assert "check_solid" in _INIT_OPTIONS.instructions
-        assert "Compound" in _INIT_OPTIONS.instructions
-
-    def test_instructions_points_to_the_full_runbook(self):
-        assert "AGENT-DEBUGGING.md" in _INIT_OPTIONS.instructions
-
     def test_instructions_mentions_verify_sketch(self):
         assert "verify_sketch" in _INIT_OPTIONS.instructions
+
+    def test_instructions_has_capability_statement(self):
+        assert "freecad-mcp" in _INIT_OPTIONS.instructions
+
+    def test_instructions_points_to_the_query_tool(self):
+        assert "get_usage_guidance" in _INIT_OPTIONS.instructions
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +418,11 @@ class TestGetUsageGuidance:
     LM Studio's MCP client was confirmed to silently drop the `instructions`
     field entirely (fetches tool schemas, never surfaces `instructions` to
     the model). A callable tool is the one channel verified to reach every
-    MCP client tested so far, not just spec-compliant ones."""
+    MCP client tested so far, not just spec-compliant ones.
+
+    Backed by usage_guidance.query() (mcp-agent-notes strategy/tactics/find)
+    -- plain-text responses, not JSON; rendering/ranking logic itself is
+    tested upstream in that package."""
 
     def test_tool_is_registered(self):
         names = [t.name for t in _list_tools()]
@@ -422,39 +432,46 @@ class TestGetUsageGuidance:
         tool = next(t for t in _list_tools() if t.name == "get_usage_guidance")
         assert tool.input_schema.get("required", []) == []
 
-    def test_response_is_valid_json(self):
+    def test_default_operation_is_strategy(self):
+        default_result = _call_tool("get_usage_guidance")[0].text
+        explicit_result = _call_tool("get_usage_guidance", {"operation": "strategy"})[0].text
+        assert default_result == explicit_result
+
+    def test_strategy_returns_nonempty_text(self):
         content = _call_tool("get_usage_guidance")
-        parsed = json.loads(content[0].text)
-        assert isinstance(parsed, dict)
+        assert isinstance(content[0].text, str) and content[0].text
 
-    def test_response_has_all_four_top_level_keys(self):
-        # "Always present, even if empty" is the point -- avoid_these_issues
-        # existing but empty on some future call is a valid state; the key
-        # being silently absent is the failure mode this guards against.
-        parsed = json.loads(_call_tool("get_usage_guidance")[0].text)
-        for key in ("avoid_these_issues", "best_practices", "strategy", "tactics"):
-            assert key in parsed
+    def test_strategy_no_topic_includes_workflow_overview(self):
+        result = _call_tool("get_usage_guidance", {"operation": "strategy"})[0].text
+        assert "check_freecad_connection" in result
 
-    def test_avoid_these_issues_is_a_list(self):
-        parsed = json.loads(_call_tool("get_usage_guidance")[0].text)
-        assert isinstance(parsed["avoid_these_issues"], list)
+    def test_tactics_no_topic_lists_topics(self):
+        result = _call_tool("get_usage_guidance", {"operation": "tactics"})[0].text
+        assert "measurement" in result
 
-    def test_avoid_these_issues_entries_have_confidence_field(self):
-        parsed = json.loads(_call_tool("get_usage_guidance")[0].text)
-        for entry in parsed["avoid_these_issues"]:
-            assert "issue" in entry
-            assert "guidance" in entry
-            assert "confidence" in entry
+    def test_tactics_with_topic_surfaces_find_root_cause_detail(self):
+        # Same underlying finding as the pre-migration BRIDGE_INSTRUCTIONS --
+        # confirmed empirically (other-llms/ experiments, sibling claude/
+        # directory) to change tool choice, unlike rules that turned out
+        # stale. Full detail (not just the one-liner in `instructions`)
+        # lives behind this tactics(topic=...) call.
+        result = _call_tool("get_usage_guidance", {"operation": "tactics", "topic": "measurement"})[0].text
+        assert "find_root_cause" in result
+        assert "check_solid" in result
+        assert "Compound" in result
+        assert "AGENT-DEBUGGING.md" in result
 
-    def test_avoid_these_issues_includes_find_root_cause(self):
-        # Same underlying finding as BRIDGE_INSTRUCTIONS -- confirmed
-        # empirically (other-llms/ experiments, sibling claude/ directory)
-        # to change tool choice, unlike the two rules that turned out stale.
-        parsed = json.loads(_call_tool("get_usage_guidance")[0].text)
-        assert any("find_root_cause" in e["guidance"] for e in parsed["avoid_these_issues"])
+    def test_find_requires_problem(self):
+        result = _call_tool("get_usage_guidance", {"operation": "find"})[0].text
+        assert "error" in result
+        assert "problem" in result
 
-    def test_best_practices_is_a_nonempty_list_of_strings(self):
-        parsed = json.loads(_call_tool("get_usage_guidance")[0].text)
-        assert isinstance(parsed["best_practices"], list)
-        assert len(parsed["best_practices"]) > 0
-        assert all(isinstance(item, str) for item in parsed["best_practices"])
+    def test_find_with_problem(self):
+        result = _call_tool("get_usage_guidance", {"operation": "find", "problem": "undo did nothing"})[0].text
+        assert "checkpoint" in result.lower()
+
+    def test_unknown_operation(self):
+        result = _call_tool("get_usage_guidance", {"operation": "bogus"})[0].text
+        assert "error" in result
+        assert "unknown operation" in result
+        assert "strategy|tactics|find" in result
