@@ -1760,9 +1760,22 @@ class FreeCADSocketServer:
         def task():
             try:
                 result = method(args)
-                return {"success": True, "result": result}
             except Exception as e:
                 return {"error": f"{label} error: {e}", "error_id": self.diagnostics_ops.store_traceback(tb_module.format_exc())}
+            # Most handler methods catch their own exceptions internally and
+            # return a plain string starting with "Error" instead of raising
+            # -- tests/unit/_freecad_mocks.py's assert_success_contains
+            # already treats that prefix as the real success/failure signal,
+            # via s.startswith("Error"). Before this check, that string
+            # landed under the "result" key of a "done" job, indistinguishable
+            # from a genuine success by the time poll_job/send_to_freecad's
+            # caller sees it. No error_id here: the handler already swallowed
+            # its own traceback before returning the string, so there's
+            # nothing further to recover -- the string itself is the only
+            # diagnostic that survived.
+            if isinstance(result, str) and result.startswith("Error"):
+                return {"error": result, "error_id": None}
+            return {"success": True, "result": result}
         return self._submit_async_job(label, task)
 
     def _call_on_gui_thread_reload(self, timeout: float = 60.0) -> str:
