@@ -163,6 +163,91 @@ class TestList:
 
 
 # ---------------------------------------------------------------------------
+# list — pagination (mirrors test_document_ops.py's
+# TestListObjects/TestListObjectsDegeneratePagination for list_objects,
+# added after an mcp-builder audit flagged this as the one list-shaped tool
+# without the pagination pattern document_ops.list_objects established)
+# ---------------------------------------------------------------------------
+class TestListPagination:
+    def _make_macros(self, macro_dir, n):
+        for i in range(n):
+            _write_macro(macro_dir, f"macro{i:04d}.FCMacro", f"x = {i}")
+
+    def test_default_limit_and_offset(self, handler, macro_dir):
+        self._make_macros(macro_dir, 3)
+        result = json.loads(handler.list({}))
+        assert result["total"] == 3
+        assert result["count"] == 3
+        assert result["offset"] == 0
+        assert result["limit"] == 100
+        assert result["has_more"] is False
+
+    def test_limit_below_total(self, handler, macro_dir):
+        self._make_macros(macro_dir, 5)
+        result = json.loads(handler.list({"limit": 2}))
+        assert result["total"] == 5
+        assert result["count"] == 2
+        assert result["has_more"] is True
+
+    def test_offset_skips_matching_macros(self, handler, macro_dir):
+        self._make_macros(macro_dir, 5)
+        result = json.loads(handler.list({"offset": 3}))
+        assert result["offset"] == 3
+        assert result["count"] == 2
+        assert result["has_more"] is False
+
+    def test_limit_zero_returns_empty(self, handler, macro_dir):
+        """limit=0 returns zero macros; total still reports what's there so
+        the caller can detect truncation (total > count)."""
+        self._make_macros(macro_dir, 5)
+        result = json.loads(handler.list({"limit": 0}))
+        assert result["total"] == 5
+        assert result["count"] == 0
+        assert result["macros"] == []
+        assert result["total"] > result["count"]
+
+    def test_limit_negative_returns_empty(self, handler, macro_dir):
+        self._make_macros(macro_dir, 3)
+        result = json.loads(handler.list({"limit": -5}))
+        assert result["total"] == 3
+        assert result["count"] == 0
+
+    def test_offset_beyond_total_returns_empty(self, handler, macro_dir):
+        self._make_macros(macro_dir, 3)
+        result = json.loads(handler.list({"offset": 999}))
+        assert result["total"] == 3
+        assert result["count"] == 0
+        assert result["offset"] == 999
+
+    def test_limit_exactly_at_cap_unchanged(self, handler, macro_dir):
+        self._make_macros(macro_dir, 3)
+        result = json.loads(handler.list({"limit": 500}))
+        assert result["limit"] == 500
+
+    def test_limit_one_over_cap_clipped(self, handler, macro_dir):
+        result = json.loads(handler.list({"limit": 501}))
+        assert result["limit"] == 500
+
+    def test_cap_actually_limits_returned_macros(self, handler, macro_dir):
+        """The cap must limit the OUTPUT, not just the echoed `limit` field."""
+        self._make_macros(macro_dir, 501)
+        result = json.loads(handler.list({"limit": 500}))
+        assert result["count"] == 500
+        assert result["has_more"] is True
+
+    def test_include_hidden_and_pagination_compose(self, handler, macro_dir):
+        """total/has_more reflect the post-filter (include_hidden) set, not
+        the raw directory listing -- pagination slices the filtered list."""
+        _write_macro(macro_dir, ".hidden1.FCMacro", "x=1")
+        _write_macro(macro_dir, ".hidden2.FCMacro", "x=2")
+        _write_macro(macro_dir, "visible.FCMacro", "x=3")
+        result = json.loads(handler.list({"include_hidden": True, "limit": 2}))
+        assert result["total"] == 3
+        assert result["count"] == 2
+        assert result["has_more"] is True
+
+
+# ---------------------------------------------------------------------------
 # read
 # ---------------------------------------------------------------------------
 class TestRead:

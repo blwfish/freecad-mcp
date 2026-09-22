@@ -93,17 +93,30 @@ class MacroOpsHandler(BaseHandler):
 
         Args (optional):
             include_hidden — bool, default False. Include dotfiles.
+            limit — max macros to return (default 100, max 500).
+            offset — number of matching macros to skip (for pagination).
 
         Returns JSON:
             {
               "macro_dir": "/Users/.../Macro",
-              "count": N,
+              "total": N,        # macros matching the extension/hidden filter
+              "count": M,        # macros in this page (len(macros))
+              "offset": 0,
+              "limit": 100,
+              "has_more": false,
               "macros": [
                 {"name": "foo.FCMacro", "size": 1234, "modified": "2026-04-28T12:00:00",
                  "preview": "first non-blank line"},
                 ...
               ]
             }
+
+        limit/offset mirror document_ops.list_objects's pagination contract
+        (same clamp: limit in [0, 500], offset >= 0) -- added after an
+        mcp-builder audit noted this was the one list-shaped tool in the
+        router surface without it. User macro directories are typically
+        small, so this is a consistency fix more than a load-bearing one,
+        but an unbounded listing has no truncation signal at all otherwise.
         """
         macro_dir = _safe_macro_dir()
         if not macro_dir:
@@ -111,27 +124,43 @@ class MacroOpsHandler(BaseHandler):
         if not os.path.isdir(macro_dir):
             return json.dumps({
                 "macro_dir": macro_dir,
+                "total": 0,
                 "count": 0,
+                "offset": 0,
+                "limit": 100,
+                "has_more": False,
                 "macros": [],
                 "note": "Macro directory does not exist yet.",
             })
 
         include_hidden = bool(args.get("include_hidden", False))
-        macros: List[Dict[str, Any]] = []
+
+        # Same clamp as document_ops.list_objects: limit is a maximum (0
+        # legitimately means "count only"; negative collapses to 0, never a
+        # negative slice bound); offset can't be negative either (a negative
+        # offset would otherwise skip from the end of the list).
+        raw_limit = args.get("limit", 100)
+        limit = max(0, min(int(100 if raw_limit is None else raw_limit), 500))
+        raw_offset = args.get("offset", 0)
+        offset = max(0, int(0 if raw_offset is None else raw_offset))
 
         try:
             entries = sorted(os.listdir(macro_dir))
         except OSError as e:
             return json.dumps({"error": f"Could not list macro directory: {e}"})
 
-        for entry in entries:
-            if not include_hidden and entry.startswith("."):
-                continue
+        matching_names = [
+            entry for entry in entries
+            if (include_hidden or not entry.startswith("."))
+            and os.path.isfile(os.path.join(macro_dir, entry))
+            and entry.endswith(_MACRO_EXTENSIONS)
+        ]
+        total = len(matching_names)
+        page_names = matching_names[offset:offset + limit]
+
+        macros: List[Dict[str, Any]] = []
+        for entry in page_names:
             full = os.path.join(macro_dir, entry)
-            if not os.path.isfile(full):
-                continue
-            if not entry.endswith(_MACRO_EXTENSIONS):
-                continue
 
             try:
                 stat = os.stat(full)
@@ -158,7 +187,11 @@ class MacroOpsHandler(BaseHandler):
 
         return json.dumps({
             "macro_dir": macro_dir,
+            "total": total,
             "count": len(macros),
+            "offset": offset,
+            "limit": limit,
+            "has_more": offset + len(page_names) < total,
             "macros": macros,
         }, indent=2)
 
