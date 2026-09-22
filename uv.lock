@@ -509,6 +509,7 @@ version = "8.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "mcp" },
+    { name = "mcp-agent-notes" },
     { name = "mcp-events" },
 ]
 
@@ -522,6 +523,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "mcp", specifier = ">=2.2.0" },
+    { name = "mcp-agent-notes", git = "https://github.com/blwfish/mcp-agent-notes.git?rev=dd83adf8bb97755f91dbfcf857dbaeb987883f8f" },
     { name = "mcp-events", specifier = ">=0.1.0" },
 ]
 
@@ -674,6 +676,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/76/31/ac54fb0fdd5b37de7
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1b/ff/8e7eade68b8a28f7da0ed1085544341b51f9c935dbf6b95c76b7edfea6a0/mcp-2.2.0-py3-none-any.whl", hash = "sha256:bde982589473a060ae145e3406e9a5333fe538c97229ba841f5a7f92be004f81", size = 365656, upload-time = "2026-09-07T16:06:19.711Z" },
 ]
+
+[[package]]
+name = "mcp-agent-notes"
+version = "0.2.0"
+source = { git = "https://github.com/blwfish/mcp-agent-notes.git?rev=dd83adf8bb97755f91dbfcf857dbaeb987883f8f#dd83adf8bb97755f91dbfcf857dbaeb987883f8f" }
 
 [[package]]
 name = "mcp-events"
