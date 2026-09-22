@@ -29,11 +29,18 @@ from .test_e2e_workflows import send_command
 # Helpers
 # ---------------------------------------------------------------------------
 def _vs(args: dict, timeout: float = 10.0):
-    """Call varset_operations and return the bridge-wrapped result string."""
+    """Call varset_operations and return the bridge-wrapped result string.
+
+    Same "error" fallback as test_spreadsheet_ops.py's _ss -- a dispatch-
+    layer error unwraps to {"error": "...", ...} with no "result" key, and
+    used to fall through to `return resp` (a raw dict) here.
+    """
     resp = send_command("varset_operations", args, timeout=timeout)
     if isinstance(resp, dict) and "result" in resp:
         return resp["result"]
-    return resp
+    if isinstance(resp, dict) and "error" in resp:
+        return resp["error"]
+    return str(resp)
 
 
 def _exec(code: str, timeout: float = 10.0):

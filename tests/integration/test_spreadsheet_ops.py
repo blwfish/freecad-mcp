@@ -25,11 +25,23 @@ def _ss(args: dict, timeout: float = 10.0) -> str:
     The handler returns either a plain status string (e.g. 'Set Foo.A1 = 5')
     or a JSON-encoded payload (for get_cell / get_cell_range / list_aliases).
     Callers that expect JSON should `json.loads` the returned string.
+
+    A dispatch-layer error (poll_job's {"status": "error", ...}, unwrapped
+    by send_to_freecad into {"error": "...", ...} with no "result" key) used
+    to fall through to `return resp` here, breaking this function's own
+    `-> str` contract -- a caller doing `json.loads(_ss(...))` on a genuine
+    error got a raw dict and a TypeError instead of the JSONDecodeError it
+    was prepared for. Surfaced when AICopilot/freecad_mcp_handler.py's
+    _call_on_gui_thread_async started correctly reporting a handler's own
+    caught-and-returned "Error ..." string as an error instead of a
+    disguised success.
     """
     resp = send_command("spreadsheet_operations", args, timeout=timeout)
     if isinstance(resp, dict) and "result" in resp:
         return resp["result"]
-    return resp
+    if isinstance(resp, dict) and "error" in resp:
+        return resp["error"]
+    return str(resp)
 
 
 def _exec(code: str, timeout: float = 10.0):
