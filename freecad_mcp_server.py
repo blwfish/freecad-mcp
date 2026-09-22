@@ -2057,6 +2057,16 @@ async def main():
                         "description": "List action: include dotfiles (default false).",
                         "default": False,
                     },
+                    "limit": {
+                        "type": "integer",
+                        "description": "List action: max macros to return (default 100, max 500).",
+                        "default": 100,
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "List action: number of matching macros to skip, for pagination.",
+                        "default": 0,
+                    },
                     "confirmed": {
                         "type": "boolean",
                         "description": "Run action: must be true to execute. Omit to receive a "
@@ -2278,7 +2288,11 @@ async def main():
         ),
         types.Tool(
             name="continue_selection",
-            description="Continue an interactive selection operation after selecting elements in FreeCAD",
+            description=(
+                "Continue an interactive selection workflow after the user has "
+                "selected edges or faces in FreeCAD's 3D view. Required after "
+                "fillet, chamfer, hole, and similar operations."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
