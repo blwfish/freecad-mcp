@@ -1280,6 +1280,67 @@ class TestCallOnGuiThreadAsync:
         finally:
             ss_mod.QtCore = None
 
+    # -- task()'s error-string detection -----------------------------------
+    # Most handler methods catch their own exceptions internally and return
+    # a plain string starting with "Error" instead of raising
+    # (tests/unit/_freecad_mocks.py's assert_success_contains already treats
+    # that prefix as the real success/failure signal). Before this check,
+    # such a string landed under the "result" key of a "done" job,
+    # indistinguishable from genuine success by the time _poll_job (and,
+    # through it, send_to_freecad) returns to the caller. QtCore is None
+    # (headless/console mode, the fixture default) so _run_on_gui_thread_async
+    # runs task() inline and synchronously -- no need to drive the Qt queue
+    # to observe the result.
+
+    def test_handler_error_string_becomes_error_not_success(self, server):
+        method = lambda args: "Error fusing objects: something broke"
+        submitted = json.loads(server._call_on_gui_thread_async(method, {}, "fuse_objects"))
+        job = server._async_jobs[submitted["job_id"]]
+        assert job["status"] == "done"
+        assert job["result"] == {"error": "Error fusing objects: something broke", "error_id": None}
+
+    def test_handler_success_string_stays_success(self, server):
+        method = lambda args: "Created fusion: Fusion from 2 objects"
+        submitted = json.loads(server._call_on_gui_thread_async(method, {}, "fuse_objects"))
+        job = server._async_jobs[submitted["job_id"]]
+        assert job["status"] == "done"
+        assert job["result"] == {"success": True, "result": "Created fusion: Fusion from 2 objects"}
+
+    def test_raised_exception_still_gets_a_real_error_id(self, server):
+        def method(args):
+            raise RuntimeError("boom")
+        submitted = json.loads(server._call_on_gui_thread_async(method, {}, "fuse_objects"))
+        job = server._async_jobs[submitted["job_id"]]
+        assert job["result"]["error_id"] is not None
+
+    def test_error_string_makes_poll_job_report_error_status(self, server):
+        """End-to-end through poll_job -- the shape send_to_freecad actually
+        reads (freecad_mcp_server.py's _generic_dispatch_tools branch checks
+        poll_resp["status"], not any field inside "result"), so this is the
+        exact seam the audit flagged as untested."""
+        method = lambda args: "Error fusing objects: boom"
+        submitted = json.loads(server._call_on_gui_thread_async(method, {}, "fuse_objects"))
+        polled = json.loads(server._poll_job({"job_id": submitted["job_id"]}))
+        assert polled["status"] == "error"
+        assert polled["error"] == "Error fusing objects: boom"
+
+    def test_success_string_makes_poll_job_report_done_status(self, server):
+        method = lambda args: "Created fusion: Fusion from 2 objects"
+        submitted = json.loads(server._call_on_gui_thread_async(method, {}, "fuse_objects"))
+        polled = json.loads(server._poll_job({"job_id": submitted["job_id"]}))
+        assert polled["status"] == "done"
+        assert polled["result"] == "Created fusion: Fusion from 2 objects"
+
+    def test_non_string_result_unaffected(self, server):
+        """A handler returning a dict (e.g. a JSON-shaped handler that
+        returns a parsed structure rather than a json.dumps string) must
+        not be treated as an error string -- only str results are checked."""
+        method = lambda args: {"error": "nested, not the top-level convention"}
+        submitted = json.loads(server._call_on_gui_thread_async(method, {}, "some_op"))
+        job = server._async_jobs[submitted["job_id"]]
+        assert job["result"]["success"] is True
+        assert job["result"]["result"] == {"error": "nested, not the top-level convention"}
+
 
 # ---------------------------------------------------------------------------
 # _submit_async_job — ONE chokepoint for every async job record
