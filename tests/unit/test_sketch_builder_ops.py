@@ -279,6 +279,14 @@ class TestBuildSketch(unittest.TestCase):
         reset_mocks()
         _mock_sketch_builder_class.reset_mock()
         self.handler = _make_handler()
+        # These tests exercise build_sketch's own logic given a working
+        # sketch_builder import (that machinery has its own coverage in
+        # TestEnsureImportable below) -- without this patch they silently
+        # depend on a real FC-tools sibling directory existing on disk,
+        # which is only true on the dev machine, not CI.
+        patcher = patch('handlers.sketch_builder_ops._ensure_sketch_builder_importable')
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _make_doc_with_spreadsheet(self, alias_map=None, sketch_name='XZ_Test'):
         alias_map = alias_map or {'width': 100.0, 'eaveHeight': 60.0}
