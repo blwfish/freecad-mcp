@@ -123,7 +123,7 @@ class InspectorOpsHandler(BaseHandler):
         else:
             doc = FreeCAD.ActiveDocument
             if not doc:
-                return json.dumps({"error": "No active document"})
+                return json.dumps({"error": NO_ACTIVE_DOCUMENT_ERROR})
 
         # Resolve objects. get_object() raises ValueError on an ambiguous
         # Label rather than guessing (see its docstring) — a DRC scan that

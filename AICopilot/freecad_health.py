@@ -175,13 +175,22 @@ class FreeCADHealthMonitor:
             Tuple of (is_running, pid)
         """
         try:
-            # Case-sensitive, matching freecad_crash_report.py's pattern
-            # (pgrep -lf FreeCAD) exactly. Verified live: the lowercase
-            # "-f freecad" pattern missed the real FreeCAD process (its
-            # binary/bundle path is capitalized: FreeCAD.app,
-            # build/release/bin/FreeCAD) while matching unrelated
-            # processes whose command line happens to contain "freecad"
-            # lowercase — this repo's own venv path
+            # Case-sensitive, matching the SAME "FreeCAD" search target as
+            # freecad_crash_report.py's _fc_process_info() -- but NOT the
+            # same flags. This file's own comment used to claim "-lf
+            # FreeCAD... exactly", which was false: this site deliberately
+            # omits -l because it parses `int(pid)` from bare stdout lines
+            # (below) -- with -l, each line is prefixed with the full
+            # command, which int() can't parse. _fc_process_info() uses
+            # -lf because IT needs the full command line (stored in
+            # info["processes"] for the crash report). Both flag choices
+            # are correct for their own site; the two were never meant to
+            # be byte-for-byte identical, despite what this comment used
+            # to claim. Verified live: the lowercase "-f freecad" pattern
+            # missed the real FreeCAD process (its binary/bundle path is
+            # capitalized: FreeCAD.app, build/release/bin/FreeCAD) while
+            # matching unrelated processes whose command line happens to
+            # contain "freecad" lowercase — this repo's own venv path
             # (.../freecad-mcp/venv/bin/python) is exactly such a case.
             # Adding -i (case-insensitive) makes this worse, not better:
             # it then matches "freecad-mcp" in this project's own path too.
@@ -294,6 +303,12 @@ class FreeCADHealthMonitor:
         # unwind the health-monitor loop and lose the crash record entirely.
         crash_file = self.crash_log_dir / f"crash_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         try:
+            # A prior security fix (5b53802) wired symlink-refusal into
+            # this directory's mkdir() and into crash_watcher.py's
+            # open()-for-write site, but not this one -- refuse to follow
+            # a symlink an attacker with local access could have planted
+            # at this predictable path.
+            tmp_safety.refuse_if_symlink(str(crash_file))
             with open(crash_file, 'w') as f:
                 # default=str: an unexpected/non-serializable field (a stray
                 # object reference, a future FreeCAD type not yet handled by
@@ -408,6 +423,10 @@ class FreeCADHealthMonitor:
             "current_health": self.perform_health_check(),
         }
         
+        # Same symlink risk as log_crash's crash_file above; output_file
+        # defaults to a predictable path under crash_log_dir when the
+        # caller doesn't supply one.
+        tmp_safety.refuse_if_symlink(str(output_file))
         with open(output_file, 'w') as f:
             json.dump(report, f, indent=2)
         

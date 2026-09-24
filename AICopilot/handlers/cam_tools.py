@@ -187,7 +187,7 @@ class CAMToolsHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                return "Error: No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             # Find all tool bits in the document
             # In FreeCAD 1.2+, tool bits are Part::FeaturePython with a ToolBit proxy
@@ -224,7 +224,7 @@ class CAMToolsHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                error = Exception("No active document")
+                error = Exception(NO_ACTIVE_DOCUMENT_ERROR)
                 return self.log_and_return("get_tool", args, error=error, duration=time.time() - start_time)
 
             tool_name = args.get('tool_name', '')
@@ -286,7 +286,7 @@ class CAMToolsHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                return "Error: No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             tool_name = args.get('tool_name', '')
             if not tool_name:
@@ -346,7 +346,7 @@ class CAMToolsHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                return "Error: No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             tool_name = args.get('tool_name', '')
             if not tool_name:

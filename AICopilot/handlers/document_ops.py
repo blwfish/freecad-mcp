@@ -81,7 +81,7 @@ class DocumentOpsHandler(BaseHandler):
             filename = args.get('filename', '')
             doc = FreeCAD.ActiveDocument
             if not doc:
-                return "No active document to save"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             if filename:
                 path_err = self._validate_file_path(filename)
@@ -207,7 +207,7 @@ class DocumentOpsHandler(BaseHandler):
         try:
             doc = FreeCAD.ActiveDocument
             if not doc:
-                return json.dumps({"error": "No active document"})
+                return json.dumps({"error": NO_ACTIVE_DOCUMENT_ERROR})
             name = args.get("object_name", "")
             obj = self.get_object(name, doc)
             if obj is None:
@@ -405,7 +405,12 @@ class DocumentOpsHandler(BaseHandler):
                 return f"Document not open: {source_doc}. Open docs: {list(docs.keys())}"
             src_doc = FreeCAD.getDocument(source_doc)
 
-            src_obj = src_doc.getObject(source_object)
+            # Name-then-Label fallback via get_object(), matching the other
+            # 7 lookups in this file migrated for the same reason -- raw
+            # doc.getObject() is Name-only, so a caller-supplied Label
+            # silently returned "Object not found". get_object() takes an
+            # explicit doc argument for exactly this cross-document case.
+            src_obj = self.get_object(source_object, src_doc)
             if not src_obj:
                 return f"Object not found in '{source_doc}': {source_object}"
             if not hasattr(src_obj, 'Shape'):

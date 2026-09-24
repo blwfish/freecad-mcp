@@ -51,6 +51,7 @@ import os
 import platform
 import re
 import subprocess
+import sys
 import time
 import zipfile
 from collections import deque
@@ -74,6 +75,8 @@ class OpLog:
 
     def __init__(self):
         self._ops: deque = deque(maxlen=MAX_OPLOG)
+        self._write_failures = 0
+        self._last_write_failed = False
 
     def record(self, tool: str, args: dict) -> None:
         entry = {
@@ -120,8 +123,25 @@ class OpLog:
                 os.fchmod(fd, 0o600)
             with os.fdopen(fd, "w") as f:
                 json.dump(list(self._ops), f, indent=2)
-        except Exception:
-            pass
+            self._last_write_failed = False
+        except Exception as e:
+            # Same fix as crash_watcher.set_current_op's identical gap
+            # (fba35a6): a persistent write failure (disk full,
+            # permissions, /tmp not writable) used to be completely
+            # invisible -- the crash-diagnosis system could silently stop
+            # working with zero signal. Counter + rate-limited stderr
+            # warning (once per failure streak, not every call) so a full
+            # disk doesn't spam the log.
+            self._write_failures += 1
+            if not self._last_write_failed:
+                self._last_write_failed = True
+                sys.stderr.write(
+                    f"[MCP] OpLog: failed to write {OPLOG_FILE} "
+                    f"({self._write_failures} failure(s) so far): {e}\n"
+                )
+
+    def get_write_failure_count(self) -> int:
+        return self._write_failures
 
 
 def _redact_secrets_best_effort(text: str) -> str:
@@ -499,6 +519,12 @@ def diagnose(
 
     # ── 1. What was the bridge sending? ──────────────────────────────────────
     if op_log:
+        if op_log.get_write_failure_count():
+            parts.append(
+                f"\n**⚠️ Warning:** the operation log failed to write to disk "
+                f"{op_log.get_write_failure_count()} time(s) this session -- "
+                f"the data below may be stale or incomplete."
+            )
         incomplete = op_log.last_incomplete()
         if incomplete:
             elapsed = time.time() - incomplete["sent_at"]

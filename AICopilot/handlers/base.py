@@ -80,6 +80,39 @@ def axis_vector_or_none(axis: str):
     return axis_vectors.get(axis.lower())
 
 
+# OCCT's own long-stable default confusion/linear tolerance (mm) -- the
+# fallback single source of truth for callers that need a plain float
+# constant (not a live query) because they run at module-import time or in
+# a hot loop, and a live Part.Precision.confusion() call/import per-use
+# isn't warranted. spatial_ops.py's _OCCT_LIN_TOL, part_ops.py's
+# degenerate-edge check, and measurement_ops.py's coincident-point check
+# now all reference THIS constant instead of each independently
+# hardcoding the numeral 1e-7 -- previously 3 separate literals that
+# happened to agree today with no mechanism keeping them that way.
+OCCT_CONFUSION_TOLERANCE_DEFAULT = 1e-7
+
+
+def occt_confusion_tolerance() -> float:
+    """Live-queried OCCT confusion/linear tolerance (mm), the threshold
+    below which OCCT treats two points/edges as coincident.
+
+    Single source of truth -- spatial_ops.py's _OCCT_LIN_TOL, part_ops.py's
+    degenerate-edge check, and measurement_ops.py's coincident-point check
+    each independently hardcoded the numeral 1e-7 as a guess, with no
+    version check tying them to the real value this function queries live
+    (this method already existed inline in verify_sketch's degenerate-
+    geometry check below). 1e-7 is OCCT's long-stable default, so today
+    all four agree -- but only this one actually asks OCCT, rather than
+    assuming; if a future OCCT/FreeCAD version ever changes its own
+    precision default, the other three would otherwise silently drift from
+    the real value with no signal. Import is local (not at module scope)
+    so importing this module never requires Part to be importable yet --
+    matters for unit tests that patch in a lightweight FreeCAD mock.
+    """
+    import Part
+    return Part.Precision.confusion()
+
+
 AUTOSAVE_OUTCOMES = frozenset({
     'saved',             # the document was written to its FileName
     'disabled',          # preference is off — nothing written

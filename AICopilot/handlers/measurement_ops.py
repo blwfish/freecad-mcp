@@ -3,7 +3,7 @@
 import re
 import FreeCAD
 from typing import Any, Dict
-from .base import BaseHandler
+from .base import BaseHandler, OCCT_CONFUSION_TOLERANCE_DEFAULT
 
 
 class MeasurementOpsHandler(BaseHandler):
@@ -265,7 +265,10 @@ class MeasurementOpsHandler(BaseHandler):
             # returns [dist, points, geom_info]; dist == 0 means touching/overlap.
             if hasattr(obj1, 'Shape') and hasattr(obj2, 'Shape'):
                 distance = obj1.Shape.distToShape(obj2.Shape)[0]
-                if distance < 1e-7:
+                # References base.py's OCCT_CONFUSION_TOLERANCE_DEFAULT as
+                # the single source of truth for this numeral instead of
+                # independently hardcoding 1e-7 here.
+                if distance < OCCT_CONFUSION_TOLERANCE_DEFAULT:
                     return (f"Distance between {object1} and {object2}: "
                             f"{distance:.4f} mm (touching or overlapping)")
                 return f"Distance between {object1} and {object2}: {distance:.3f} mm"

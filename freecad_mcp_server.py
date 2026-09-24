@@ -464,7 +464,15 @@ class _BridgeCtx:
 
     def __init__(self):
         if platform.system() == "Windows":
-            self.socket_path: str | None = "localhost:23456"
+            # Must match WINDOWS_PORT in AICopilot/freecad_mcp_handler.py
+            # (same env var, same "23456" default) -- this used to be
+            # hardcoded here while the handler-side listener already
+            # honored FREECAD_MCP_PORT, so setting that env var to run a
+            # second Windows instance silently broke connectivity (the
+            # bridge kept connecting to the default port with no
+            # diagnostic tying the failure to the env var).
+            _windows_port = int(os.environ.get("FREECAD_MCP_PORT", "23456"))
+            self.socket_path: str | None = f"localhost:{_windows_port}"
         else:
             # Honor an explicit env override; otherwise resolve lazily.
             self.socket_path = os.environ.get("FREECAD_MCP_SOCKET")
@@ -1287,8 +1295,8 @@ async def main():
                             "box", "cylinder", "sphere", "cone", "torus", "wedge",
                             # Boolean operations (4)
                             "fuse", "cut", "common", "section",
-                            # Transform operations (4)
-                            "move", "rotate", "scale", "mirror",
+                            # Transform operations (6)
+                            "move", "rotate", "scale", "mirror", "copy", "array",
                             # Advanced creation (4)
                             "loft", "sweep", "extrude", "revolve",
                             # Text / geometry utilities
@@ -1315,6 +1323,10 @@ async def main():
                     "axis": {"type": "string", "description": "Rotation axis", "enum": ["x", "y", "z"], "default": "z"},
                     "angle": {"type": "number", "description": "Rotation angle", "default": 90},
                     "scale_factor": {"type": "number", "description": "Scale factor", "default": 1.5},
+                    "count": {"type": "number", "description": "Number of instances for array", "default": 3},
+                    "spacing_x": {"type": "number", "description": "X spacing between array instances", "default": 10},
+                    "spacing_y": {"type": "number", "description": "Y spacing between array instances", "default": 0},
+                    "spacing_z": {"type": "number", "description": "Z spacing between array instances", "default": 0},
                     # Advanced creation parameters
                     "sketches": {"type": "array", "items": {"type": "string"}, "description": "Sketches for loft"},
                     "profile_sketch": {"type": "string", "description": "Profile sketch for sweep"},
@@ -2244,7 +2256,7 @@ async def main():
         ),
         types.Tool(
             name="execute_python_async",
-            description="Submit Python code for async execution in FreeCAD. Returns a job_id immediately without waiting. Use poll_job(job_id) to check status. Use this for long-running operations (CAM recompute, mesh operations, surface generation) that would otherwise timeout.",
+            description="Submit Python code for async execution in FreeCAD. Transparently polls with progressive backoff and returns the result directly if the job finishes within 120s (the common case for most operations) -- only a job still running past that ceiling returns a job_id instead, for you to check with poll_job(job_id) or abort with cancel_job(job_id). Use this for long-running operations (CAM recompute, mesh operations, surface generation) that would time out via execute_python's own (shorter) synchronous wait.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -2567,7 +2579,14 @@ async def main():
             windows_token = None
             if platform.system() == "Windows":
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.connect(('localhost', 23456))
+                # _ctx.socket_path is "localhost:<port>", already resolved
+                # from FREECAD_MCP_PORT (or the "23456" default) in
+                # _BridgeCtx.__init__ -- previously hardcoded here
+                # regardless of that env var, silently breaking
+                # connectivity for a second Windows instance on a
+                # non-default port.
+                _host, _port_str = (_ctx.socket_path or "localhost:23456").split(":", 1)
+                sock.connect((_host, int(_port_str)))
                 # The Windows TCP listener has no filesystem object to gate
                 # access on (unlike the Unix-domain socket's 0600 file), so
                 # it requires this shared-secret token on every request --
@@ -2796,7 +2815,17 @@ async def main():
             await asyncio.sleep(3)
             # Poll for new instance (up to 30s)
             for i in range(30):
-                if _ctx.socket_path and os.path.exists(_ctx.socket_path):
+                # On Windows, socket_path is "localhost:<port>", not a
+                # filesystem path -- os.path.exists() on it was always
+                # False, so the test_echo probe below never actually ran
+                # on Windows; this loop just slept out its full ~33s and
+                # unconditionally reported "not yet available" even when
+                # the restart succeeded immediately. Only gate on the
+                # filesystem check where socket_path really is one.
+                _socket_ready = bool(_ctx.socket_path) and (
+                    platform.system() == "Windows" or os.path.exists(_ctx.socket_path)
+                )
+                if _socket_ready:
                     try:
                         test = await send_to_freecad("test_echo", {"message": "ping"})
                         parsed = json.loads(test)
@@ -3348,16 +3377,47 @@ async def main():
             target_label = args.get("label")
             target_uuid = args.get("uuid")
 
-            if not target_path and target_uuid:
+            # select_freecad_instance resolves uuid/label against managed
+            # AND discovered instances; this only searched managed
+            # (_ctx.instances), so a discovery-only instance's uuid/label
+            # silently failed to resolve here even though select could
+            # find it by the same identifiers -- confirmed divergence,
+            # likely an unintended copy-paste gap rather than a deliberate
+            # design choice. Extended to search discovery too, purely for
+            # RESOLUTION parity; the actual "can this bridge terminate it"
+            # permission check below is unchanged and still correctly
+            # refuses a discovery-only instance (this bridge has no
+            # process handle for something it didn't spawn) -- it just now
+            # gives a clearer, more specific error instead of a generic
+            # "not found" when resolution silently failed before.
+            if not target_path and (target_uuid or target_label):
+                discovered_target_path = None
                 for sp, info in _ctx.instances.items():
-                    if info.get("uuid") == target_uuid:
+                    if target_uuid and info.get("uuid") == target_uuid:
                         target_path = sp
                         break
-            if not target_path and target_label:
-                for sp, info in _ctx.instances.items():
-                    if info.get("label") == target_label:
+                    if target_label and info.get("label") == target_label:
                         target_path = sp
                         break
+                if not target_path:
+                    for record in _scan_discovery():
+                        if target_uuid and record.get("uuid") == target_uuid:
+                            discovered_target_path = record.get("socket_path")
+                            break
+                        if target_label and record.get("label") == target_label:
+                            discovered_target_path = record.get("socket_path")
+                            break
+                if not target_path and discovered_target_path:
+                    return [types.TextContent(
+                        type="text",
+                        text=json.dumps({
+                            "error": (
+                                f"Instance found via discovery at '{discovered_target_path}' "
+                                "but is not managed by this bridge (this bridge didn't spawn "
+                                "it, so it has no process to terminate)."
+                            )
+                        })
+                    )]
 
             if not target_path:
                 return [types.TextContent(

@@ -2,7 +2,7 @@
 
 import FreeCAD
 from typing import Dict, Any
-from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR, axis_vector_or_none
+from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR, axis_vector_or_none, OCCT_CONFUSION_TOLERANCE_DEFAULT
 
 
 class PartOpsHandler(BaseHandler):
@@ -424,10 +424,13 @@ class PartOpsHandler(BaseHandler):
             results.append(f"Edges: {len(shape.Edges)}")
             results.append(f"Vertices: {len(shape.Vertexes)}")
 
-            # Check for degenerate edges
+            # Check for degenerate edges. References base.py's
+            # OCCT_CONFUSION_TOLERANCE_DEFAULT as the single source of
+            # truth for this numeral instead of independently hardcoding
+            # 1e-7 here.
             degen_edges = 0
             for edge in shape.Edges:
-                if edge.Length < 1e-7:
+                if edge.Length < OCCT_CONFUSION_TOLERANCE_DEFAULT:
                     degen_edges += 1
             if degen_edges > 0:
                 results.append(f"Degenerate edges (near-zero length): {degen_edges}")

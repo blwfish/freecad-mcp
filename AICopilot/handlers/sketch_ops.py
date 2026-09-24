@@ -6,6 +6,16 @@ import math
 from typing import Dict, Any
 from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
 
+# Constraint types that carry a meaningful .Value (dimensional constraints).
+# Single source of truth shared by add_constraint (was previously a
+# function-local copy) and list_constraints -- FreeCAD's Constraint object
+# always exposes a .Value attribute regardless of type, defaulting to 0.0
+# for non-dimensional types (Horizontal, Coincident, ...), so hasattr(c,
+# 'Value') alone can't tell "this type has no value" apart from "this
+# type's value happens to be 0". Checking Type against this explicit set
+# is the only reliable distinction.
+_DIMENSIONAL_CONSTRAINT_TYPES = ('Radius', 'Diameter', 'Distance', 'DistanceX', 'DistanceY', 'Angle')
+
 
 class SketchOpsHandler(BaseHandler):
     """Handler for sketch operations (Sketcher workbench)."""
@@ -22,7 +32,7 @@ class SketchOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "Error creating sketch: No active document. Call view_control(operation='create_document') first."
+                return f"Error creating sketch: {NO_ACTIVE_DOCUMENT_ERROR}"
 
             # (x,y,z,w) quaternion args to FreeCAD.Rotation for each plane.
             plane_rotations = {
@@ -643,8 +653,7 @@ class SketchOpsHandler(BaseHandler):
                 'DistanceY', 'Angle')}
             ct = _CANON.get(str(constraint_type).lower(), constraint_type)
 
-            _DIMENSIONAL = ('Radius', 'Diameter', 'Distance', 'DistanceX', 'DistanceY', 'Angle')
-            if expression is not None and ct not in _DIMENSIONAL:
+            if expression is not None and ct not in _DIMENSIONAL_CONSTRAINT_TYPES:
                 return f"expression is only supported for dimensional constraint types, got {ct}"
 
             # --- Single-geometry, no value ---
@@ -792,7 +801,14 @@ class SketchOpsHandler(BaseHandler):
                 if c.Third != -2000:
                     info["third"] = c.Third
                     info["thirdPos"] = c.ThirdPos
-                if hasattr(c, 'Value') and c.Value != 0:
+                if c.Type in _DIMENSIONAL_CONSTRAINT_TYPES:
+                    # Checking Type (not hasattr(c, 'Value') and c.Value !=
+                    # 0) is deliberate -- FreeCAD's Constraint object
+                    # always exposes .Value, defaulting to 0.0 for
+                    # non-dimensional types, so the old truthiness check
+                    # collapsed "legitimately zero-valued dimensional
+                    # constraint" and "no value at all" into the same
+                    # (missing-key) representation.
                     val = c.Value
                     # Angle constraints store radians internally
                     if c.Type == 'Angle':

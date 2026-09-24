@@ -9,7 +9,7 @@ import json
 import re
 import FreeCAD
 from typing import Dict, Any
-from .base import BaseHandler
+from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
 
 
 # Property::PropDynamic (src/App/Property.h) is the bit FreeCAD sets on every
@@ -151,7 +151,7 @@ class VarSetOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "Error: No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             varset = doc.addObject('App::VarSet', name)
             self.recompute(doc)
@@ -242,7 +242,15 @@ class VarSetOpsHandler(BaseHandler):
                 # setattr(varset, name, value) could never succeed for it.
                 if not isinstance(value, str):
                     return "value must be an object name (string) for App::PropertyLink"
-                target = doc.getObject(value)
+                # Name-then-Label fallback via get_object(), same as
+                # bind_property's resolve_object()-based path -- the raw
+                # doc.getObject() this used to call is Name-only, so a
+                # caller passing a valid Label (not internal Name) got an
+                # incorrect "object not found" despite the comment above
+                # claiming this "mirrors bind_property elsewhere in this
+                # file" (bind_property's resolve_object() does support
+                # Label fallback; this branch didn't).
+                target = self.get_object(value, doc)
                 if target is None:
                     return f"Error setting property: object not found: {value}"
                 setattr(varset, name, target)

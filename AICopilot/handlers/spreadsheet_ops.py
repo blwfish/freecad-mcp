@@ -4,7 +4,7 @@ import json
 import re
 import FreeCAD
 from typing import Dict, Any, Optional, Tuple
-from .base import BaseHandler
+from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
 
 
 def _col_to_num(col):
@@ -69,7 +69,7 @@ class SpreadsheetOpsHandler(BaseHandler):
             # Don't auto-create document to avoid GUI threading issues
             doc = self.get_document()
             if not doc:
-                return "Error: No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
 
             spreadsheet = doc.addObject('Spreadsheet::Sheet', name)
             self.recompute(doc)
@@ -291,9 +291,23 @@ class SpreadsheetOpsHandler(BaseHandler):
             spreadsheet_name = args.get('spreadsheet_name', '')
             cell_or_alias = args.get('cell', '')
 
+            # varset_ops.bind_property supplies a validate_target callback
+            # (TypeId + property-existence check); this sibling supplied
+            # none -- it would setExpression against any resolvable object
+            # of any type with no upfront check. Cell/alias existence
+            # itself isn't re-checked here: FreeCAD's own expression engine
+            # already validates that at setExpression time (unlike a
+            # VarSet property name, which setExpression + recompute
+            # wouldn't catch until later -- the actual reason varset needed
+            # its own existence check).
+            def _validate_spreadsheet(doc, spreadsheet):
+                if spreadsheet.TypeId != 'Spreadsheet::Sheet':
+                    return f"Object {spreadsheet_name} is not a spreadsheet"
+                return None
+
             return self.bind_expression(
                 object_name, property_name, spreadsheet_name, cell_or_alias,
-                target_noun='Spreadsheet',
+                target_noun='Spreadsheet', validate_target=_validate_spreadsheet,
             )
 
         except Exception as e:

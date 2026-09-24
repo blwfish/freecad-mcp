@@ -15,6 +15,7 @@ Verify_sketch is exercised in test_open_wire_diagnosis.py — not
 duplicated here.
 """
 
+import json
 import math
 import unittest
 from unittest.mock import MagicMock
@@ -591,6 +592,75 @@ class TestDeleteConstraint(unittest.TestCase):
 
         s.delConstraint.assert_called_once_with(3)
         assert_success_contains(self, result, "Deleted constraint 3", "S")
+
+
+class TestListConstraints(unittest.TestCase):
+    """Full-review 2026-09-23, Medium finding #31: list_constraints used to
+    omit the "value" field for a legitimately-zero-valued dimensional
+    constraint (e.g. DistanceX constrained to exactly 0mm) -- indistinguishable
+    from a constraint type that has no Value at all (Horizontal, Coincident,
+    ...). Checking Type against _DIMENSIONAL_CONSTRAINT_TYPES instead of
+    hasattr(c, 'Value') and c.Value != 0 fixes this."""
+
+    def setUp(self):
+        reset_mocks()
+        self.handler = make_handler(SketchOpsHandler)
+
+    def _make_constraint(self, ctype, value=None, second=-2000, third=-2000, name=""):
+        c = MagicMock()
+        c.Type = ctype
+        c.First = 0
+        c.FirstPos = 1
+        c.Second = second
+        c.SecondPos = 1 if second != -2000 else -2000
+        c.Third = third
+        c.ThirdPos = 1 if third != -2000 else -2000
+        c.Name = name
+        if value is not None:
+            c.Value = value
+        else:
+            # FreeCAD always exposes .Value on every Constraint, defaulting
+            # to 0.0 for non-dimensional types -- must not surface it.
+            c.Value = 0.0
+        return c
+
+    def _list(self, constraints):
+        s = _make_real_sketch_mock("S")
+        s.Constraints = constraints
+        s.ConstraintCount = len(constraints)
+        s.DoF = 0
+        doc = make_mock_doc([s])
+        mock_FreeCAD.ActiveDocument = doc
+        result = self.handler.list_constraints({'sketch_name': 'S'})
+        return json.loads(result)
+
+    def test_dimensional_constraint_with_exactly_zero_value_reports_value(self):
+        # The exact case the old truthiness check broke: a legitimate
+        # zero-distance constraint must still report "value": 0.
+        data = self._list([self._make_constraint('DistanceX', value=0.0)])
+        self.assertIn('value', data['constraints'][0])
+        self.assertEqual(data['constraints'][0]['value'], 0.0)
+
+    def test_dimensional_constraint_with_nonzero_value_reports_value(self):
+        data = self._list([self._make_constraint('Distance', value=12.5)])
+        self.assertEqual(data['constraints'][0]['value'], 12.5)
+
+    def test_non_dimensional_constraint_omits_value_even_though_attribute_exists(self):
+        # Horizontal/Coincident/etc. always have .Value == 0.0 on the real
+        # FreeCAD object, but must never surface a "value" key -- they
+        # don't semantically have one.
+        data = self._list([self._make_constraint('Horizontal')])
+        self.assertNotIn('value', data['constraints'][0])
+
+    def test_angle_constraint_value_converted_to_degrees(self):
+        data = self._list([self._make_constraint('Angle', value=math.pi / 2)])
+        self.assertAlmostEqual(data['constraints'][0]['value'], 90.0, places=4)
+
+    def test_second_and_third_sentinel_still_respected(self):
+        data = self._list([self._make_constraint('Coincident', second=3, third=-2000)])
+        info = data['constraints'][0]
+        self.assertIn('second', info)
+        self.assertNotIn('third', info)
 
 
 class TestCreateSketchNoDocument(unittest.TestCase):

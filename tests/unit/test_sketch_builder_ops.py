@@ -44,7 +44,7 @@ from handlers.sketch_builder_ops import (  # noqa: E402
     _read_spreadsheet_params,
     _apply_layout,
     _ensure_sketch_builder_importable,
-    FC_TOOLS_PATH,
+    _FALLBACK_PATHS,
 )
 
 
@@ -503,19 +503,68 @@ class TestBuildSketch(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestEnsureImportable(unittest.TestCase):
+    """Full-review 2026-09-23, Medium finding #39: this used to hardcode
+    FC_TOOLS_PATH = '/Volumes/Files/claude/FC-tools' with no override --
+    the one handler in the file set that broke on any machine where the
+    repo isn't at that exact path. Now mirrors inspector_ops.py's
+    preference -> env var -> well-known-sibling-path -> hardcoded-fallback
+    resolution chain; these tests cover each tier."""
 
-    def test_adds_fc_tools_to_path(self):
+    def setUp(self):
         import sys as _sys
-        if FC_TOOLS_PATH in _sys.path:
-            _sys.path.remove(FC_TOOLS_PATH)
-        _ensure_sketch_builder_importable()
-        self.assertIn(FC_TOOLS_PATH, _sys.path)
+        self._sys = _sys
+        self._orig_path = list(_sys.path)
+        for p in list(_sys.path):
+            if p in _FALLBACK_PATHS or 'FC-tools' in p:
+                _sys.path.remove(p)
+        import os as _os
+        self._orig_env = _os.environ.pop('FREECAD_SKETCH_BUILDER_PATH', None)
+
+    def tearDown(self):
+        self._sys.path[:] = self._orig_path
+        if self._orig_env is not None:
+            import os as _os
+            _os.environ['FREECAD_SKETCH_BUILDER_PATH'] = self._orig_env
+
+    def test_falls_back_to_well_known_sibling_path(self):
+        with patch('os.path.isdir', side_effect=lambda p: p == _FALLBACK_PATHS[0]):
+            mock_FreeCAD.ParamGet = MagicMock(side_effect=RuntimeError("no prefs"))
+            _ensure_sketch_builder_importable()
+        self.assertIn(_FALLBACK_PATHS[0], self._sys.path)
+
+    def test_env_var_takes_priority_over_fallback_paths(self):
+        import os as _os
+        _os.environ['FREECAD_SKETCH_BUILDER_PATH'] = '/env/fc-tools'
+        with patch('os.path.isdir', side_effect=lambda p: p == '/env/fc-tools'):
+            mock_FreeCAD.ParamGet = MagicMock(side_effect=RuntimeError("no prefs"))
+            _ensure_sketch_builder_importable()
+        self.assertIn('/env/fc-tools', self._sys.path)
+        self.assertNotIn(_FALLBACK_PATHS[0], self._sys.path)
+
+    def test_preference_takes_priority_over_env_var_and_fallback(self):
+        import os as _os
+        _os.environ['FREECAD_SKETCH_BUILDER_PATH'] = '/env/fc-tools'
+        pref = MagicMock()
+        pref.GetString.return_value = '/pref/fc-tools'
+        mock_FreeCAD.ParamGet = MagicMock(return_value=pref)
+        with patch('os.path.isdir', side_effect=lambda p: p == '/pref/fc-tools'):
+            _ensure_sketch_builder_importable()
+        self.assertIn('/pref/fc-tools', self._sys.path)
+        self.assertNotIn('/env/fc-tools', self._sys.path)
+
+    def test_raises_clear_error_when_nothing_resolves(self):
+        mock_FreeCAD.ParamGet = MagicMock(side_effect=RuntimeError("no prefs"))
+        with patch('os.path.isdir', return_value=False):
+            with self.assertRaises(ImportError) as ctx:
+                _ensure_sketch_builder_importable()
+        self.assertIn('FREECAD_SKETCH_BUILDER_PATH', str(ctx.exception))
 
     def test_idempotent(self):
-        import sys as _sys
-        _ensure_sketch_builder_importable()
-        _ensure_sketch_builder_importable()
-        count = _sys.path.count(FC_TOOLS_PATH)
+        with patch('os.path.isdir', side_effect=lambda p: p == _FALLBACK_PATHS[0]):
+            mock_FreeCAD.ParamGet = MagicMock(side_effect=RuntimeError("no prefs"))
+            _ensure_sketch_builder_importable()
+            _ensure_sketch_builder_importable()
+        count = self._sys.path.count(_FALLBACK_PATHS[0])
         self.assertEqual(count, 1)
 
 
