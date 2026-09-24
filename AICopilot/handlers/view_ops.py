@@ -504,18 +504,24 @@ class ViewOpsHandler(BaseHandler):
             if not FreeCAD.GuiUp:
                 return "Clip plane not available in headless mode"
             from pivy import coin
-            axis = args.get('axis', 'z').lower()
+            axis = args.get('axis', 'z')
+            axis_lower = axis.lower() if isinstance(axis, str) else axis
             depth = float(args.get('depth', 0))
-
-            view = FreeCADGui.activeDocument().activeView()
-            sg = view.getSceneGraph()
 
             axis_map = {
                 'x': coin.SbVec3f(1, 0, 0),
                 'y': coin.SbVec3f(0, 1, 0),
                 'z': coin.SbVec3f(0, 0, 1),
             }
-            normal = axis_map.get(axis, coin.SbVec3f(0, 0, 1))
+            normal = axis_map.get(axis_lower)
+            if normal is None:
+                # No fallback: an unrecognized axis used to silently clip
+                # along Z while the success message still echoed the
+                # requested (wrong) axis string.
+                return f"Invalid axis '{axis}': must be 'x', 'y', or 'z'"
+
+            view = FreeCADGui.activeDocument().activeView()
+            sg = view.getSceneGraph()
 
             clip = coin.SoClipPlane()
             clip.plane.setValue(coin.SbPlane(normal, -depth))

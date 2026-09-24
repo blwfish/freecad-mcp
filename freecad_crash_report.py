@@ -124,12 +124,25 @@ class OpLog:
             pass
 
 
+def _redact_secrets_best_effort(text: str) -> str:
+    """Reuse crash_watcher's redaction (see its own module docstring for
+    scope/limits -- this is NOT a general-purpose scanner). This oplog
+    persists up to 6 raw lines of execute_python code per operation with
+    good file-permission hardening but, before this, zero content
+    redaction -- unlike crash_watcher's equivalent last-op file."""
+    try:
+        from crash_watcher import _redact_secrets
+        return _redact_secrets(text)
+    except ImportError:
+        return text
+
+
 def _summarize(tool: str, args: dict) -> str:
     """One-line summary of what an operation was doing."""
     if tool in ("execute_python", "execute_python_async"):
         code  = args.get("code", "")
         lines = [l for l in code.strip().splitlines() if l.strip()]
-        first = "\n".join(lines[:6])
+        first = _redact_secrets_best_effort("\n".join(lines[:6]))
         tail  = f"\n… (+{len(lines)-6} lines)" if len(lines) > 6 else ""
         return f"{tool}:\n{first}{tail}"
     op = args.get("operation", "")

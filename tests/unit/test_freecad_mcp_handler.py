@@ -2354,6 +2354,48 @@ class TestContinueSelectionDispatch:
             method = server._call_on_gui_thread_async.call_args[0][0]
             assert method == getattr(server.partdesign_ops, real_method_name)
 
+    def test_resume_methods_and_operation_map_agree_on_the_same_five_operations(self, server):
+        """_continue_selection's resume_methods dict and _dispatch_partdesign's
+        operation_map dict are two independently hand-maintained mappings to
+        the SAME 5 interactive-selection dress-up methods, keyed in two
+        different namespaces (tool_name vs operation name) -- full-review
+        2026-09-23, Batch B finding #19/#39: nothing tied them together, so
+        a future fix or rename applied to one and not the other would
+        silently desync (exactly the class of bug the thickness_faces
+        incident above already demonstrated once for resume_methods alone).
+        This test fails if either dict is updated without the other for one
+        of these 5 operations.
+        """
+        # operation-name (as sent via partdesign_operations) -> tool_name
+        # (as stashed by request_selection / read by continue_selection)
+        operation_to_tool_name = {
+            "fillet": "fillet_edges",
+            "chamfer": "chamfer_edges",
+            "draft": "draft_faces",
+            "shell": "shell_solid",
+            "thickness": "thickness_faces",
+        }
+        for operation, tool_name in operation_to_tool_name.items():
+            server._call_on_gui_thread_async = MagicMock(
+                return_value=json.dumps({"job_id": "x", "status": "submitted"})
+            )
+            server._execute_tool_inner("partdesign_operations", {"operation": operation, "object_name": "Box"})
+            dispatch_method = server._call_on_gui_thread_async.call_args[0][0]
+
+            server.selector.pending_operations["op_parity"] = {
+                "tool": tool_name, "type": "edges", "object": "Box", "timestamp": 0.0,
+            }
+            server._call_on_gui_thread_async = MagicMock(
+                return_value=json.dumps({"job_id": "x", "status": "submitted"})
+            )
+            server._execute_tool_inner("continue_selection", {"operation_id": "op_parity"})
+            resume_method = server._call_on_gui_thread_async.call_args[0][0]
+
+            assert dispatch_method == resume_method, (
+                f"operation_map['{operation}'] and resume_methods['{tool_name}'] "
+                f"resolved to different methods: {dispatch_method} vs {resume_method}"
+            )
+
 
 # ---------------------------------------------------------------------------
 # _handle_client

@@ -854,6 +854,23 @@ class CAMOpsHandler(BaseHandler):
                 updates.append(f"stepdown: {args['stepdown']}mm")
 
             if 'stepover' in args and hasattr(operation, 'StepOver'):
+                # Same bound validation as pocket()/adaptive() at creation
+                # time -- without it, a caller could bypass those checks
+                # entirely by creating an op with a valid stepover, then
+                # calling configure_operation to set a degenerate one.
+                if args['stepover'] >= 100:
+                    error = Exception(
+                        f"stepover ({args['stepover']}%) must be < 100% of tool diameter — "
+                        f"at or above 100% the tool paths don't overlap, leaving uncut "
+                        f"ridges/material"
+                    )
+                    return self.log_and_return("configure_operation", args, error=error, duration=time.time() - start_time)
+                if args['stepover'] <= 0:
+                    error = Exception(
+                        f"stepover ({args['stepover']}%) must be > 0% of tool diameter — "
+                        f"a zero or negative stepover produces a degenerate toolpath"
+                    )
+                    return self.log_and_return("configure_operation", args, error=error, duration=time.time() - start_time)
                 operation.StepOver = args['stepover']
                 updates.append(f"stepover: {args['stepover']}%")
 

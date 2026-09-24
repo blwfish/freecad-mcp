@@ -126,6 +126,19 @@ class DiagnosticsOpsHandler(BaseHandler):
             }
             if skipped_malformed:
                 result["skipped_malformed"] = skipped_malformed
+            # crash_watcher.get_write_failure_count() previously had zero
+            # callers anywhere -- a persistent write failure (disk full,
+            # /tmp unwritable) degraded crash forensics for the rest of the
+            # session with only a one-time best-effort console warning that's
+            # easy to miss, especially headless. Surface it here so an
+            # operator/LLM checking debug logs actually sees it.
+            try:
+                import crash_watcher
+                failures = crash_watcher.get_write_failure_count()
+                if failures:
+                    result["crash_watcher_write_failures"] = failures
+            except ImportError:
+                pass
             return json.dumps(result)
 
         except Exception as e:

@@ -290,6 +290,23 @@ def _is_pid_alive_windows(pid: int) -> bool:
     return False
 
 
+def _emit_discovery_warning(msg: str) -> None:
+    """Write a one-line warning to stderr about a discovery-scan problem.
+
+    Without this, a directory full of corrupted/unrecognized records is
+    indistinguishable from "no live instances" -- the parity-pair sibling
+    (AICopilot/instance_registry.py's scan_discovery) already emits this
+    same warning for the identical conditions; this side never did,
+    despite tests/unit/test_instance_registry_parity.py's own docstring
+    describing the two as required to "stay in sync" (that test asserts
+    on returned records/pruning, not on logging behavior, so this
+    divergence was untested).
+    """
+    if not msg.endswith("\n"):
+        msg += "\n"
+    sys.stderr.write(msg)
+
+
 def _scan_discovery(prune_stale: bool = True) -> list[dict]:
     """Read ~/.cache/freecad-mcp/instances/*.json, return live records.
 
@@ -336,8 +353,9 @@ def _scan_discovery(prune_stale: bool = True) -> list[dict]:
         try:
             with open(path) as f:
                 data = json.load(f)
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError) as e:
             # Corrupt or unreadable — drop it.
+            _emit_discovery_warning(f"_scan_discovery: dropping {name}: unreadable/corrupt JSON: {e}.")
             if prune_stale:
                 try:
                     os.unlink(path)
@@ -348,11 +366,21 @@ def _scan_discovery(prune_stale: bool = True) -> list[dict]:
             # Valid JSON but not an object (list/number/null) — not a
             # discovery record we understand. Skip, don't delete or crash
             # the rest of the scan.
+            _emit_discovery_warning(f"_scan_discovery: dropping {name}: not a JSON object (got {type(data).__name__}).")
             continue
         sock_path = data.get("socket_path")
-        if sock_path is None:
+        if sock_path is None or not isinstance(sock_path, str):
             # Schema mismatch — likely a future-version record we don't
-            # know how to interpret. Don't delete; skip and keep scanning.
+            # know how to interpret, OR a malformed socket_path of the
+            # wrong type. Without the type check, a non-str socket_path
+            # reaches _socket_alive() -> os.path.exists(), which raises an
+            # uncaught TypeError -- aborting the entire scan. Same fix as
+            # AICopilot/instance_registry.py's scan_discovery (parity pair).
+            # Don't delete; skip and keep scanning.
+            _emit_discovery_warning(
+                f"_scan_discovery: skipping record without valid socket_path: {name} "
+                f"(keys: {sorted(data.keys())}). Possibly a newer schema; record preserved."
+            )
             continue
         if _socket_alive(sock_path):
             live.append(data)
@@ -805,7 +833,17 @@ def _read_launch_log_tail(path: str, max_bytes: int = 4000) -> str:
     return text
 
 # Add current directory to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_this_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _this_dir)
+# Also add the sibling AICopilot/ dir -- freecad_debug.py/freecad_health.py
+# live there (they're shared with the FreeCAD-side handler), but this
+# process never had it on sys.path, so their "optional" import below always
+# failed with ImportError in every real (dev-checkout) deployment, silently
+# killing the bridge-side debug/health subsystem with no diagnostic. This
+# only fixes the dev-checkout layout; a packaged ~/.freecad-mcp/ install
+# that doesn't ship AICopilot/ still degrades gracefully via ImportError,
+# same as before.
+sys.path.insert(0, os.path.join(_this_dir, "AICopilot"))
 
 # Import message framing for v2.1.1 protocol
 from mcp_bridge_framing import send_message, receive_message
@@ -1537,16 +1575,22 @@ async def main():
                         "enum": [
                             "create_spreadsheet", "set_cell", "get_cell",
                             "set_alias", "get_alias", "clear_cell",
-                            "set_cell_range", "get_cell_range"
+                            "set_cell_range", "get_cell_range",
+                            "bind_property", "list_aliases", "import_csv", "export_csv"
                         ]
                     },
-                    "name": {"type": "string", "description": "Spreadsheet name"},
-                    "cell": {"type": "string", "description": "Cell address (e.g., 'A1')"},
+                    "name": {"type": "string", "description": "Spreadsheet name (create_spreadsheet only)"},
+                    "spreadsheet_name": {"type": "string", "description": "Name of an existing spreadsheet (all operations except create_spreadsheet)"},
+                    "cell": {"type": "string", "description": "Cell address (e.g., 'A1'); also used as the target cell/alias for bind_property"},
                     "value": {"type": ["string", "number"], "description": "Cell value"},
                     "alias": {"type": "string", "description": "Cell alias name"},
-                    "start_cell": {"type": "string", "description": "Range start cell"},
-                    "end_cell": {"type": "string", "description": "Range end cell"},
-                    "values": {"type": "array", "description": "Array of values for range"}
+                    "start_cell": {"type": "string", "description": "Range start cell (also used as the import/export start cell)"},
+                    "end_cell": {"type": "string", "description": "Range end cell (export_csv: omit to auto-detect the sheet's used range)"},
+                    "values": {"type": "array", "description": "Array of values for range"},
+                    "object_name": {"type": "string", "description": "Object whose property to bind (bind_property only)"},
+                    "property_name": {"type": "string", "description": "Property on object_name to bind to the spreadsheet cell/alias (bind_property only)"},
+                    "csv_data": {"type": "string", "description": "Raw CSV text to import (import_csv only)"},
+                    "delimiter": {"type": "string", "description": "CSV field delimiter, default ',' (import_csv/export_csv)"}
                 },
                 "required": ["operation"]
             },
@@ -2638,11 +2682,35 @@ async def main():
                     ),
                     "job_id": job_id,
                 }
-            poll_resp = json.loads(await send_to_freecad("poll_job", {"job_id": job_id}))
+            raw_poll_resp = await send_to_freecad("poll_job", {"job_id": job_id})
+            try:
+                poll_resp = json.loads(raw_poll_resp)
+            except json.JSONDecodeError as e:
+                # Same pattern already fixed once for execute_python's own
+                # submit call (an uncaught JSONDecodeError there bypassed
+                # crash diagnosis) -- this site backs the poll loop for
+                # every async job (execute_python_async AND the generic
+                # async-dispatch path), so it's reached far more often.
+                return {
+                    "status": "error",
+                    "error": f"Malformed poll_job response: {e}",
+                    "job_id": job_id,
+                }
             status = poll_resp.get("status")
             if status in ("done", "error"):
                 return poll_resp
-            if "error" in poll_resp and "Crash" in poll_resp.get("error", ""):
+            if status is None and "error" in poll_resp:
+                # send_to_freecad itself failed (auth/target-resolution/
+                # send failure) rather than returning a real poll_job
+                # response -- a real poll_job reply always has a "status"
+                # key. This used to only stop polling when the word
+                # "Crash" appeared in the error text (a No-Log-Scraping
+                # violation): genuine terminal errors like "Windows auth
+                # token not found" or "Failed to send command to FreeCAD"
+                # don't contain that word, so they were misclassified as
+                # "still running" and polled until the full timeout,
+                # discarding the real error text. Any error with no status
+                # means there's nothing left to poll -- stop immediately.
                 return poll_resp
             # status == "running" → keep polling
 

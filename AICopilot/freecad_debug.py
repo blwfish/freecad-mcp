@@ -50,6 +50,31 @@ from pathlib import Path
 import tmp_safety
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+try:
+    # crash_watcher's redaction is deliberately reused (not a general-
+    # purpose scanner -- see its own module docstring for scope/limits).
+    # This module ships with lean_logging=False hardcoded at its call site
+    # (freecad_mcp_handler.py), so _log_operation persists full tool
+    # arguments -- including execute_python's raw code -- to disk on every
+    # call; without this, that path had zero redaction while crash_watcher's
+    # equivalent last-op file did.
+    from crash_watcher import _redact_secrets
+except ImportError:
+    def _redact_secrets(text: str) -> str:
+        return text
+
+
+def _redact_value(value: Any) -> Any:
+    """Recursively apply _redact_secrets to string values inside a
+    JSON-like structure, leaving non-string types untouched."""
+    if isinstance(value, str):
+        return _redact_secrets(value)
+    if isinstance(value, dict):
+        return {k: _redact_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_value(v) for v in value]
+    return value
+
 
 # LEAN LOGGING CONFIGURATION
 # Set LEAN_LOGGING = False to get verbose per-stage logging for development
@@ -234,22 +259,22 @@ class FreeCADDebugger:
         for key, value in params.items():
             try:
                 json.dumps(value)
-                serialized[key] = value
+                serialized[key] = _redact_value(value)
             except (TypeError, ValueError):
-                serialized[key] = str(value)
-        
+                serialized[key] = _redact_secrets(str(value))
+
         return serialized
-    
+
     def _serialize_result(self, result: Any) -> Any:
         """Serialize result for logging."""
         if result is None:
             return None
-        
+
         try:
             json.dumps(result)
-            return result
+            return _redact_value(result)
         except (TypeError, ValueError):
-            return str(result)
+            return _redact_secrets(str(result))
     
     # Above this many objects, capture_freecad_state stops per-object detail
     # and only reports names — matches document_ops.list_objects's cap so a
@@ -316,12 +341,21 @@ class FreeCADDebugger:
             "label": getattr(obj, "Label", "?"),
         }
 
+        # Each section logs on failure instead of a bare `pass` -- this is
+        # exactly the crash-diagnosis path where a silently-vanished
+        # Shape.isValid()/BoundBox (the single most load-bearing fact for a
+        # geometry crash) does the most damage: it disappears precisely when
+        # OCCT internals are most likely to be corrupted, with no signal
+        # that anything was even attempted. Still caught, not re-raised --
+        # one malformed object/property must not abort the whole capture.
+        _log = logging.getLogger("FreeCAD_MCP")
+
         try:
             state_flags = getattr(obj, "State", None)
             if state_flags:
                 info["state"] = list(state_flags)
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning(f"_capture_object_state({info['name']}): failed to capture State: {e}")
 
         try:
             placement = getattr(obj, "Placement", None)
@@ -335,8 +369,8 @@ class FreeCADDebugger:
                     ],
                     "rotation_angle": placement.Rotation.Angle,
                 }
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning(f"_capture_object_state({info['name']}): failed to capture Placement: {e}")
 
         try:
             shape = getattr(obj, "Shape", None)
@@ -348,8 +382,8 @@ class FreeCADDebugger:
                     bb = shape.BoundBox
                     shape_info["bbox"] = [bb.XMin, bb.YMin, bb.ZMin, bb.XMax, bb.YMax, bb.ZMax]
                 info["shape"] = shape_info
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning(f"_capture_object_state({info['name']}): failed to capture Shape: {e}")
 
         try:
             props = {}

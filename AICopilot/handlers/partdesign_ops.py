@@ -5,7 +5,7 @@ import math
 import FreeCAD
 import Part
 from typing import Dict, Any
-from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
+from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR, axis_vector_or_none
 
 
 class PartDesignOpsHandler(BaseHandler):
@@ -212,15 +212,20 @@ class PartDesignOpsHandler(BaseHandler):
                 edge_names = [f"Edge{idx}" for idx in edge_indices]
                 fillet.Base = (obj, edge_names)
             else:
-                # Fallback to Part::Fillet if not in a Body
+                # Validate BEFORE creating anything -- same "reject
+                # up front, don't silently under-fillet" contract as
+                # _create_fillet_with_edges (fixed 2026-08-21); this
+                # selection-based sibling had never received the fix.
+                n_edges = len(obj.Shape.Edges) if hasattr(obj, 'Shape') else 0
+                invalid = [idx for idx in edge_indices if not (1 <= idx <= n_edges)]
+                if invalid:
+                    return (
+                        f"Invalid edge index/indices {invalid} for {object_name} "
+                        f"({n_edges} edges, valid range 1-{n_edges})"
+                    )
                 fillet = doc.addObject("Part::Fillet", name)
                 fillet.Base = obj
-                if hasattr(obj, 'Shape') and obj.Shape.Edges:
-                    edge_list = []
-                    for edge_idx in edge_indices:
-                        if 1 <= edge_idx <= len(obj.Shape.Edges):
-                            edge_list.append((edge_idx, radius, radius))
-                    fillet.Edges = edge_list
+                fillet.Edges = [(idx, radius, radius) for idx in edge_indices]
 
             self.recompute(doc)
 
@@ -386,14 +391,20 @@ class PartDesignOpsHandler(BaseHandler):
                 edge_names = [f"Edge{idx}" for idx in edge_indices]
                 chamfer.Base = (obj, edge_names)
             else:
+                # Validate BEFORE creating anything -- same "reject
+                # up front, don't silently under-chamfer" contract as
+                # _create_fillet_with_edges (fixed 2026-08-21); this
+                # selection-based sibling had never received the fix.
+                n_edges = len(obj.Shape.Edges) if hasattr(obj, 'Shape') else 0
+                invalid = [idx for idx in edge_indices if not (1 <= idx <= n_edges)]
+                if invalid:
+                    return (
+                        f"Invalid edge index/indices {invalid} for {object_name} "
+                        f"({n_edges} edges, valid range 1-{n_edges})"
+                    )
                 chamfer = doc.addObject("Part::Chamfer", name)
                 chamfer.Base = obj
-                if hasattr(obj, 'Shape') and obj.Shape.Edges:
-                    edge_list = []
-                    for edge_idx in edge_indices:
-                        if 1 <= edge_idx <= len(obj.Shape.Edges):
-                            edge_list.append((edge_idx, distance))
-                    chamfer.Edges = edge_list
+                chamfer.Edges = [(idx, distance) for idx in edge_indices]
 
             self.recompute(doc)
 
@@ -813,11 +824,12 @@ class PartDesignOpsHandler(BaseHandler):
             # No Body — standalone doc.copyObject approach (unchanged).
             angle_step = angle / count
 
-            axis_vector = FreeCAD.Vector(0, 0, 1)
-            if axis.lower() == 'x':
-                axis_vector = FreeCAD.Vector(1, 0, 0)
-            elif axis.lower() == 'y':
-                axis_vector = FreeCAD.Vector(0, 1, 0)
+            # No fallback: an unrecognized axis used to silently rotate
+            # around Z while the success message still echoed the
+            # requested axis string.
+            axis_vector = axis_vector_or_none(axis)
+            if axis_vector is None:
+                return f"Invalid axis '{axis}': must be 'x', 'y', or 'z'"
 
             copies = []
             for i in range(1, count):
@@ -1444,7 +1456,9 @@ class PartDesignOpsHandler(BaseHandler):
                 selection_type="faces",
                 message=f"Please select face(s) to remove for opening the {object_name} object in FreeCAD.\nTell me when you have finished selecting faces...",
                 object_name=object_name,
-                hints="Usually select the top face or access faces for openings. Ctrl+click for multiple faces."
+                hints="Usually select the top face or access faces for openings. Ctrl+click for multiple faces.",
+                thickness=thickness,
+                name=name
             )
 
             return json.dumps(selection_request)
@@ -1471,6 +1485,20 @@ class PartDesignOpsHandler(BaseHandler):
             if not face_indices:
                 return "No faces were selected for opening"
 
+            # Validate BEFORE creating anything -- same "reject up front,
+            # don't silently drop selected faces" contract as
+            # _create_fillet_with_edges (fixed 2026-08-21); this
+            # selection-based sibling had never received the fix, and the
+            # response used to claim all of len(face_indices) were applied
+            # even when some were silently filtered out below.
+            n_faces = len(obj.Shape.Faces) if hasattr(obj, 'Shape') else 0
+            invalid = [fi for fi in face_indices if not (1 <= fi <= n_faces)]
+            if invalid:
+                return (
+                    f"Invalid face index/indices {invalid} for {object_name} "
+                    f"({n_faces} faces, valid range 1-{n_faces})"
+                )
+
             # Part::Thickness has no Source property at all - confirmed live
             # it raises AttributeError unconditionally ('Part.Feature'
             # object has no attribute 'Source'). The .Faces assignment
@@ -1481,14 +1509,12 @@ class PartDesignOpsHandler(BaseHandler):
             shell.Value = thickness
             shell.Join = 2
 
-            if hasattr(obj, 'Shape') and obj.Shape.Faces:
-                # Part::Thickness.Faces is an App::PropertyLinkSubList — it takes
-                # (object, ("Face1", ...)) with 1-based FaceN sub-names, NOT raw
-                # integer indices (the sibling _create_thickness_with_selection
-                # does it this way). Passing ints silently produces a wrong/closed
-                # shell.
-                valid = [fi for fi in face_indices if 1 <= fi <= len(obj.Shape.Faces)]
-                shell.Faces = (obj, tuple(f"Face{fi}" for fi in valid))
+            # Part::Thickness.Faces is an App::PropertyLinkSubList — it takes
+            # (object, ("Face1", ...)) with 1-based FaceN sub-names, NOT raw
+            # integer indices (the sibling _create_thickness_with_selection
+            # does it this way). Passing ints silently produces a wrong/closed
+            # shell.
+            shell.Faces = (obj, tuple(f"Face{fi}" for fi in face_indices))
 
             self.recompute(doc)
 
@@ -1791,15 +1817,20 @@ class PartDesignOpsHandler(BaseHandler):
             rib = doc.addObject("Part::Extrusion", name)
             rib.Base = sketch
 
-            if direction.lower() == 'horizontal':
+            direction_lower = direction.lower() if isinstance(direction, str) else direction
+            if direction_lower == 'horizontal':
                 rib.Dir = (1, 0, 0)
-                rib.LengthFwd = thickness
-            elif direction.lower() == 'vertical':
+            elif direction_lower == 'vertical':
                 rib.Dir = (0, 0, 1)
-                rib.LengthFwd = thickness
-            else:
+            elif direction_lower == 'normal':
                 rib.Dir = (0, 1, 0)
-                rib.LengthFwd = thickness
+            else:
+                # No fallback: an unrecognized direction used to silently
+                # fall into the 'normal' case while the success message
+                # still echoed the requested (wrong) direction string.
+                doc.removeObject(rib.Name)
+                return f"Invalid direction '{direction}': must be 'horizontal', 'vertical', or 'normal'"
+            rib.LengthFwd = thickness
 
             rib.Solid = True
 

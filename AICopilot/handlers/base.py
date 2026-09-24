@@ -53,6 +53,33 @@ AUTOSAVE_DEFAULT = True   # upstream behaviour: save unless the operator switche
 # separate channel the model has to go looking for.
 NO_ACTIVE_DOCUMENT_ERROR = "No active document. Call view_control(operation='create_document') first."
 
+# Single source of truth for axis-letter -> FreeCAD.Vector resolution.
+# Before this helper existed, at least 7 call sites (rotate_object,
+# revolution, groove, create_helix, linear_pattern/polar_pattern's
+# standalone fallback paths, mirror_object, extrude) each hand-rolled this
+# lookup independently, with inconsistent unknown-axis handling -- several
+# silently fell back to Z while their own success message echoed the
+# caller's (wrong) axis letter as if it had been honored. Every caller MUST
+# check for None and return an error -- never substitute a default vector.
+#
+# Vectors are built lazily inside the function (not as a module-level
+# constant) so importing this module never requires FreeCAD.Vector to exist
+# yet -- matters for unit tests that patch in a lightweight FreeCAD mock.
+def axis_vector_or_none(axis: str):
+    """Resolve an axis letter ('x'/'y'/'z', case-insensitive) to a
+    FreeCAD.Vector, or None if unrecognized. Callers must treat None as a
+    hard error -- silent substitution of a default axis is the specific,
+    already-shipped-and-fixed bug class this exists to avoid."""
+    if not isinstance(axis, str):
+        return None
+    axis_vectors = {
+        'x': FreeCAD.Vector(1, 0, 0),
+        'y': FreeCAD.Vector(0, 1, 0),
+        'z': FreeCAD.Vector(0, 0, 1),
+    }
+    return axis_vectors.get(axis.lower())
+
+
 AUTOSAVE_OUTCOMES = frozenset({
     'saved',             # the document was written to its FileName
     'disabled',          # preference is off — nothing written
