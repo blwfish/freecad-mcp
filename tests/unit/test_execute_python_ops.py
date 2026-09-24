@@ -189,6 +189,16 @@ class TestPrimaryToolAlternativeDetection(unittest.TestCase):
         result = self._run_python("a = Part.makeBox(1, 1, 1)\nb = Part.makeBox(1, 1, 1)\na.fuse(b)")
         self.assertIn("fuse", result["result"])
 
+    def test_extrude_gets_a_tip(self):
+        """The literal example CLAUDE.md's own rule uses ("don't call
+        Part.extrude() via raw execute_python when part_operations/
+        partdesign_operations already has an extrude operation") -- full-
+        review 2026-09-23, Low finding #73: this exact case was missing
+        from the detection table."""
+        result = self._run_python("Part.makeBox(1, 1, 1).extrude(FreeCAD.Vector(0, 0, 10))")
+        self.assertIn("part_operations", result["result"])
+        self.assertIn("extrude", result["result"])
+
     def test_unrelated_code_gets_no_tip(self):
         result = self._run_python("x = 1 + 1")
         self.assertNotIn("part_operations", result["result"])

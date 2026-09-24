@@ -80,7 +80,13 @@ class BooleanOpsHandler(BaseHandler):
                     return err
                 tool_objs.append(tool_obj)
 
-            # Safety: save before risky op
+            # Safety: warn on high complexity, save before risky op.
+            # fuse_objects/common_objects both do this; cut_objects had
+            # been missing it -- an inconsistent safety gate for arguably
+            # the boolean most likely to be run with many tool objects.
+            warning = self.check_complexity([base_obj] + tool_objs)
+            if warning:
+                FreeCAD.Console.PrintWarning(f"[MCP] {warning}\n")
             self.save_before_risky_op(doc)
 
             # Create cut and hide sources. Part::Cut.Tool is a single reference

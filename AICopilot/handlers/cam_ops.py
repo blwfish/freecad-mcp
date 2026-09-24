@@ -6,6 +6,26 @@ from typing import Dict, Any
 from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
 
 
+def _clear_expression_binding(obj, prop_name: str) -> None:
+    """Clear any SetupSheet-driven expression binding on obj.prop_name
+    before assigning a raw value to it.
+
+    FreeCAD's Path operations bind properties like StepDown/FinalDepth to
+    a SetupSheet-computed expression by default -- setting only the raw
+    value leaves that binding live, so the caller's own recompute() right
+    after silently reverts the value back to the SetupSheet default. This
+    exact 3-line try/setExpression(None)/except was hand-copied at 3 call
+    sites in this file (creation-time drilling depth, configure_operation's
+    stepdown update, and _create_path_op's stepdown) for the same reason
+    each time; nothing tied them together, so a future property with the
+    same quirk needed a 4th hand-copy to get the fix automatically.
+    """
+    try:
+        obj.setExpression(prop_name, None)
+    except Exception:
+        pass
+
+
 class CAMOpsHandler(BaseHandler):
     """Handler for CAM (Path) workbench operations."""
 
@@ -301,10 +321,7 @@ class CAMOpsHandler(BaseHandler):
                 # silently reverts the requested drill depth back to the
                 # SetupSheet-computed default — a wrong depth on a drilling
                 # cycle is a crash-into-fixture/table risk on real hardware.
-                try:
-                    op.setExpression('FinalDepth', None)
-                except Exception:
-                    pass
+                _clear_expression_binding(op, 'FinalDepth')
                 op.FinalDepth = args['depth']
             if 'retract_height' in args and hasattr(op, 'RetractHeight'):
                 op.RetractHeight = args['retract_height']
@@ -852,10 +869,7 @@ class CAMOpsHandler(BaseHandler):
             if 'stepdown' in args and hasattr(operation, 'StepDown'):
                 # Clear any expression binding before setting — recompute would
                 # restore the SetupSheet-driven default otherwise.
-                try:
-                    operation.setExpression('StepDown', None)
-                except Exception:
-                    pass
+                _clear_expression_binding(operation, 'StepDown')
                 operation.StepDown = FreeCAD.Units.Quantity(f"{args['stepdown']} mm")
                 updates.append(f"stepdown: {args['stepdown']}mm")
 
@@ -1342,10 +1356,7 @@ class CAMOpsHandler(BaseHandler):
             # right after this returns) silently reverts it back to the
             # SetupSheet-computed default. See configure_operation() above,
             # which already does this correctly.
-            try:
-                op.setExpression('StepDown', None)
-            except Exception:
-                pass
+            _clear_expression_binding(op, 'StepDown')
             op.StepDown = args['stepdown']
         if 'direction' in args and hasattr(op, 'Direction'):
             op.Direction = args['direction']

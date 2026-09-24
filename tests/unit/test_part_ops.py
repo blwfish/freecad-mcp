@@ -192,7 +192,10 @@ class TestMirror(unittest.TestCase):
         result = self.handler.mirror_object({
             'object_name': 'Datum', 'plane': 'YZ',
         })
-        assert_error_contains(self, result, "not a shape object")
+        # Message now comes from resolve_object(attr='Shape') (full-review
+        # 2026-09-23, Low finding #68) instead of a hand-written check --
+        # wording changed from "not a shape object" to "has no Shape property".
+        assert_error_contains(self, result, "no Shape property")
 
 
 class TestScaleObject(unittest.TestCase):

@@ -387,12 +387,21 @@ def _emit_warning(msg: str) -> None:
         pass
 
 
+_WARNING_TEXT_MAX_LEN = 500
+
+
 def _log_unknown_schema(path: str, data: dict) -> None:
     """Emit a one-line warning about a discovery record we don't understand."""
     keys = sorted(data.keys()) if isinstance(data, dict) else []
+    # A malformed/adversarial discovery record could carry an arbitrary
+    # number of keys -- cap the embedded text so one bad file can't produce
+    # an unbounded warning line.
+    keys_str = str(keys)
+    if len(keys_str) > _WARNING_TEXT_MAX_LEN:
+        keys_str = keys_str[:_WARNING_TEXT_MAX_LEN] + "...[truncated]"
     _emit_warning(
         f"instance_registry.scan_discovery: skipping record without "
-        f"socket_path: {os.path.basename(path)} (keys: {keys}). "
+        f"socket_path: {os.path.basename(path)} (keys: {keys_str}). "
         f"Possibly a newer schema; record preserved."
     )
 
@@ -405,6 +414,12 @@ def _log_dropped_record(path: str, reason: str) -> None:
     from "no live instances" -- scan_discovery would just return an empty
     list either way, with nothing to tell the two cases apart.
     """
+    # `reason` is typically a caught exception's str(), which for a
+    # sufficiently corrupted/adversarial file (e.g. a JSONDecodeError with
+    # a very long offending line) could itself be large -- cap it so one
+    # bad file can't produce an unbounded warning line.
+    if len(reason) > _WARNING_TEXT_MAX_LEN:
+        reason = reason[:_WARNING_TEXT_MAX_LEN] + "...[truncated]"
     _emit_warning(
         f"instance_registry.scan_discovery: dropping {os.path.basename(path)}: {reason}."
     )

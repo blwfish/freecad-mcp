@@ -342,7 +342,17 @@ class FreeCADHealthMonitor:
     def attempt_restart(self) -> bool:
         """
         Attempt to restart FreeCAD.
-        
+
+        INCOMPLETE: this kills the existing FreeCAD process (SIGTERM, then
+        SIGKILL if still alive) but the actual restart is a TODO -- it
+        always returns False and logs "you may need to manually restart
+        FreeCAD". Confirmed via repo-wide grep (2026-09-23) that this has
+        ZERO real callers in production code (perform_health_check/
+        check_freecad_process are the only other members of this class
+        with real callers) -- do not wire this into a real call path
+        without first implementing the restart itself, or it becomes a
+        pure process-killer with no compensating benefit.
+
         Returns:
             True if restart was successful
         """

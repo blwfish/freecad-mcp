@@ -139,7 +139,10 @@ class TransformsHandler(BaseHandler):
 
             self.recompute(doc)
 
-            return f"Created array: {count} copies of {object_name} with spacing ({spacing_x}, {spacing_y}, {spacing_z})"
+            # range(1, count) creates count-1 new copies (the original is
+            # instance 0) -- the message previously said "{count} copies",
+            # overstating the actual new-object count by one.
+            return f"Created array: original + {len(copies)} copies of {object_name} with spacing ({spacing_x}, {spacing_y}, {spacing_z})"
 
         except Exception as e:
             return f"Error creating array: {e}"

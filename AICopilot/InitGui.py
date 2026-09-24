@@ -93,15 +93,19 @@ else:
                 FreeCAD.Console.PrintMessage("AI Service already running\n")
                 return True
 
+            # Single import serving both the version-string log line and the
+            # actual server construction below (previously imported twice:
+            # once for __version__ with an ImportError fallback, once more
+            # unconditionally for FreeCADSocketServer itself).
             try:
                 from freecad_mcp_handler import FreeCADSocketServer, __version__ as _handler_version
-            except ImportError:
-                _handler_version = "?"
+            except ImportError as e:
+                FreeCAD.Console.PrintError(f"Could not import freecad_mcp_handler: {e}\n")
+                return False
 
             FreeCAD.Console.PrintMessage(f"Starting FreeCAD AI Copilot Service v{_handler_version}...\n")
 
             try:
-                from freecad_mcp_handler import FreeCADSocketServer
                 self.socket_server = FreeCADSocketServer()
                 if self.socket_server.start_server():
                     FreeCAD._ai_socket_server = self.socket_server

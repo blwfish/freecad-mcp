@@ -136,7 +136,13 @@ def set_current_op(tool: str, args: dict) -> None:
     """Write current operation to disk BEFORE executing it.
 
     Truncates large args so the file stays readable.
-    Safe to call from any thread — os.write is atomic for small payloads.
+    Safe to call from any thread — the actual write is to a temp file
+    followed by os.replace() (an atomic rename), not a raw os.write() to
+    the destination path directly. (This docstring previously credited
+    os.write()'s own atomicity for small payloads, which isn't the
+    mechanism this function actually uses -- a future edit reasoning from
+    that claim could have "optimized away" the temp-file/rename step on
+    the mistaken belief the safety came from os.write() instead.)
     """
     safe_args = {}
     for k, v in args.items():

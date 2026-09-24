@@ -100,11 +100,9 @@ class PartOpsHandler(BaseHandler):
             plane = args.get('plane', 'YZ')
             name = args.get('name', '')
 
-            doc, obj, err = self.resolve_object(object_name)
+            doc, obj, err = self.resolve_object(object_name, attr='Shape')
             if err:
                 return err
-            if not hasattr(obj, 'Shape'):
-                return f"Object {object_name} is not a shape object"
 
             # Set mirror plane normal and origin
             if plane == "YZ":

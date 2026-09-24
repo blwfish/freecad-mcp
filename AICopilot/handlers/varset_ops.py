@@ -367,10 +367,7 @@ class VarSetOpsHandler(BaseHandler):
         """
         try:
             varset_name = args.get('varset_name', '')
-            raw_limit = args.get('limit', 200)
-            limit = max(0, min(int(200 if raw_limit is None else raw_limit), 1000))
-            raw_offset = args.get('offset', 0)
-            offset = max(0, int(0 if raw_offset is None else raw_offset))
+            limit, offset = self.paginate_bounds(args, default=200, max_limit=1000)
 
             doc, varset, err = self.resolve_object(varset_name, noun='VarSet', type_id='App::VarSet')
             if err:
@@ -388,10 +385,11 @@ class VarSetOpsHandler(BaseHandler):
             for name, status in page:
                 raw_value = getattr(varset, name)
                 value, unit_string = _property_value_for_json(raw_value)
+                type_id = varset.getTypeIdOfProperty(name)
 
                 entry = {
                     "name": name,
-                    "type": varset.getTypeIdOfProperty(name),
+                    "type": type_id,
                     "group": varset.getGroupOfProperty(name),
                     "value": value,
                     "locked": "LockDynamic" in status,
@@ -400,7 +398,7 @@ class VarSetOpsHandler(BaseHandler):
                 }
                 if unit_string is not None:
                     entry["unit_string"] = unit_string
-                if varset.getTypeIdOfProperty(name) == 'App::PropertyEnumeration':
+                if type_id == 'App::PropertyEnumeration':
                     try:
                         entry["options"] = list(varset.getEnumerationsOfProperty(name) or [])
                     except Exception:
@@ -561,10 +559,7 @@ class VarSetOpsHandler(BaseHandler):
         try:
             varset_name = args.get('varset_name', '')
             property_name = args.get('property_name')
-            raw_limit = args.get('limit', 200)
-            limit = max(0, min(int(200 if raw_limit is None else raw_limit), 1000))
-            raw_offset = args.get('offset', 0)
-            offset = max(0, int(0 if raw_offset is None else raw_offset))
+            limit, offset = self.paginate_bounds(args, default=200, max_limit=1000)
 
             doc, varset, err = self.resolve_object(varset_name, noun='VarSet', type_id='App::VarSet')
             if err:

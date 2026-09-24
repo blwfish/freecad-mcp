@@ -326,10 +326,10 @@ class MeasurementOpsHandler(BaseHandler):
             volume = shape.Volume
             center_of_mass = shape.CenterOfMass
 
-            # Calculate surface area
-            area = 0
-            for face in shape.Faces:
-                area += face.Area
+            # shape.Area is a single C++ GProp pass over the whole shape --
+            # equivalent to summing face.Area per face in a Python loop,
+            # without the per-face Python<->C++ round trip.
+            area = shape.Area
 
             return (
                 f"Mass properties of {object_name}:\n"
@@ -350,9 +350,9 @@ class MeasurementOpsHandler(BaseHandler):
             if err:
                 return err
 
-            area = 0
-            for face in obj.Shape.Faces:
-                area += face.Area
+            # shape.Area is a single C++ GProp pass over the whole shape --
+            # equivalent to summing face.Area per face in a Python loop.
+            area = obj.Shape.Area
             return f"Surface area of {object_name}: {area:.2f} mm²"
 
         except Exception as e:

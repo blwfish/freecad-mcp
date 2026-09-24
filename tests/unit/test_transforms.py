@@ -182,7 +182,10 @@ class TestArrayObject(unittest.TestCase):
             'spacing_x': 15, 'spacing_y': 0, 'spacing_z': 0,
         })
 
-        assert_success_contains(self, result, "array", "4")
+        # Message now reports "original + N copies" (N = count-1) instead
+        # of overstating the new-object count as "{count} copies" (full-
+        # review 2026-09-23, Low finding #62).
+        assert_success_contains(self, result, "array", "3")
         # 3 new copies (original is in array but not duplicated)
         self.assertEqual(doc.copyObject.call_count, 3)
         # Original + 3 copies = 4 objects total

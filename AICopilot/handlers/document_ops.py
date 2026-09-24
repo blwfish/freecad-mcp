@@ -1,7 +1,6 @@
 # Document operation handlers for FreeCAD MCP
 
 import json
-import queue
 import FreeCAD
 from typing import Dict, Any
 from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
@@ -49,15 +48,13 @@ class DocumentOpsHandler(BaseHandler):
                 result_json = self.server._run_on_gui_thread(create_doc_task, timeout=5.0)
                 parsed = json.loads(result_json)
                 return parsed.get("result", parsed.get("error", "Unknown result"))
-            elif self.gui_task_queue and self.gui_response_queue:
-                # Legacy fallback
-                self.gui_task_queue.put((0, create_doc_task))
-                try:
-                    _id, result = self.gui_response_queue.get(timeout=5.0)
-                    return result
-                except queue.Empty:
-                    return "Timeout waiting for document creation"
             else:
+                # The legacy gui_task_queue/gui_response_queue fallback that
+                # used to live here was dead: self.server always has
+                # _run_on_gui_thread in every real deployment (view_ops.py's
+                # constructor already documents the same queues going
+                # unread there for the same reason). Removed rather than
+                # left as unreachable code.
                 return "Error: no GUI thread dispatcher available — cannot safely create document"
 
         except Exception as e:
@@ -112,10 +109,7 @@ class DocumentOpsHandler(BaseHandler):
             # "count only" (returns no objects), negative collapses to 0 — but it
             # must never become a negative slice bound. offset cannot be negative
             # (a negative offset would otherwise skip from the end of the list).
-            raw_limit = args.get('limit', 100)
-            limit = max(0, min(int(100 if raw_limit is None else raw_limit), 500))
-            raw_offset = args.get('offset', 0)
-            offset = max(0, int(0 if raw_offset is None else raw_offset))
+            limit, offset = self.paginate_bounds(args, default=100, max_limit=500)
             type_filter = args.get('type_filter', None)
 
             total_count = len(doc.Objects)

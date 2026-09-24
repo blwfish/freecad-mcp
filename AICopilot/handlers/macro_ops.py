@@ -139,10 +139,7 @@ class MacroOpsHandler(BaseHandler):
         # legitimately means "count only"; negative collapses to 0, never a
         # negative slice bound); offset can't be negative either (a negative
         # offset would otherwise skip from the end of the list).
-        raw_limit = args.get("limit", 100)
-        limit = max(0, min(int(100 if raw_limit is None else raw_limit), 500))
-        raw_offset = args.get("offset", 0)
-        offset = max(0, int(0 if raw_offset is None else raw_offset))
+        limit, offset = self.paginate_bounds(args, default=100, max_limit=500)
 
         try:
             entries = sorted(os.listdir(macro_dir))
@@ -288,6 +285,17 @@ class MacroOpsHandler(BaseHandler):
             })
 
         try:
+            # Same size guard as read() -- previously missing here, an
+            # inconsistency between the two sibling operations reading the
+            # same class of file.
+            size = os.path.getsize(path)
+            if size > _MAX_READ_BYTES:
+                return json.dumps({
+                    "error": f"Macro too large to run ({size} bytes; limit {_MAX_READ_BYTES})",
+                    "name": os.path.basename(path),
+                    "path": path,
+                    "size": size,
+                })
             with open(path, "r", encoding="utf-8", errors="replace") as f:
                 source = f.read()
         except OSError as e:

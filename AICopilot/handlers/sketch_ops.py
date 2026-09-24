@@ -58,11 +58,7 @@ class SketchOpsHandler(BaseHandler):
             )
 
             # Try to add sketch to active PartDesign Body if one exists
-            body = None
-            for obj in doc.Objects:
-                if obj.TypeId == 'PartDesign::Body':
-                    body = obj
-                    break
+            body = self.find_body(doc)
             if body:
                 body.addObject(sketch)
 
@@ -578,8 +574,12 @@ class SketchOpsHandler(BaseHandler):
             result = sketch.fillet(geo_id, pos_id, radius)
             self.recompute(doc)
 
+            # result is the new arc's geo_id -- previously computed and
+            # discarded, even though it's the one piece of information a
+            # caller most needs after this call (to add further
+            # constraints to the new arc).
             return (f"Added fillet to {sketch_name} at geo_id={geo_id}, "
-                    f"pos_id={pos_id}, radius={radius}")
+                    f"pos_id={pos_id}, radius={radius} (new arc geo_id={result})")
 
         except Exception as e:
             return f"Error adding sketch fillet: {e}"
