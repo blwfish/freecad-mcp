@@ -299,12 +299,18 @@ class MacroOpsHandler(BaseHandler):
             "FreeCAD": FreeCAD,
             "App": FreeCAD,
         }
-        try:
-            import FreeCADGui  # noqa: F401
-            namespace["FreeCADGui"] = FreeCADGui
-            namespace["Gui"] = FreeCADGui
-        except ImportError:
-            pass
+        # Importing FreeCADGui headless (GuiUp==0) still loads libCoin.so as
+        # a side effect, which can SIGSEGV the process on the next
+        # xml.etree call -- same mechanism cam_ops.py/fixture_ops.py guard
+        # against. A bare try/except ImportError doesn't help: the import
+        # itself succeeds in this case, it just primes the later crash.
+        if FreeCAD.GuiUp:
+            try:
+                import FreeCADGui  # noqa: F401
+                namespace["FreeCADGui"] = FreeCADGui
+                namespace["Gui"] = FreeCADGui
+            except ImportError:
+                pass
         try:
             import Part  # noqa: F401
             namespace["Part"] = Part

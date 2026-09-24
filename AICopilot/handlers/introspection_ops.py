@@ -24,6 +24,8 @@ from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
+import FreeCAD
+
 from .base import BaseHandler
 
 
@@ -143,6 +145,13 @@ def _resolve_path(path: str) -> Tuple[Optional[Any], Optional[str]]:
 
     obj = sys.modules.get(head)
     if obj is None:
+        # Importing FreeCADGui headless (GuiUp==0) still loads libCoin.so as
+        # a side effect, which can SIGSEGV the process on the next
+        # xml.etree call (e.g. FreeCAD.newDocument()) -- same mechanism
+        # cam_ops.py/fixture_ops.py already guard against. Check GuiUp
+        # first instead of attempting the import unconditionally.
+        if head == "FreeCADGui" and not FreeCAD.GuiUp:
+            return None, "'FreeCADGui' is not available in headless mode"
         try:
             obj = __import__(head)
         except ImportError as e:
@@ -451,6 +460,14 @@ class IntrospectionOpsHandler(BaseHandler):
         for mod_name in module_names:
             mod = sys.modules.get(mod_name)
             if mod is None:
+                # Same GuiUp guard as _resolve_dotted_path -- see its
+                # comment. search() with no explicit `modules` arg
+                # defaults to scanning all of DEFAULT_MODULES, including
+                # "FreeCADGui", making this the single most reachable
+                # trigger for the SIGSEGV this guard prevents.
+                if mod_name == "FreeCADGui" and not FreeCAD.GuiUp:
+                    missing.append({"module": mod_name, "reason": "not available in headless mode"})
+                    continue
                 try:
                     mod = __import__(mod_name)
                 except Exception as e:

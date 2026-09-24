@@ -2,7 +2,7 @@
 
 import FreeCAD
 from typing import Dict, Any
-from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
+from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR, axis_vector_or_none
 
 
 class PartOpsHandler(BaseHandler):
@@ -56,19 +56,18 @@ class PartOpsHandler(BaseHandler):
         try:
             profile_sketch = args.get('profile_sketch', '')
             angle = args.get('angle', 360)
-            axis = args.get('axis', 'z').lower()
+            axis = args.get('axis', 'z')
 
             doc, sketch, err = self.resolve_object(profile_sketch, attr='Shape', noun='Sketch')
             if err:
                 return err
 
-            # Define revolution axis
-            if axis == 'x':
-                axis_vec = FreeCAD.Vector(1, 0, 0)
-            elif axis == 'y':
-                axis_vec = FreeCAD.Vector(0, 1, 0)
-            else:
-                axis_vec = FreeCAD.Vector(0, 0, 1)
+            # Define revolution axis -- no fallback: an unrecognized axis
+            # used to silently revolve around Z while the success message
+            # still echoed the requested axis string.
+            axis_vec = axis_vector_or_none(axis)
+            if axis_vec is None:
+                return f"Invalid axis '{axis}': must be 'x', 'y', or 'z'"
 
             shape = sketch.Shape
             import Part

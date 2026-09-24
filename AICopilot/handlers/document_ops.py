@@ -330,8 +330,13 @@ class DocumentOpsHandler(BaseHandler):
             names = [obj.Name for obj in doc.Objects]
             if not hasattr(self, '_checkpoints'):
                 self._checkpoints = {}
-            self._checkpoints[label] = names
-            return f"Checkpoint '{label}' saved: {len(names)} objects"
+            # Record which document this checkpoint belongs to -- without
+            # this, a rollback taken after the active document changed
+            # (switching tabs, insert_shape's multi-doc workflow, etc.)
+            # would silently diff against and delete objects from an
+            # unrelated document.
+            self._checkpoints[label] = {"document": doc.Name, "names": names}
+            return f"Checkpoint '{label}' saved: {len(names)} objects (document: {doc.Name})"
         except Exception as e:
             return f"Error creating checkpoint: {e}"
 
@@ -345,18 +350,31 @@ class DocumentOpsHandler(BaseHandler):
             label = args.get('name', 'default')
             if not hasattr(self, '_checkpoints') or label not in self._checkpoints:
                 return f"No checkpoint named '{label}'"
+            checkpoint = self._checkpoints[label]
             doc = FreeCAD.ActiveDocument
             if not doc:
                 return NO_ACTIVE_DOCUMENT_ERROR
-            saved = set(self._checkpoints[label])
+            if doc.Name != checkpoint["document"]:
+                return (
+                    f"Refusing to roll back: checkpoint '{label}' was taken in document "
+                    f"'{checkpoint['document']}' but the active document is now "
+                    f"'{doc.Name}'. Switch back to '{checkpoint['document']}' first."
+                )
+            saved = set(checkpoint["names"])
             to_remove = [obj.Name for obj in doc.Objects if obj.Name not in saved]
+            removed = []
+            failed = []
             for obj_name in to_remove:
                 try:
                     doc.removeObject(obj_name)
-                except Exception:
-                    pass
-            removed_str = ', '.join(to_remove) if to_remove else 'none'
-            return f"Rollback to '{label}': removed {len(to_remove)} objects ({removed_str})"
+                    removed.append(obj_name)
+                except Exception as e:
+                    failed.append(f"{obj_name} ({e})")
+            removed_str = ', '.join(removed) if removed else 'none'
+            msg = f"Rollback to '{label}': removed {len(removed)} of {len(to_remove)} objects ({removed_str})"
+            if failed:
+                msg += f"; FAILED to remove: {', '.join(failed)}"
+            return msg
         except Exception as e:
             return f"Error rolling back: {e}"
 

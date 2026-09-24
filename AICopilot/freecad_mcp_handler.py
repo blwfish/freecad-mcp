@@ -326,9 +326,15 @@ except ImportError as e:
     FreeCAD.Console.PrintMessage(f"MCP Debug not available (optional): {e}\n")
 
 except Exception as e:
+    # This subsystem is documented as optional ("Fix or remove
+    # freecad_debug.py/freecad_health.py"), but sys.exit(1) here used to
+    # kill the whole addon load -- SystemExit isn't a subclass of
+    # Exception, so InitGui.py's `except Exception` never caught it.
+    # Degrade gracefully instead: log loudly and continue without the
+    # debug subsystem, matching what "optional" actually promises.
     FreeCAD.Console.PrintError(f"MCP Debug modules broken: {e}\n")
     FreeCAD.Console.PrintError("  Fix or remove freecad_debug.py/freecad_health.py\n")
-    sys.exit(1)
+    DEBUG_ENABLED = False
 
 # =============================================================================
 # Crash Watcher (optional — writes last-op to /tmp before each operation)
@@ -355,10 +361,16 @@ try:
     declare_requirements("freecad_mcp_handler", REQUIRED_VERSIONS)
     valid, error = validate_all()
     if not valid:
+        # REQUIRED_VERSIONS currently only lists the two optional debug
+        # modules above. If either failed to import (its own except
+        # ImportError block already degraded gracefully), validate_all()
+        # fails here too -- but sys.exit(1) used to kill the whole addon
+        # load on top of that, contradicting "optional". SystemExit isn't
+        # caught by InitGui.py's `except Exception`, so this crashed the
+        # entire FreeCAD startup over a missing optional dependency.
         FreeCAD.Console.PrintError(f"Version validation failed: {error}\n")
         FreeCAD.Console.PrintError("Component status:\n")
         FreeCAD.Console.PrintError(json.dumps(get_status(), indent=2) + "\n")
-        sys.exit(1)
     FreeCAD.Console.PrintMessage(f"freecad_mcp_handler v{__version__} validated\n")
 except ImportError as e:
     FreeCAD.Console.PrintWarning(f"Version system not available (optional): {e}\n")

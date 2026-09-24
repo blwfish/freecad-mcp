@@ -240,9 +240,17 @@ def scan_discovery(prune_stale: bool = True) -> list[dict]:
             _log_dropped_record(path, f"not a JSON object (got {type(data).__name__})")
             continue
         sock_path = data.get("socket_path")
-        if sock_path is None:
+        if sock_path is None or not isinstance(sock_path, str):
             # Schema mismatch — likely a future-version record we don't
-            # know how to interpret.  Don't delete; log and skip.
+            # know how to interpret, OR a malformed socket_path of the
+            # wrong type (int/list/dict/bool). Without the type check, a
+            # non-str socket_path reaches is_socket_alive() -> os.path.
+            # exists(), which raises an uncaught TypeError that isn't
+            # caught by anything in this loop -- aborting the ENTIRE scan
+            # (not just this one record) and permanently wedging
+            # multi-instance discovery in both this process and the
+            # bridge until the bad file is manually removed.
+            # Don't delete; log and skip.
             _log_unknown_schema(path, data)
             continue
         if is_socket_alive(sock_path):
@@ -328,7 +336,11 @@ def sweep_stale_sockets(directory: str = "/tmp") -> int:
         if not isinstance(data, dict):
             continue
         sock_path = data.get("socket_path")
-        if sock_path:
+        # Must be a str: a non-str/unhashable socket_path (list/dict) would
+        # raise an uncaught TypeError as a dict key below, aborting the
+        # whole sweep -- same class of bug as scan_discovery's socket_path
+        # type check above.
+        if isinstance(sock_path, str) and sock_path:
             pid_by_socket[sock_path] = data.get("pid")
 
     removed = 0

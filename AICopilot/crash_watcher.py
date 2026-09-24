@@ -140,7 +140,19 @@ def set_current_op(tool: str, args: dict) -> None:
     """
     safe_args = {}
     for k, v in args.items():
-        s = _redact_secrets(str(v))
+        # str(v) can raise -- e.g. a Python int with more digits than
+        # sys.get_int_max_str_digits() (default 4300, Python 3.11+) raises
+        # ValueError on conversion. This loop used to sit outside any
+        # try/except, so that raised straight out of set_current_op and
+        # killed the ENTIRE tool dispatch that called it (crash-watcher is
+        # meant to record what's in flight before a risky op, not itself be
+        # a crash point). One bad arg must degrade to a placeholder for
+        # that key, not abort the whole call.
+        try:
+            s = _redact_secrets(str(v))
+        except Exception as e:
+            safe_args[k] = f"<unrepresentable: {type(e).__name__}>"
+            continue
         # _MAX_ARG_BYTES is a BYTE limit — truncate on the encoded bytes, not the
         # character count, so multibyte UTF-8 args don't blow past it. The kept
         # slice is shortened by the suffix's own byte length so the final
