@@ -399,6 +399,23 @@ class TestCaptureObjectState:
 
         assert "properties" not in info or "Weird" not in info.get("properties", {})
 
+    def test_non_scalar_property_recorded_in_properties_skipped(self):
+        """Full-review 2026-09-23, Low finding #113: a non-scalar property
+        (no .Value, not a plain scalar) used to be silently dropped with no
+        signal at all. Now recorded by name in properties_skipped."""
+        obj = self._make_object(properties_list=["Weird"])
+        obj.Weird = MagicMock()  # not a scalar, .Value unresolved
+
+        info = freecad_debug.FreeCADDebugger._capture_object_state(obj)
+
+        assert info["properties_skipped"] == ["Weird"]
+
+    def test_no_skipped_properties_key_omitted(self):
+        obj = self._make_object(properties_list=["Length"])
+        obj.Length = 5.0
+        info = freecad_debug.FreeCADDebugger._capture_object_state(obj)
+        assert "properties_skipped" not in info
+
     def test_shape_and_placement_and_state_excluded_from_properties_dict(self):
         """These are captured in their own dedicated sections above — must
         not also appear duplicated inside "properties"."""
@@ -574,6 +591,29 @@ class TestPerformanceReport:
         report = d.get_performance_report()
         assert "alpha" in report
         assert "beta" in report
+
+
+class TestExportDebugPackage:
+    """Full-review 2026-09-23, Low finding #94: freecad_mcp_server.py's
+    shutdown path called debugger.export_debug_package(), a method that
+    didn't exist -- AttributeError, silently caught. Now implemented."""
+
+    def test_writes_performance_report_to_a_file_and_returns_its_path(self, tmp_path):
+        d = make_debugger(tmp_path)
+        d.track_performance("my_op", 0.5)
+        path = d.export_debug_package()
+        assert os.path.isfile(path)
+        with open(path) as f:
+            content = f.read()
+        assert "my_op" in content
+        assert "Performance Report" in content
+
+    def test_empty_performance_data_still_produces_a_file(self, tmp_path):
+        d = make_debugger(tmp_path)
+        path = d.export_debug_package()
+        assert os.path.isfile(path)
+        with open(path) as f:
+            assert "No performance data available" in f.read()
 
 
 # ---------------------------------------------------------------------------

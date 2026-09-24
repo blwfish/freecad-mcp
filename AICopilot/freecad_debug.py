@@ -425,12 +425,14 @@ class FreeCADDebugger:
 
         try:
             props = {}
+            skipped = []
             for prop_name in obj.PropertiesList:
                 if prop_name in ("Shape", "Placement", "State"):
                     continue  # captured separately above
                 try:
                     val = getattr(obj, prop_name)
                 except Exception:
+                    skipped.append(prop_name)
                     continue
                 if isinstance(val, (int, float, str, bool)) or val is None:
                     props[prop_name] = val
@@ -443,11 +445,22 @@ class FreeCADDebugger:
                     try:
                         resolved = val.Value
                     except Exception:
+                        skipped.append(prop_name)
                         continue
                     if isinstance(resolved, (int, float)):
                         props[prop_name] = resolved
+                    else:
+                        skipped.append(prop_name)
+                else:
+                    # A real, non-scalar property (list/link/matrix/...)
+                    # that this generic scalar-only capture doesn't
+                    # attempt to represent -- previously silently dropped
+                    # with no signal at all that it existed.
+                    skipped.append(prop_name)
             if props:
                 info["properties"] = props
+            if skipped:
+                info["properties_skipped"] = skipped
         except Exception:
             pass
 
@@ -528,15 +541,27 @@ class FreeCADDebugger:
             track_performance = False
         
         def decorator(func: Callable) -> Callable:
+            # Computed once at decoration time, not per-call -- a
+            # function's signature is static, and the wrapped function
+            # here (send_to_freecad) is called on every single MCP tool
+            # dispatch on the bridge side.
+            sig = inspect.signature(func)
+
             @functools.wraps(func)
             def wrapper(*args, **kwargs):
                 operation = func.__name__
-                
-                # Capture parameters
-                sig = inspect.signature(func)
-                bound_args = sig.bind(*args, **kwargs)
-                bound_args.apply_defaults()
-                parameters = dict(bound_args.arguments) if not self.lean_logging else None
+
+                # sig.bind()/apply_defaults() previously ran unconditionally
+                # even though `parameters` is immediately discarded below
+                # whenever lean_logging is True (the default) -- skip the
+                # work entirely in that case instead of computing and
+                # throwing it away on every call.
+                if self.lean_logging:
+                    parameters = None
+                else:
+                    bound_args = sig.bind(*args, **kwargs)
+                    bound_args.apply_defaults()
+                    parameters = dict(bound_args.arguments)
                 
                 if not self.lean_logging:
                     self.logger.info(f"Starting operation: {operation}")
@@ -603,6 +628,25 @@ class FreeCADDebugger:
             report.append(f"  Max: {max_time:.3f}s")
         
         return "\n".join(report)
+
+    def export_debug_package(self) -> str:
+        """Write the performance report to a timestamped file under
+        log_dir, returning its path.
+
+        Previously called from freecad_mcp_server.py's shutdown path but
+        never implemented (AttributeError, silently caught by the
+        enclosing try/except) -- confirmed independently by 3 review
+        passes. Minimal real implementation: the "package" is the
+        performance report, the one piece of debug_decorator-tracked data
+        this class accumulates that isn't already written somewhere else
+        (log_operation's JSON log covers individual operations;
+        get_performance_report's aggregate summary had no file of its own).
+        """
+        pkg_file = self.log_dir / f"debug_package_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        tmp_safety.refuse_if_symlink(str(pkg_file))
+        with open(pkg_file, 'w') as f:
+            f.write(self.get_performance_report())
+        return str(pkg_file)
 
 
 # Global debugger instance

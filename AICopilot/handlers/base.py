@@ -390,6 +390,28 @@ class BaseHandler:
 
         return doc, obj, None
 
+    @staticmethod
+    def paginate_bounds(args: dict, default: int = 100, max_limit: int = 500) -> tuple:
+        """Clamp a request's limit/offset pagination args, returning (limit, offset).
+
+        limit is a maximum: 0 legitimately means "count only" (returns no
+        objects), negative collapses to 0 -- but it must never become a
+        negative slice bound. offset cannot be negative (a negative offset
+        would otherwise skip from the end of the list). This exact clamp
+        expression was hand-copied identically at 6 call sites (document_ops.
+        list_objects, macro_ops.list, assembly_ops.list_components/
+        list_joints, varset_ops.list_properties/list_references) with
+        inconsistent max_limit/default bounds across them (500 vs 1000) and
+        nothing tying the sites together -- callers here pass their own
+        default/max_limit explicitly, preserving each site's existing bounds
+        rather than silently unifying them.
+        """
+        raw_limit = args.get('limit', default)
+        limit = max(0, min(int(default if raw_limit is None else raw_limit), max_limit))
+        raw_offset = args.get('offset', 0)
+        offset = max(0, int(0 if raw_offset is None else raw_offset))
+        return limit, offset
+
     def recompute(self, doc: FreeCAD.Document = None):
         """Recompute the document.
 
@@ -581,6 +603,26 @@ class BaseHandler:
             except Exception:
                 continue
         return best
+
+    def _error_with_sketch_diagnosis(self, base_err: str, sketch_name: str) -> str:
+        """Append an open-wire diagnosis to an error message, best-effort.
+
+        pad_sketch and pocket (PartDesignOpsHandler) had byte-for-byte
+        identical except-block diagnostic code for this -- re-fetch the
+        sketch, run _diagnose_open_wires, append to the error, swallowing
+        any failure in the diagnosis attempt itself so a broken diagnosis
+        never masks the original error.
+        """
+        try:
+            doc = FreeCAD.ActiveDocument
+            sketch = self.get_object(sketch_name, doc) if doc else None
+            if sketch and sketch.TypeId == 'Sketcher::SketchObject':
+                diagnosis = self._diagnose_open_wires(sketch)
+                if diagnosis:
+                    base_err += f"\n\nSketch wire diagnosis:\n{diagnosis}"
+        except Exception:
+            pass
+        return base_err
 
     def _diagnose_open_wires(self, sketch) -> str:
         """Return an actionable diagnosis for open wire / unclosed profile.
@@ -925,6 +967,21 @@ class BaseHandler:
             return True
         return BaseHandler._validate_file_path(path) is None
 
+    @staticmethod
+    def _is_feature_invalid(feature) -> bool:
+        """True if feature.State contains 'Invalid' after recompute().
+
+        The single-feature primitive both _check_feature_state (below) and
+        the batch-pattern methods (linear_pattern/polar_pattern's
+        standalone-fallback paths, which check a whole list of `copies`
+        and report how many failed collectively -- a different shape than
+        _check_feature_state's single-feature diagnostic message, so they
+        can't just call that directly) need. Previously each batch site
+        hand-copied the bare `'Invalid' in getattr(c, 'State', [])` check
+        independently.
+        """
+        return 'Invalid' in getattr(feature, 'State', [])
+
     def _check_feature_state(self, feature, feature_label: str, sketch=None) -> Optional[str]:
         """Return a diagnostic error string if feature.State contains
         'Invalid' after recompute(), else None.
@@ -936,8 +993,7 @@ class BaseHandler:
         (H13) so Part::Loft/Part::Sweep in PartOpsHandler get the same
         check instead of duplicating this method verbatim.
         """
-        state = getattr(feature, 'State', [])
-        if 'Invalid' not in state:
+        if not self._is_feature_invalid(feature):
             return None
         err = f"{feature_label} created but failed to compute (State=Invalid)."
         if sketch is not None:
@@ -1011,13 +1067,22 @@ class BaseHandler:
     def create_body_if_needed(self, doc: FreeCAD.Document = None):
         """Create a PartDesign Body if one doesn't exist.
 
-        If no document exists, creates one via GUI thread to avoid GIL deadlock.
+        Does NOT create a document -- if no document exists (doc is None
+        and FreeCAD.ActiveDocument is None), returns None and does nothing
+        else. Every call site is expected to have already checked for an
+        active document (e.g. `if not doc: return NO_ACTIVE_DOCUMENT_ERROR`)
+        before calling this, per the documented GIL-deadlock-avoidance
+        contract (see get_document()'s docstring and CLAUDE.md's "Create
+        documents before creating objects" rule) -- this docstring
+        previously claimed the opposite ("creates one via GUI thread"),
+        which the implementation below has never actually done.
 
         Args:
             doc: Document to create body in (uses active document if not specified)
 
         Returns:
-            Existing or newly created PartDesign::Body
+            Existing or newly created PartDesign::Body, or None if no
+            document is active.
         """
         if doc is None:
             doc = FreeCAD.ActiveDocument

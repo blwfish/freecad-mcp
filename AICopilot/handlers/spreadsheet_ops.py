@@ -86,11 +86,9 @@ class SpreadsheetOpsHandler(BaseHandler):
             cell = args.get('cell', 'A1')
             value = args.get('value', '')
 
-            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet', type_id='Spreadsheet::Sheet')
             if err:
                 return err
-            if spreadsheet.TypeId != 'Spreadsheet::Sheet':
-                return f"Object {spreadsheet_name} is not a spreadsheet"
 
             # A null value clears the cell rather than writing the literal "None".
             spreadsheet.set(cell, '' if value is None else str(value))
@@ -107,11 +105,9 @@ class SpreadsheetOpsHandler(BaseHandler):
             spreadsheet_name = args.get('spreadsheet_name', '')
             cell = args.get('cell', 'A1')
 
-            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet', type_id='Spreadsheet::Sheet')
             if err:
                 return err
-            if spreadsheet.TypeId != 'Spreadsheet::Sheet':
-                return f"Object {spreadsheet_name} is not a spreadsheet"
 
             value = spreadsheet.get(cell)
             # getContents returns the stored expression/formula (e.g. "=A1+B1");
@@ -140,11 +136,9 @@ class SpreadsheetOpsHandler(BaseHandler):
             cell = args.get('cell', 'A1')
             alias = args.get('alias', '')
 
-            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet', type_id='Spreadsheet::Sheet')
             if err:
                 return err
-            if spreadsheet.TypeId != 'Spreadsheet::Sheet':
-                return f"Object {spreadsheet_name} is not a spreadsheet"
 
             if not alias:
                 return "Alias name is required"
@@ -163,11 +157,9 @@ class SpreadsheetOpsHandler(BaseHandler):
             spreadsheet_name = args.get('spreadsheet_name', '')
             cell = args.get('cell', 'A1')
 
-            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet', type_id='Spreadsheet::Sheet')
             if err:
                 return err
-            if spreadsheet.TypeId != 'Spreadsheet::Sheet':
-                return f"Object {spreadsheet_name} is not a spreadsheet"
 
             alias = spreadsheet.getAlias(cell)
 
@@ -185,11 +177,9 @@ class SpreadsheetOpsHandler(BaseHandler):
             spreadsheet_name = args.get('spreadsheet_name', '')
             cell = args.get('cell', 'A1')
 
-            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet', type_id='Spreadsheet::Sheet')
             if err:
                 return err
-            if spreadsheet.TypeId != 'Spreadsheet::Sheet':
-                return f"Object {spreadsheet_name} is not a spreadsheet"
 
             spreadsheet.clear(cell)
             self.recompute(doc)
@@ -206,11 +196,9 @@ class SpreadsheetOpsHandler(BaseHandler):
             start_cell = args.get('start_cell', 'A1')
             values = args.get('values', [])  # 2D array of values
 
-            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet', type_id='Spreadsheet::Sheet')
             if err:
                 return err
-            if spreadsheet.TypeId != 'Spreadsheet::Sheet':
-                return f"Object {spreadsheet_name} is not a spreadsheet"
 
             if not values:
                 return "No values provided"
@@ -246,11 +234,9 @@ class SpreadsheetOpsHandler(BaseHandler):
             start_cell = args.get('start_cell', 'A1')
             end_cell = args.get('end_cell', 'A1')
 
-            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet', type_id='Spreadsheet::Sheet')
             if err:
                 return err
-            if spreadsheet.TypeId != 'Spreadsheet::Sheet':
-                return f"Object {spreadsheet_name} is not a spreadsheet"
 
             # Parse start/end cells
             parsed_start = _parse_cell_ref(start_cell)
@@ -318,11 +304,9 @@ class SpreadsheetOpsHandler(BaseHandler):
         try:
             spreadsheet_name = args.get('spreadsheet_name', '')
 
-            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet', type_id='Spreadsheet::Sheet')
             if err:
                 return err
-            if spreadsheet.TypeId != 'Spreadsheet::Sheet':
-                return f"Object {spreadsheet_name} is not a spreadsheet"
 
             # Get all cells with aliases
             aliases = {}
@@ -374,11 +358,9 @@ class SpreadsheetOpsHandler(BaseHandler):
             start_cell = args.get('start_cell', 'A1')
             delimiter = args.get('delimiter', ',')
 
-            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet', type_id='Spreadsheet::Sheet')
             if err:
                 return err
-            if spreadsheet.TypeId != 'Spreadsheet::Sheet':
-                return f"Object {spreadsheet_name} is not a spreadsheet"
 
             if not csv_data:
                 return "No CSV data provided"
@@ -428,16 +410,15 @@ class SpreadsheetOpsHandler(BaseHandler):
             end_cell = args.get('end_cell')   # None => auto-detect the used range
             delimiter = args.get('delimiter', ',')
 
-            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet')
+            doc, spreadsheet, err = self.resolve_object(spreadsheet_name, noun='Spreadsheet', type_id='Spreadsheet::Sheet')
             if err:
                 return err
-            if spreadsheet.TypeId != 'Spreadsheet::Sheet':
-                return f"Object {spreadsheet_name} is not a spreadsheet"
 
             # Default to the sheet's actual used range, not a hardcoded J100 box
             # that silently drops any data beyond column J / row 100.
             range_detection_error = None
-            if not end_cell:
+            end_cell_was_auto_detected = not end_cell
+            if end_cell_was_auto_detected:
                 end_cell = 'J100'
                 try:
                     if callable(getattr(spreadsheet, 'getUsedRange', None)):
@@ -489,16 +470,24 @@ class SpreadsheetOpsHandler(BaseHandler):
             # tell "confirmed complete" from "unknown, couldn't confirm".
             truncated = False
             truncation_check_error = None
-            try:
-                if callable(getattr(spreadsheet, 'getUsedRange', None)):
-                    ur = spreadsheet.getUsedRange()
-                    if ur and len(ur) == 2 and ur[1]:
-                        parsed_ur = _parse_cell_ref(ur[1])
-                        if parsed_ur and (_col_to_num(parsed_ur[0]) > end_col_num
-                                          or parsed_ur[1] > end_row):
-                            truncated = True
-            except Exception as e:
-                truncation_check_error = str(e)
+            # When end_cell was auto-detected from getUsedRange() above,
+            # the exported range already equals the sheet's used range by
+            # construction -- truncated can never be True in that case, so
+            # re-querying getUsedRange() a second time here was pure
+            # double-work. Only re-check when the caller supplied an
+            # explicit end_cell (the only case where the exported range
+            # could actually be narrower than the sheet's real content).
+            if not end_cell_was_auto_detected:
+                try:
+                    if callable(getattr(spreadsheet, 'getUsedRange', None)):
+                        ur = spreadsheet.getUsedRange()
+                        if ur and len(ur) == 2 and ur[1]:
+                            parsed_ur = _parse_cell_ref(ur[1])
+                            if parsed_ur and (_col_to_num(parsed_ur[0]) > end_col_num
+                                              or parsed_ur[1] > end_row):
+                                truncated = True
+                except Exception as e:
+                    truncation_check_error = str(e)
 
             result = {
                 "spreadsheet": spreadsheet_name,

@@ -59,19 +59,9 @@ class PartDesignOpsHandler(BaseHandler):
             return base_msg
 
         except Exception as e:
-            err = f"Error creating pad: {e}"
             # Auto-diagnose the sketch profile so the user knows exactly
             # which endpoints are disconnected and what constraints to add.
-            try:
-                doc = FreeCAD.ActiveDocument
-                sketch = self.get_object(sketch_name, doc) if doc else None
-                if sketch and sketch.TypeId == 'Sketcher::SketchObject':
-                    diagnosis = self._diagnose_open_wires(sketch)
-                    if diagnosis:
-                        err += f"\n\nSketch wire diagnosis:\n{diagnosis}"
-            except Exception:
-                pass
-            return err
+            return self._error_with_sketch_diagnosis(f"Error creating pad: {e}", sketch_name)
 
     def pocket(self, args: Dict[str, Any]) -> str:
         """Create a pocket (subtractive extrusion) from a sketch."""
@@ -114,17 +104,7 @@ class PartDesignOpsHandler(BaseHandler):
             return base_msg
 
         except Exception as e:
-            err = f"Error creating pocket: {e}"
-            try:
-                doc = FreeCAD.ActiveDocument
-                sketch = self.get_object(sketch_name, doc) if doc else None
-                if sketch and sketch.TypeId == 'Sketcher::SketchObject':
-                    diagnosis = self._diagnose_open_wires(sketch)
-                    if diagnosis:
-                        err += f"\n\nSketch wire diagnosis:\n{diagnosis}"
-            except Exception:
-                pass
-            return err
+            return self._error_with_sketch_diagnosis(f"Error creating pocket: {e}", sketch_name)
 
     def fillet_edges(self, args: Dict[str, Any]) -> str:
         """Add fillets to object edges (Interactive selection workflow)."""
@@ -744,7 +724,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             self.recompute(doc)
 
-            invalid = [c.Name for c in copies if 'Invalid' in getattr(c, 'State', [])]
+            invalid = [c.Name for c in copies if self._is_feature_invalid(c)]
             if invalid:
                 return (f"Linear pattern created but {len(invalid)} of {count - 1} "
                         f"copies failed to compute (State=Invalid): {', '.join(invalid)}")
@@ -846,7 +826,7 @@ class PartDesignOpsHandler(BaseHandler):
 
             self.recompute(doc)
 
-            invalid = [c.Name for c in copies if 'Invalid' in getattr(c, 'State', [])]
+            invalid = [c.Name for c in copies if self._is_feature_invalid(c)]
             if invalid:
                 return (f"Polar pattern created but {len(invalid)} of {count - 1} "
                         f"copies failed to compute (State=Invalid): {', '.join(invalid)}")

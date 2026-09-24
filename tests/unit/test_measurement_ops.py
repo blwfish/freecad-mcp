@@ -29,6 +29,13 @@ def _attach_face_geometry(obj, faces_data):
     """Replace obj.Shape.Faces with mocks carrying real numeric attributes.
 
     faces_data: list of dicts {area, normal: (nx,ny,nz), centroid: (cx,cy,cz)}.
+
+    Also sets obj.Shape.Area to the summed face area, matching real
+    FreeCAD's own invariant (Part.Shape.Area is a single GProp pass that
+    always equals the sum of its faces' areas) -- measurement_ops.py's
+    get_surface_area/get_mass_properties now read shape.Area directly
+    instead of summing face.Area in a Python loop (full-review 2026-09-23,
+    Low finding #86).
     """
     faces = []
     for f in faces_data:
@@ -40,6 +47,7 @@ def _attach_face_geometry(obj, faces_data):
         face.CenterOfMass = MagicMock(x=cx, y=cy, z=cz)
         faces.append(face)
     obj.Shape.Faces = faces
+    obj.Shape.Area = sum(f['area'] for f in faces_data)
 
 
 def _attach_box_face_geometry(obj, length=10.0, width=10.0, height=10.0):

@@ -257,7 +257,7 @@ class WindowDoorHelpers:
 
     # ========== CLONING AND POSITIONING ==========
 
-    def clone_and_position(self, master_obj, hole, wall_obj=None, dry_run=False):
+    def clone_and_position(self, master_obj, hole, wall_obj=None, dry_run=False, dims=None):
         """
         Clone a master object and position it in a hole.
 
@@ -266,6 +266,12 @@ class WindowDoorHelpers:
             hole: Hole dict from find_holes_in_wall()
             wall_obj: Wall object (for alignment, optional)
             dry_run: If True, don't actually create the clone
+            dims: Pre-computed get_master_dimensions(master) result, if the
+                caller already has it (e.g. populate_holes' loop, calling
+                this once per matched hole for the same master -- computing
+                it fresh every iteration was pure repeated work for an
+                identical result each time). Computed here if not given, so
+                a standalone call still works unchanged.
 
         Returns:
             Clone object, or None if dry_run
@@ -276,7 +282,8 @@ class WindowDoorHelpers:
             raise ValueError(f"Master '{master_obj}' not found")
 
         # Get master dimensions for frame offset
-        dims = self.get_master_dimensions(master)
+        if dims is None:
+            dims = self.get_master_dimensions(master)
         casing_depth = dims.get('casingDepth', 0)
 
         # Hole position (center of hole)
@@ -369,7 +376,7 @@ class WindowDoorHelpers:
         if matches and auto_place:
             for i, hole in enumerate(matches):
                 try:
-                    clone = self.clone_and_position(master, hole)
+                    clone = self.clone_and_position(master, hole, dims=master_dims)
                     if clone:
                         created.append(clone)
                         print(f"  Created: {clone.Label}")

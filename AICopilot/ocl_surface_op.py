@@ -457,17 +457,20 @@ def create_ocl_surface_op(doc, job, op_name, **kwargs):
     op_obj = doc.addObject("Path::FeaturePython", op_name)
     OCLSurfaceProxy(op_obj)  # sets op_obj.Proxy and adds properties
 
-    # Apply kwargs
-    _float_props = {
-        "stl_file":        ("StlFile",        None),   # string, not float
-        "tool_diameter":   ("ToolDiameter",   None),
-        "stepover":        ("StepOver",       None),
-        "sample_interval": ("SampleInterval", None),
-        "safe_height":     ("SafeHeight",     None),
-        "cut_feed":        ("CutFeed",        None),
-        "plunge_feed":     ("PlungeFeed",     None),
+    # Apply kwargs. Plain {kwarg_key: prop_name} -- previously each value
+    # was a (prop_name, None) tuple whose second element was always None
+    # and unpacked-and-discarded on every use; the name "_float_props" was
+    # also misleading since the stl_file entry is a string, not a float.
+    _prop_names = {
+        "stl_file":        "StlFile",   # string, not float
+        "tool_diameter":   "ToolDiameter",
+        "stepover":        "StepOver",
+        "sample_interval": "SampleInterval",
+        "safe_height":     "SafeHeight",
+        "cut_feed":        "CutFeed",
+        "plunge_feed":     "PlungeFeed",
     }
-    for kwarg_key, (prop_name, _) in _float_props.items():
+    for kwarg_key, prop_name in _prop_names.items():
         if kwarg_key in kwargs and kwargs[kwarg_key] is not None:
             val = kwargs[kwarg_key]
             if kwarg_key == "stl_file":

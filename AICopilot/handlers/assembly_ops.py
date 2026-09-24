@@ -330,10 +330,7 @@ class AssemblyOpsHandler(BaseHandler):
             # either (full-review 2026-07-24 finding #08 -- this repo already
             # crashed once, exit 141/SIGPIPE, on an unbounded object listing
             # over the bridge's 50 KiB message cap).
-            raw_limit = args.get('limit', 100)
-            limit = max(0, min(int(100 if raw_limit is None else raw_limit), 500))
-            raw_offset = args.get('offset', 0)
-            offset = max(0, int(0 if raw_offset is None else raw_offset))
+            limit, offset = self.paginate_bounds(args, default=100, max_limit=500)
 
             doc = self.get_document()
             if not doc:
@@ -771,10 +768,7 @@ class AssemblyOpsHandler(BaseHandler):
         """
         try:
             assembly_name = args.get('assembly_name', '')
-            raw_limit = args.get('limit', 100)
-            limit = max(0, min(int(100 if raw_limit is None else raw_limit), 500))
-            raw_offset = args.get('offset', 0)
-            offset = max(0, int(0 if raw_offset is None else raw_offset))
+            limit, offset = self.paginate_bounds(args, default=100, max_limit=500)
 
             doc = self.get_document()
             if not doc:

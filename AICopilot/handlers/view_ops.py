@@ -127,11 +127,6 @@ class ViewOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error fitting view: {e}"
 
-    def zoom(self, args: Dict[str, Any]) -> str:
-        """Zoom view in/out."""
-        direction = args.get('direction', 'in')
-        return f"View {direction} - implementation needed"
-
     def zoom_in(self, args: Dict[str, Any]) -> str:
         """Zoom in on the view."""
         try:

@@ -42,6 +42,15 @@ _BOOLEAN_METHODS = {
     'cut': 'part_operations(operation="cut")',
     'common': 'part_operations(operation="common")',
 }
+# Part.Shape.extrude(...) is the literal example CLAUDE.md's own "prefer
+# the primary tool over execute_python" rule uses ("don't call
+# Part.extrude() via raw execute_python when part_operations/
+# partdesign_operations already has an extrude operation") -- this table
+# omitted it, the one rule this module's docstring says was never
+# actually tested this session.
+_OTHER_METHODS = {
+    'extrude': 'part_operations(operation="extrude")',
+}
 
 
 def _detect_primary_tool_alternatives(tree: ast.AST) -> list:
@@ -55,7 +64,7 @@ def _detect_primary_tool_alternatives(tree: ast.AST) -> list:
     Seam Rule): a regex over the raw text would drift from what the code
     really calls (e.g. matching "makeBox" inside a comment or a string).
     """
-    all_methods = {**_PRIMITIVE_MAKE_METHODS, **_BOOLEAN_METHODS}
+    all_methods = {**_PRIMITIVE_MAKE_METHODS, **_BOOLEAN_METHODS, **_OTHER_METHODS}
     found = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):

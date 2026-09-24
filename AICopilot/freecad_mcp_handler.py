@@ -556,6 +556,13 @@ def _recv_exact(sock: socket.socket, num_bytes: int) -> Optional[bytes]:
 class FreeCADSocketServer:
     """Socket server for FreeCAD MCP communication with modular handler architecture."""
 
+    # See _process_gui_tasks: the visibility cache refreshes every tick
+    # when there's queued work, but only every Nth idle tick otherwise.
+    # 5 ticks (~500ms at the ~100ms tick interval) bounds staleness for a
+    # Visibility change made directly in the GUI to a small, still-fast
+    # window while cutting idle-tick iteration by 80%.
+    _VISIBILITY_REFRESH_EVERY_N_TICKS = 5
+
     def __init__(self):
         self.running = False
         self.server_socket = None
@@ -607,9 +614,13 @@ class FreeCADSocketServer:
         # touched off the main thread, which is exactly what document_ops
         # handlers do (list_objects is dispatched from the socket thread as
         # a "safe_op"). Reading this plain dict instead means list_objects
-        # never calls into FreeCADGui at all, at the cost of up to one tick
-        # (~100ms) of staleness.
+        # never calls into FreeCADGui at all, at the cost of up to
+        # _VISIBILITY_REFRESH_EVERY_N_TICKS ticks of staleness (was
+        # refreshed every single tick regardless of whether the task queue
+        # had any work, iterating every object in ActiveDocument up to 10x/
+        # second even when idle).
         self._visibility_cache: Dict[str, bool] = {}
+        self._visibility_cache_tick_counter = 0
 
         # Active _handle_client invocations right now. Every tool call opens
         # its own short-lived socket connection (there's no persistent
@@ -891,7 +902,19 @@ class FreeCADSocketServer:
         # is real added complexity for a rare case that's still strictly
         # better than today's only option, a 30-120s blind timeout.
         self._heartbeat.stamp()
-        self._refresh_visibility_cache()
+
+        # Previously refreshed unconditionally every tick (~100ms), even
+        # when idle -- iterating every object in ActiveDocument up to 10x/
+        # second with nothing queued. Skip it on idle ticks except every
+        # _VISIBILITY_REFRESH_EVERY_N_TICKS'th one (so a Visibility change
+        # made directly in the GUI, outside any MCP call, still gets picked
+        # up eventually); always refresh when there's real queued work,
+        # since that work may itself change Visibility.
+        queue_had_work = not self._gui_task_queue.empty()
+        self._visibility_cache_tick_counter += 1
+        if queue_had_work or self._visibility_cache_tick_counter >= self._VISIBILITY_REFRESH_EVERY_N_TICKS:
+            self._visibility_cache_tick_counter = 0
+            self._refresh_visibility_cache()
 
         while not self._gui_task_queue.empty():
             req_id = None

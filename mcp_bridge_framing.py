@@ -2,13 +2,24 @@
 MCP Bridge Message Framing Adapter
 ===================================
 
-This module provides the client-side message framing functions that match
-the freecad_mcp_handler v2.1.2 protocol.
+This module provides the client-side message framing functions for the
+freecad_mcp_handler wire protocol: a 4-byte big-endian length prefix
+followed by UTF-8 JSON.
 
 Use this in your MCP bridge (freecad_mcp_server.py or similar) to communicate
-with the updated FreeCAD socket server.
+with the FreeCAD socket server.
 
-Version: 2.1.2 (matches freecad_mcp_handler v2.1.2)
+Deliberately NOT version-labeled against freecad_mcp_handler's own
+__version__: this module's actual behavioral contract with that file is
+MAX_MESSAGE_SIZE (both copies must stay equal -- see that constant's own
+comment), which is enforced by a real cross-module parity test
+(tests/unit/test_freecad_mcp_handler.py). A hardcoded version number in
+this docstring drifted from freecad_mcp_handler's real version at least
+once already (that mismatch was "fixed" by only making the docstring's
+own two mentions agree with each other, not with reality) -- nothing
+enforces a doc comment, so the actual invariant that matters is now
+tracked by the real test instead of restated here as a claim to keep
+manually in sync.
 """
 
 import socket
@@ -35,7 +46,7 @@ def _log(msg: str) -> None:
 def send_message(sock: socket.socket, message_str: str) -> bool:
     """Send a length-prefixed message over socket (client-side).
     
-    Must match the protocol used by freecad_mcp_handler v2.1.2.
+    Must match the protocol used by freecad_mcp_handler (length-prefixed framing; see MAX_MESSAGE_SIZE parity test, not a version number).
     
     Protocol:
         [4 bytes: message length as uint32 big-endian][message bytes]
@@ -82,7 +93,7 @@ def send_message(sock: socket.socket, message_str: str) -> bool:
 def receive_message(sock: socket.socket, timeout: float = 30.0) -> Optional[str]:
     """Receive a length-prefixed message from socket (client-side).
     
-    Must match the protocol used by freecad_mcp_handler v2.1.2.
+    Must match the protocol used by freecad_mcp_handler (length-prefixed framing; see MAX_MESSAGE_SIZE parity test, not a version number).
     
     Args:
         sock: Connected socket to FreeCAD server
@@ -168,105 +179,3 @@ def _recv_exact(sock: socket.socket, num_bytes: int) -> Optional[bytes]:
     
     return bytes(buffer)
 
-
-# =============================================================================
-# Integration Examples
-# =============================================================================
-
-def example_send_command(sock: socket.socket, tool: str, args: dict) -> Optional[dict]:
-    """Example: Send a command to FreeCAD and get the response.
-    
-    This shows the complete pattern for using the message framing protocol.
-    """
-    import json
-    
-    # Create command
-    command = json.dumps({
-        "tool": tool,
-        "args": args
-    })
-    
-    # Send with framing
-    if not send_message(sock, command):
-        print("❌ Failed to send command")
-        return None
-    
-    # Receive response with framing
-    response_str = receive_message(sock, timeout=30.0)
-    if not response_str:
-        print("❌ Failed to receive response")
-        return None
-    
-    # Parse JSON response
-    try:
-        response = json.loads(response_str)
-        return response
-    except json.JSONDecodeError as e:
-        print(f"❌ Invalid JSON response: {e}")
-        return None
-
-
-def example_bridge_integration():
-    """Example: How to integrate into an existing MCP bridge."""
-    
-    print("""
-    To integrate into your existing bridge (e.g., freecad_mcp_server.py):
-    
-    1. Add this import at the top:
-       from mcp_bridge_framing import send_message, receive_message
-    
-    2. Replace all socket.send() calls with send_message():
-       # OLD:
-       sock.send(command.encode('utf-8'))
-       
-       # NEW:
-       send_message(sock, command)
-    
-    3. Replace all socket.recv() calls with receive_message():
-       # OLD:
-       data = sock.recv(4096).decode('utf-8')
-       
-       # NEW:
-       data = receive_message(sock, timeout=30.0)
-    
-    4. Update error handling to check for None returns:
-       response = receive_message(sock)
-       if response is None:
-           # Handle connection error
-           ...
-    
-    That's it! The bridge will now properly handle messages of any size.
-    """)
-
-
-if __name__ == '__main__':
-    # Show integration guide
-    example_bridge_integration()
-    
-    print("\n" + "="*70)
-    print("Testing with FreeCAD socket...")
-    print("="*70)
-    
-    # Connect to FreeCAD
-    SOCKET_PATH = "/tmp/freecad_mcp_socket"
-    
-    try:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.connect(SOCKET_PATH)
-        print(f"✓ Connected to {SOCKET_PATH}")
-        
-        # Test with a simple command
-        response = example_send_command(sock, "create_box", {"length": 10, "width": 10, "height": 10})
-        
-        if response and response.get('success'):
-            print(f"✓ Command successful: {response.get('result')}")
-        else:
-            print(f"❌ Command failed: {response.get('error') if response else 'No response'}")
-        
-        sock.close()
-        
-    except FileNotFoundError:
-        print(f"⚠️  FreeCAD socket not found at {SOCKET_PATH}")
-        print("   Make sure FreeCAD is running with MCP socket server")
-    except Exception as e:
-        print(f"❌ Error: {e}")
