@@ -12,6 +12,7 @@ Tests cover:
 """
 
 import json
+import os
 import sys
 import unittest
 from unittest.mock import MagicMock, patch, call
@@ -281,12 +282,23 @@ class TestBuildSketch(unittest.TestCase):
         self.handler = _make_handler()
         # These tests exercise build_sketch's own logic given a working
         # sketch_builder import (that machinery has its own coverage in
-        # TestEnsureImportable below) -- without this patch they silently
-        # depend on a real FC-tools sibling directory existing on disk,
-        # which is only true on the dev machine, not CI.
-        patcher = patch('handlers.sketch_builder_ops._ensure_sketch_builder_importable')
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        # TestEnsureImportable below). Point FREECAD_SKETCH_BUILDER_PATH at
+        # this test file's own directory -- guaranteed to exist in any
+        # checkout, local or CI -- so _ensure_sketch_builder_importable's
+        # real env-var branch succeeds legitimately; sys.modules['sketch_
+        # builder'] is already stubbed above, so the subsequent `from
+        # sketch_builder import SketchBuilder` hits that stub regardless of
+        # what's really in the directory. Deliberately not mocking
+        # _ensure_sketch_builder_importable itself here -- these tests
+        # previously depended on a real FC-tools sibling directory that
+        # only exists on the dev machine, silently passing locally and
+        # failing on every CI runner.
+        env_patcher = patch.dict(
+            os.environ,
+            {'FREECAD_SKETCH_BUILDER_PATH': os.path.dirname(os.path.abspath(__file__))},
+        )
+        env_patcher.start()
+        self.addCleanup(env_patcher.stop)
 
     def _make_doc_with_spreadsheet(self, alias_map=None, sketch_name='XZ_Test'):
         alias_map = alias_map or {'width': 100.0, 'eaveHeight': 60.0}
