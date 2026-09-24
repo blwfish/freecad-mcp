@@ -133,7 +133,31 @@
 #                   tool-schema description (what the model actually sees at
 #                   call time) now matches TOOLS.md's fuller phrasing.
 
-__version__ = "8.1.0"
+# Version: 8.2.0 - Whole-repo full-review pass (freecad-mcp-20260923-6c7a):
+#                   closed 92 of 189 findings (1 Critical, 42 High, 40
+#                   Medium, 106 Low in the original count) across three
+#                   fix commits, 27 wontfix, 1 deferred. Notable fixes:
+#                   crash_watcher.set_current_op no longer raises on an
+#                   unrepresentable arg (str(10**5000) in Python 3.11+);
+#                   fixed live axis/direction-fallback bugs in polar_pattern
+#                   and create_rib; fillet/chamfer/shell's with-selection
+#                   methods now validate indices up front instead of
+#                   silently dropping invalid ones; freecad_debug.py gained
+#                   secret redaction and a serialized-string length cap on
+#                   previously-unguarded capture paths; freecad_mcp_server.py
+#                   fixed a hardcoded Windows port, an os.path.exists()
+#                   Windows-incompatible restart check, and a substring-
+#                   matching ("Crash" in text) No-Log-Scraping violation in
+#                   poll_job_until_done; headless-mode GUI-thread dispatch
+#                   gained a lock serializing concurrent inline execution;
+#                   ~25 call sites across handlers/ consolidated onto a
+#                   shared NO_ACTIVE_DOCUMENT_ERROR constant and a shared
+#                   pagination-clamp helper; measurement_ops switched from
+#                   summing per-face Area in Python to the native shape.Area
+#                   property. Full findings ledger in .claude-review/
+#                   ledger.jsonl.
+
+__version__ = "8.2.0"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
