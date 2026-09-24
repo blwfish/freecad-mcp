@@ -138,8 +138,11 @@ class TestCheckpointRollback:
         })
         assert_op_succeeded(result, "rollback")
         text = _text(result)
-        assert "removed 2 objects" in text, \
-            f"Expected 2 objects removed in: {text[:300]}"
+        # Message format is "removed N of M objects" as of the
+        # Critical+High full-review pass (082a374), which stopped
+        # silently counting a failed removeObject() as removed.
+        assert "removed 2 of 2 objects" in text, \
+            f"Expected 2 of 2 objects removed in: {text[:300]}"
 
         # Verify the document state — only Persistent remains.
         # Use print() to bypass the execute_python repr() wrap; the
