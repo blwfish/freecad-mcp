@@ -222,9 +222,17 @@ def clear_current_op() -> None:
     try:
         os.unlink(LAST_OP_FILE)
     except FileNotFoundError:
-        pass
-    except Exception:
-        pass
+        pass  # expected: nothing to clean up
+    except Exception as e:
+        # Distinct from the expected FileNotFoundError case above -- a
+        # permission error or similar here means the last-op file may be
+        # left stale, which could mislead a later crash report in a
+        # narrow race window. Previously silent; now at least visible.
+        try:
+            import FreeCAD
+            FreeCAD.Console.PrintWarning(f"[MCP] crash_watcher: failed to clear last-op file: {e}\n")
+        except Exception:
+            pass
 
 
 def read_current_op() -> dict | None:
@@ -232,5 +240,17 @@ def read_current_op() -> dict | None:
     try:
         with open(LAST_OP_FILE) as f:
             return json.load(f)
-    except Exception:
+    except FileNotFoundError:
+        return None  # expected: no operation currently in flight
+    except Exception as e:
+        # Distinct from the expected FileNotFoundError above -- a
+        # corrupted file (partial write, non-JSON content) or a
+        # permission error means real data is being silently discarded
+        # instead of just "nothing to read". Previously indistinguishable
+        # from the expected case; now at least visible.
+        try:
+            import FreeCAD
+            FreeCAD.Console.PrintWarning(f"[MCP] crash_watcher: failed to read last-op file: {e}\n")
+        except Exception:
+            pass
         return None

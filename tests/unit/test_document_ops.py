@@ -595,6 +595,11 @@ class TestInsertShape:
     def test_source_object_not_found(self, doc_handler, mock_freecad):
         src_doc = MagicMock()
         src_doc.getObject.return_value = None
+        # insert_shape now resolves via get_object()'s Name-then-Label
+        # fallback (full-review 2026-09-23, Medium finding #34) -- must
+        # also simulate "no match by Label" or the un-configured
+        # MagicMock.getObjectsByLabel() auto-vivifies a truthy result.
+        src_doc.getObjectsByLabel.return_value = []
         mock_freecad.listDocuments.return_value = {"SrcDoc": src_doc}
         mock_freecad.getDocument.return_value = src_doc
         result = doc_handler.insert_shape({

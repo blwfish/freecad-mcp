@@ -12,13 +12,16 @@ import math
 import re
 import FreeCAD
 from typing import Dict, Any, List, Tuple
-from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
+from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR, OCCT_CONFUSION_TOLERANCE_DEFAULT
 
 # OCCT Precision::Confusion() — the linear tolerance below which OCCT's boolean
 # operations consider two points identical.  Overlaps thinner than this in any
 # dimension may be silently dropped by common() and returned as zero volume.
-# We use this as the distance threshold for sliver detection.
-_OCCT_LIN_TOL = 1e-7   # mm
+# We use this as the distance threshold for sliver detection. References
+# base.py's OCCT_CONFUSION_TOLERANCE_DEFAULT as the single source of truth
+# for this numeral (see that constant's docstring) instead of independently
+# hardcoding 1e-7 here.
+_OCCT_LIN_TOL = OCCT_CONFUSION_TOLERANCE_DEFAULT   # mm
 
 # Volume reporting threshold: anything below this is treated as zero.
 # This filters floating-point noise from OCCT boolean results.
@@ -282,7 +285,7 @@ class SpatialOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "Error: No active document"
+                return NO_ACTIVE_DOCUMENT_ERROR
             obj = self.get_object(obj_name, doc)
             if not obj:
                 return f"Error: Object not found: {obj_name}"

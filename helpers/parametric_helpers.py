@@ -21,6 +21,25 @@ from FreeCAD import Vector
 import Part
 
 
+def _num_to_col(num):
+    """1-based column number -> spreadsheet column letters ('A', 'Z', 'AA',
+    ...). get_param's cell-scan fallback used to build its column list via
+    string.ascii_uppercase[:max_col], which silently tops out at 26 --
+    slicing a 26-char string past its length is a no-op, so a spreadsheet
+    with more than 26 real columns had every parameter beyond column Z
+    silently unreachable through this fallback. Same Excel-style
+    multi-letter addressing AICopilot/handlers/spreadsheet_ops.py already
+    implements (kept as a local copy here rather than importing across
+    packages, since this module is meant to be usable standalone from
+    FreeCAD's own Python console -- see this file's module docstring)."""
+    col = ''
+    while num > 0:
+        num -= 1
+        col = chr(num % 26 + ord('A')) + col
+        num //= 26
+    return col
+
+
 class ParametricHelpers:
     """Helper class for parametric building model workflows."""
 
@@ -54,16 +73,26 @@ class ParametricHelpers:
             pass
 
         # Try cell-by-cell lookup using the sheet's own dimensions when available
-        import string
         try:
-            max_row = self.params.rows() if callable(getattr(self.params, 'rows', None)) else 10000
-            max_col = self.params.columns() if callable(getattr(self.params, 'columns', None)) else 26
+            max_row = self.params.rows() if callable(getattr(self.params, 'rows', None)) else None
+            max_col = self.params.columns() if callable(getattr(self.params, 'columns', None)) else None
         except Exception:
-            max_row, max_col = 10000, 26
-        cols = list(string.ascii_uppercase[:max_col])
+            max_row, max_col = None, None
+        # rows()/columns() are the real, authoritative sheet dimensions when
+        # available -- scan the whole thing, no heuristic needed. Only fall
+        # back to a bounded guess (10000 rows) plus the proximity-based
+        # early-break when the real dimensions aren't available at all,
+        # since guessing 10000 rows for what's usually a small parameter
+        # sheet is what the break exists to bound, not a reason to also cap
+        # a REAL, known row count -- that silently missed parameters placed
+        # more than 50 empty rows below the last aliased cell.
+        have_real_dims = max_row is not None and max_col is not None
+        if not have_real_dims:
+            max_row, max_col = max_row or 10000, max_col or 26
+        cols = [_num_to_col(n) for n in range(1, max_col + 1)]
         last_hit_row = 0
         for row in range(1, max_row + 1):
-            if row > last_hit_row + 50 and row > 1:
+            if not have_real_dims and row > last_hit_row + 50 and row > 1:
                 break
             for col in cols:
                 cell_addr = f"{col}{row}"
@@ -113,15 +142,30 @@ class ParametricHelpers:
             raise ValueError(f"Failed to evaluate expression '{expr}': {e}")
 
     def get_object(self, name):
-        """Get object by name or label."""
+        """Get object by internal Name or Label.
+
+        Tries internal Name first (unique by construction), then falls back
+        to Label search. FreeCAD does NOT enforce Label uniqueness — a
+        first-match loop silently risks operating on the wrong solid on a
+        duplicate-label document (the anti-pattern
+        AICopilot.handlers.base.BaseHandler.get_object() and this module's
+        own sibling, helpers/window_door_helpers.py, were both hardened
+        against; this copy hadn't been). Raise on ambiguity instead of
+        guessing.
+        """
         obj = self.doc.getObject(name)
         if obj:
             return obj
-        # Try by label
-        for obj in self.doc.Objects:
-            if obj.Label == name:
-                return obj
-        raise ValueError(f"Object '{name}' not found")
+        matches = [o for o in self.doc.Objects if o.Label == name]
+        if not matches:
+            raise ValueError(f"Object '{name}' not found")
+        if len(matches) > 1:
+            names = [m.Name for m in matches]
+            raise ValueError(
+                f"Ambiguous label '{name}': {len(matches)} objects share this "
+                f"label ({', '.join(names)}). Use the internal Name to disambiguate."
+            )
+        return matches[0]
 
     # ========== SKETCH OPERATIONS ==========
 

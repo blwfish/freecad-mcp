@@ -145,6 +145,14 @@ class FreeCADDebugger:
         if enable_file:
             from logging.handlers import RotatingFileHandler
             log_file = self.log_dir / "freecad_mcp.log"
+            # log_file is a fixed, predictable path under log_dir -- refuse
+            # to follow a symlink an attacker with local access could have
+            # planted there before this process started. The commit that
+            # added this check elsewhere (5b53802) only wired it into the
+            # two mkdir() call sites (via tmp_safety.safe_mkdir) and
+            # crash_watcher's own open()-for-write site, never this one or
+            # the json_log_file sites below.
+            tmp_safety.refuse_if_symlink(str(log_file))
             file_handler = RotatingFileHandler(
                 log_file,
                 maxBytes=max_log_size,
@@ -210,14 +218,25 @@ class FreeCADDebugger:
             self.logger.error(f"Operation FAILED: {operation}")
             self.logger.error(f"Error: {error}")
             self.logger.debug(f"Traceback: {traceback.format_exc()}")
-            
+
             # Write to JSON log file
             json_log_file = self.log_dir / f"operations_{datetime.now().strftime('%Y%m%d')}.json"
             try:
+                # Same fixed-path symlink risk as log_file above -- see
+                # that call site's comment.
+                tmp_safety.refuse_if_symlink(str(json_log_file))
                 with open(json_log_file, 'a') as f:
                     f.write(json.dumps(log_entry) + '\n')
             except Exception as e:
+                # The text logger calls just above only recorded operation
+                # name/error/traceback -- not parameters or
+                # duration_seconds, which live only in log_entry (unlike
+                # the verbose-success branch below, which already dumps
+                # log_entry via logger.debug before its own write attempt).
+                # If the JSON write then fails too, those two fields were
+                # previously lost with no other record at all.
                 self.logger.warning(f"Failed to write JSON log: {e}")
+                self.logger.warning(f"Lost JSON log entry, dumping here instead: {json.dumps(log_entry, default=str)}")
         
         elif self.lean_logging and "START" not in operation and "QUEUE" not in operation:
             # In LEAN mode, only log DONE/RESULT/TIMEOUT operations, skip START/QUEUE
@@ -245,23 +264,42 @@ class FreeCADDebugger:
             # Save to JSON log file (only in verbose mode)
             json_log_file = self.log_dir / f"operations_{datetime.now().strftime('%Y%m%d')}.json"
             try:
+                # Same fixed-path symlink risk as log_file above -- see
+                # that call site's comment.
+                tmp_safety.refuse_if_symlink(str(json_log_file))
                 with open(json_log_file, 'a') as f:
                     f.write(json.dumps(log_entry) + '\n')
             except Exception as e:
                 self.logger.warning(f"Failed to write JSON log: {e}")
     
+    # Fallback str() of a non-JSON-serializable value (a FreeCAD object
+    # reference, a large nested structure) previously had no length cap --
+    # a single oversized value could balloon a log entry unboundedly, with
+    # no signal to a reader that the string was verbatim rather than
+    # truncated. Matches crash_watcher.py's truncation-with-suffix pattern.
+    _MAX_SERIALIZED_STR_LEN = 2000
+    _SERIALIZED_TRUNCATION_SUFFIX = " …[truncated]"
+
+    @classmethod
+    def _str_with_cap(cls, value: Any) -> str:
+        s = _redact_secrets(str(value))
+        if len(s) > cls._MAX_SERIALIZED_STR_LEN:
+            keep = cls._MAX_SERIALIZED_STR_LEN - len(cls._SERIALIZED_TRUNCATION_SUFFIX)
+            s = s[:keep] + cls._SERIALIZED_TRUNCATION_SUFFIX
+        return s
+
     def _serialize_params(self, params: Optional[Dict]) -> Optional[Dict]:
         """Serialize parameters for logging."""
         if params is None:
             return None
-        
+
         serialized = {}
         for key, value in params.items():
             try:
                 json.dumps(value)
                 serialized[key] = _redact_value(value)
             except (TypeError, ValueError):
-                serialized[key] = _redact_secrets(str(value))
+                serialized[key] = self._str_with_cap(value)
 
         return serialized
 
@@ -274,7 +312,7 @@ class FreeCADDebugger:
             json.dumps(result)
             return _redact_value(result)
         except (TypeError, ValueError):
-            return _redact_secrets(str(result))
+            return self._str_with_cap(result)
     
     # Above this many objects, capture_freecad_state stops per-object detail
     # and only reports names — matches document_ops.list_objects's cap so a

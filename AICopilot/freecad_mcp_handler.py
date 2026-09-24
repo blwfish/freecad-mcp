@@ -579,6 +579,18 @@ class FreeCADSocketServer:
         self._gui_thread_busy = False
         self._stale_req_ids: set = set()
 
+        # Headless/console mode (QtCore is None) has no GUI thread to
+        # serialize on -- _run_on_gui_thread/_run_on_gui_thread_async run
+        # task_fn() inline on whatever socket-handler thread received the
+        # request instead. The server spawns one thread per client
+        # connection (_active_connections), so two simultaneous headless
+        # connections calling FreeCAD-mutating handlers could previously
+        # execute concurrently on FreeCAD's non-thread-safe document state
+        # with nothing analogous to GUI mode's _gui_thread_busy guard. This
+        # lock serializes headless inline execution the same way the GUI
+        # thread naturally serializes Qt-queued tasks.
+        self._headless_exec_lock = threading.Lock()
+
         # Stamped every _process_gui_tasks tick (every ~100ms) as long as the
         # Qt event loop is alive and pumping. Lets a request be rejected
         # immediately with a clear "GUI thread unresponsive" error instead of
@@ -1012,9 +1024,12 @@ class FreeCADSocketServer:
         Qt main thread in that case.
         """
         if QtCore is None:
-            # Headless / console mode: run inline, no queue needed.
+            # Headless / console mode: run inline, no queue needed. Locked
+            # against concurrent client threads -- see _headless_exec_lock's
+            # definition for why.
             try:
-                result = task_fn()
+                with self._headless_exec_lock:
+                    result = task_fn()
                 if isinstance(result, dict):
                     if "error" in result:
                         return json.dumps({"error": result["error"]})
@@ -1121,9 +1136,13 @@ class FreeCADSocketServer:
             # Tag the request so _process_gui_tasks routes it to the job dict
             self._gui_task_queue.put((f"async:{job_id}", task_fn))
         else:
-            # Console mode: no event loop, run inline
+            # Console mode: no event loop, run inline. Locked against
+            # concurrent client threads -- see _headless_exec_lock's
+            # definition for why (same rationale as _run_on_gui_thread's
+            # sync headless path).
             try:
-                result = task_fn()
+                with self._headless_exec_lock:
+                    result = task_fn()
                 self._async_jobs[job_id].update({
                     "status": "done",
                     "result": result,
@@ -1988,6 +2007,16 @@ class FreeCADSocketServer:
         if operation == "screenshot" and platform.system() == "Darwin":
             try:
                 result = self.view_ops.take_screenshot(args)
+                # take_screenshot catches its own exceptions internally and
+                # returns a plain string starting with "Error" instead of
+                # raising (same convention _call_on_gui_thread_async checks
+                # for) -- this macOS-only bypass skipped that check, so a
+                # caught screenshot failure was reported as {"result":
+                # "Error ..."}, i.e. success. Same bug class the async path
+                # was already fixed for (v8.1.0 changelog), reintroduced
+                # here because this bypass isn't routed through it.
+                if isinstance(result, str) and result.startswith("Error"):
+                    return json.dumps({"error": result})
                 return json.dumps({"result": result})
             except Exception as e:
                 return json.dumps({"error": f"Screenshot error: {e}"})

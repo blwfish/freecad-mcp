@@ -44,7 +44,7 @@ class CAMOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                error = Exception("No active document")
+                error = Exception(NO_ACTIVE_DOCUMENT_ERROR)
                 return self.log_and_return("create_job", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('name', 'Job')
@@ -115,7 +115,7 @@ class CAMOpsHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                error = Exception("No active document")
+                error = Exception(NO_ACTIVE_DOCUMENT_ERROR)
                 return self.log_and_return("setup_stock", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('job_name', '')
@@ -438,7 +438,7 @@ class CAMOpsHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                return json.dumps({"error": "No active document"})
+                return json.dumps({"error": NO_ACTIVE_DOCUMENT_ERROR})
 
             job_name = args.get("job_name", "")
             job = self.get_object(job_name, doc) if job_name else None
@@ -561,59 +561,65 @@ class CAMOpsHandler(BaseHandler):
         """
         return self.simulate_job(args)
 
+    def _do_post_process(self, args: Dict[str, Any]):
+        """Core post-process logic, returning a typed (result, error) pair
+        instead of a plain string. Split out of post_process() so callers
+        (export_gcode) can tell success from failure without string-
+        sniffing the final message for "Error" -- log_and_return() collapses
+        both cases to a plain string, so post_process() itself can't be
+        used as that typed signal (No-Log-Scraping rule)."""
+        from Path.Post.Processor import PostProcessorFactory
+
+        doc = self.get_document()
+        if not doc:
+            return None, Exception(NO_ACTIVE_DOCUMENT_ERROR)
+
+        job_name = args.get('job_name', '')
+        output_file = args.get('output_file', '')
+        post_processor = args.get('post_processor', 'grbl')
+
+        job = self.get_object(job_name, doc) if job_name else None
+        if not job:
+            return None, Exception(f"Job '{job_name}' not found")
+
+        if not output_file:
+            output_file = f"/tmp/{job_name}.gcode"
+
+        path_err = self._validate_file_path(output_file)
+        if path_err:
+            return None, Exception(path_err)
+
+        # Set post-processor on job
+        job.PostProcessor = post_processor
+        if not hasattr(job, 'PostProcessorArgs') or not job.PostProcessorArgs:
+            job.PostProcessorArgs = '--no-show-editor'
+
+        processor = PostProcessorFactory.get_post_processor(job, post_processor)
+        if processor is None:
+            return None, Exception(f"Post processor '{post_processor}' not found")
+
+        gcode_sections = processor.export()
+        if not gcode_sections:
+            return None, Exception("No G-code generated (no operations or empty paths)")
+
+        total_lines = 0
+        with open(output_file, 'w') as f:
+            for _partname, gcode in gcode_sections:
+                if gcode:
+                    f.write(gcode)
+                    total_lines += gcode.count('\n')
+
+        result = f"Generated G-code for job '{job_name}' -> {output_file} ({total_lines} lines)"
+        return result, None
+
     def post_process(self, args: Dict[str, Any]) -> str:
         """Post-process CAM job to generate G-code."""
         start_time = time.time()
         try:
-            from Path.Post.Processor import PostProcessorFactory
-
-            doc = self.get_document()
-            if not doc:
-                error = Exception("No active document")
+            result, error = self._do_post_process(args)
+            if error:
                 return self.log_and_return("post_process", args, error=error, duration=time.time() - start_time)
-
-            job_name = args.get('job_name', '')
-            output_file = args.get('output_file', '')
-            post_processor = args.get('post_processor', 'grbl')
-
-            job = self.get_object(job_name, doc) if job_name else None
-            if not job:
-                error = Exception(f"Job '{job_name}' not found")
-                return self.log_and_return("post_process", args, error=error, duration=time.time() - start_time)
-
-            if not output_file:
-                output_file = f"/tmp/{job_name}.gcode"
-
-            path_err = self._validate_file_path(output_file)
-            if path_err:
-                error = Exception(path_err)
-                return self.log_and_return("post_process", args, error=error, duration=time.time() - start_time)
-
-            # Set post-processor on job
-            job.PostProcessor = post_processor
-            if not hasattr(job, 'PostProcessorArgs') or not job.PostProcessorArgs:
-                job.PostProcessorArgs = '--no-show-editor'
-
-            processor = PostProcessorFactory.get_post_processor(job, post_processor)
-            if processor is None:
-                error = Exception(f"Post processor '{post_processor}' not found")
-                return self.log_and_return("post_process", args, error=error, duration=time.time() - start_time)
-
-            gcode_sections = processor.export()
-            if not gcode_sections:
-                error = Exception("No G-code generated (no operations or empty paths)")
-                return self.log_and_return("post_process", args, error=error, duration=time.time() - start_time)
-
-            total_lines = 0
-            with open(output_file, 'w') as f:
-                for _partname, gcode in gcode_sections:
-                    if gcode:
-                        f.write(gcode)
-                        total_lines += gcode.count('\n')
-
-            result = f"Generated G-code for job '{job_name}' -> {output_file} ({total_lines} lines)"
             return self.log_and_return("post_process", args, result=result, duration=time.time() - start_time)
-
         except ImportError as e:
             error = Exception(f"Path.Post module not available: {e}")
             return self.log_and_return("post_process", args, error=error, duration=time.time() - start_time)
@@ -626,7 +632,7 @@ class CAMOpsHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                error = Exception("No active document")
+                error = Exception(NO_ACTIVE_DOCUMENT_ERROR)
                 return self.log_and_return("inspect", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('job_name', '')
@@ -670,7 +676,7 @@ class CAMOpsHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                error = Exception("No active document")
+                error = Exception(NO_ACTIVE_DOCUMENT_ERROR)
                 return self.log_and_return("list_operations", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('job_name', '')
@@ -732,7 +738,7 @@ class CAMOpsHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                error = Exception("No active document")
+                error = Exception(NO_ACTIVE_DOCUMENT_ERROR)
                 return self.log_and_return("get_operation", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('job_name', '')
@@ -822,7 +828,7 @@ class CAMOpsHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                error = Exception("No active document")
+                error = Exception(NO_ACTIVE_DOCUMENT_ERROR)
                 return self.log_and_return("configure_operation", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('job_name', '')
@@ -920,7 +926,7 @@ class CAMOpsHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                error = Exception("No active document")
+                error = Exception(NO_ACTIVE_DOCUMENT_ERROR)
                 return self.log_and_return("delete_operation", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('job_name', '')
@@ -974,7 +980,7 @@ class CAMOpsHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                error = Exception("No active document")
+                error = Exception(NO_ACTIVE_DOCUMENT_ERROR)
                 return self.log_and_return("configure_job", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('job_name', '')
@@ -1032,7 +1038,7 @@ class CAMOpsHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                error = Exception("No active document")
+                error = Exception(NO_ACTIVE_DOCUMENT_ERROR)
                 return self.log_and_return("inspect_job", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('job_name', '')
@@ -1130,7 +1136,7 @@ class CAMOpsHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                error = Exception("No active document")
+                error = Exception(NO_ACTIVE_DOCUMENT_ERROR)
                 return self.log_and_return("job_status", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('job_name', '')
@@ -1217,14 +1223,20 @@ class CAMOpsHandler(BaseHandler):
         """
         start_time = time.time()
         try:
-            result = self.post_process(args)
-            # post_process returns a plain string; if it's an error, log it as a
-            # failure rather than recording a failed export as a success.
-            if isinstance(result, str) and result.lstrip().startswith("Error"):
-                return self.log_and_return("export_gcode", args,
-                                           error=Exception(result),
-                                           duration=time.time() - start_time)
+            # Uses the typed (result, error) pair from _do_post_process()
+            # directly instead of calling post_process() and string-
+            # sniffing its returned message for a leading "Error" -- that
+            # was a No-Log-Scraping rule violation: post_process()'s own
+            # error-message wording was fully in this project's control,
+            # so a future rewording could have silently turned a real
+            # failure into a logged "success" here with nothing to catch it.
+            result, error = self._do_post_process(args)
+            if error:
+                return self.log_and_return("export_gcode", args, error=error, duration=time.time() - start_time)
             return self.log_and_return("export_gcode", args, result=result, duration=time.time() - start_time)
+        except ImportError as e:
+            error = Exception(f"Path.Post module not available: {e}")
+            return self.log_and_return("export_gcode", args, error=error, duration=time.time() - start_time)
         except Exception as e:
             return self.log_and_return("export_gcode", args, error=e, duration=time.time() - start_time)
 
@@ -1241,7 +1253,7 @@ class CAMOpsHandler(BaseHandler):
         try:
             doc = self.get_document()
             if not doc:
-                error = Exception("No active document")
+                error = Exception(NO_ACTIVE_DOCUMENT_ERROR)
                 return self.log_and_return("delete_job", args, error=error, duration=time.time() - start_time)
 
             job_name = args.get('job_name', '')

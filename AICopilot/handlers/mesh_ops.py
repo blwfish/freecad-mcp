@@ -7,7 +7,7 @@ import FreeCAD
 import os
 import time
 from typing import Dict, Any
-from .base import BaseHandler
+from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
 
 
 class MeshOpsHandler(BaseHandler):
@@ -69,7 +69,7 @@ class MeshOpsHandler(BaseHandler):
             doc = self.get_document()
             if not doc:
                 return self.log_and_return("import_mesh", args,
-                    error=Exception("No active document. Create one first via view_control create_document."),
+                    error=Exception(NO_ACTIVE_DOCUMENT_ERROR),
                     duration=time.time() - start_time)
 
             # Derive name from filename if not provided
@@ -166,8 +166,16 @@ class MeshOpsHandler(BaseHandler):
                 # Create temporary mesh object for export
                 temp_obj = doc.addObject("Mesh::Feature", "_export_temp")
                 temp_obj.Mesh = mesh_data
-                Mesh.export([temp_obj], file_path)
-                doc.removeObject(temp_obj.Name)
+                try:
+                    Mesh.export([temp_obj], file_path)
+                finally:
+                    # Previously only removed on the success path -- an
+                    # exception during export (bad path, tessellation edge
+                    # case) left this permanently orphaned in the document,
+                    # surviving future saves. Clean it up regardless of
+                    # outcome, matching assembly_ops.py's consistent
+                    # temp-object cleanup pattern.
+                    doc.removeObject(temp_obj.Name)
             else:
                 return self.log_and_return("export_mesh", args,
                     error=Exception(f"Object '{object_name}' has no Mesh or Shape to export"),
@@ -369,7 +377,7 @@ class MeshOpsHandler(BaseHandler):
                 doc = self.get_document()
                 if not doc:
                     return self.log_and_return("import_file", args,
-                        error=Exception("No active document. Create one first via view_control create_document."),
+                        error=Exception(NO_ACTIVE_DOCUMENT_ERROR),
                         duration=time.time() - start_time)
 
                 objects_before = set(o.Name for o in doc.Objects)

@@ -85,7 +85,21 @@ def write_discovery(
     # (typically 0o644/0o664, group/world-readable) before a later chmod()
     # tightens it. Discovery files can contain freecad_binary/socket_path,
     # so that window is real information exposure, not just cosmetic.
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    #
+    # O_EXCL|O_NOFOLLOW added to match the stronger pattern this repo's
+    # other fixed-path writers use (crash_watcher.py, freecad_crash_report.
+    # py's OpLog): O_NOFOLLOW refuses to follow a symlink an attacker with
+    # local access could plant at this predictable .tmp path; O_EXCL (tried
+    # first) ensures a genuinely fresh file is created at exactly the
+    # requested mode. A pre-existing .tmp (e.g. left over from an
+    # interrupted prior write, or from before this hardening shipped) falls
+    # back to a plain open + fchmod, same as those two files.
+    base_flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
+    try:
+        fd = os.open(tmp, base_flags | os.O_EXCL, 0o600)
+    except FileExistsError:
+        fd = os.open(tmp, base_flags, 0o600)
+        os.fchmod(fd, 0o600)
     with os.fdopen(fd, "w") as f:  # takes ownership of fd; closes it on any exit path
         json.dump(data, f, indent=2)
     os.replace(tmp, path)

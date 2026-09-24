@@ -6,22 +6,71 @@ Environment requirements (already met in the FreeCAD pixi env):
 - FC-tools on sys.path before importing sketch_builder
 - python-solvespace installed in the FreeCAD Python env
 - `import Part` must happen before sketch_builder emitter is imported
+
+Path resolution order (same shape as inspector_ops.py's
+_ensure_inspector_importable, which imports from the same sibling FC-tools
+repo -- this module used to be the one handler in the file set that broke
+on any machine where the repo isn't at the exact hardcoded dev-machine
+path, with no override):
+  1. FreeCAD preference "SketchBuilderPath" (User Parameter -> BaseApp/Preferences/Mod/AICopilot)
+  2. The env var FREECAD_SKETCH_BUILDER_PATH
+  3. Well-known sibling path: the directory two levels above this file
+  4. /Volumes/Files/claude/FC-tools (hardcoded fallback for dev machine)
 """
 
 import json
+import os
 import sys
 import xml.etree.ElementTree as ET
 from typing import Any, Dict
 
-from .base import BaseHandler
+import FreeCAD
 
-FC_TOOLS_PATH = '/Volumes/Files/claude/FC-tools'
+from .base import BaseHandler, AICOPILOT_PREF_PATH
+
+_FALLBACK_PATHS = [
+    os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'FC-tools')),
+    '/Volumes/Files/claude/FC-tools',
+]
 
 
 def _ensure_sketch_builder_importable() -> None:
-    """Add FC-tools to sys.path and ensure Part is imported first."""
-    if FC_TOOLS_PATH not in sys.path:
-        sys.path.insert(0, FC_TOOLS_PATH)
+    """Add FC-tools to sys.path (preference -> env var -> well-known
+    sibling paths) and ensure Part is imported first."""
+    added = False
+
+    try:
+        pref = FreeCAD.ParamGet(AICOPILOT_PREF_PATH)
+        p = pref.GetString('SketchBuilderPath', '')
+        if p and os.path.isdir(p):
+            if p not in sys.path:
+                sys.path.insert(0, p)
+            added = True
+    except Exception:
+        pass
+
+    if not added:
+        env = os.environ.get('FREECAD_SKETCH_BUILDER_PATH', '')
+        if env and os.path.isdir(env):
+            if env not in sys.path:
+                sys.path.insert(0, env)
+            added = True
+
+    if not added:
+        for path in _FALLBACK_PATHS:
+            if os.path.isdir(path):
+                if path not in sys.path:
+                    sys.path.insert(0, path)
+                added = True
+                break
+
+    if not added:
+        raise ImportError(
+            "Could not locate FC-tools/sketch_builder. "
+            "Set FreeCAD preference Mod/AICopilot -> SketchBuilderPath or "
+            "env var FREECAD_SKETCH_BUILDER_PATH to the FC-tools directory."
+        )
+
     # Part must be imported before sketch_builder's emitter module
     import Part  # noqa: F401
 

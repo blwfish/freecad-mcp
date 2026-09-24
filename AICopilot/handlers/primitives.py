@@ -18,7 +18,7 @@
 
 import FreeCAD
 from typing import Dict, Any, Optional
-from .base import BaseHandler
+from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
 
 
 _INJECTED_KEYS = frozenset({"operation", "_continue_selection", "_operation_id"})
@@ -93,7 +93,7 @@ class PrimitivesHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "Error creating box: No active document. Call view_control(operation='create_document') first."
+                return f"Error creating box: {NO_ACTIVE_DOCUMENT_ERROR}"
 
             box = doc.addObject("Part::Box", name)
             box.Label = name
@@ -128,7 +128,7 @@ class PrimitivesHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "Error creating cylinder: No active document. Call view_control(operation='create_document') first."
+                return f"Error creating cylinder: {NO_ACTIVE_DOCUMENT_ERROR}"
 
             cylinder = doc.addObject("Part::Cylinder", name)
             cylinder.Label = name
@@ -161,7 +161,7 @@ class PrimitivesHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "Error creating sphere: No active document. Call view_control(operation='create_document') first."
+                return f"Error creating sphere: {NO_ACTIVE_DOCUMENT_ERROR}"
 
             sphere = doc.addObject("Part::Sphere", name)
             sphere.Label = name
@@ -204,7 +204,7 @@ class PrimitivesHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "Error creating cone: No active document. Call view_control(operation='create_document') first."
+                return f"Error creating cone: {NO_ACTIVE_DOCUMENT_ERROR}"
 
             cone = doc.addObject("Part::Cone", name)
             cone.Label = name
@@ -245,7 +245,7 @@ class PrimitivesHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "Error creating torus: No active document. Call view_control(operation='create_document') first."
+                return f"Error creating torus: {NO_ACTIVE_DOCUMENT_ERROR}"
 
             torus = doc.addObject("Part::Torus", name)
             torus.Label = name
@@ -282,7 +282,7 @@ class PrimitivesHandler(BaseHandler):
 
             doc = self.get_document()
             if not doc:
-                return "Error creating wedge: No active document. Call view_control(operation='create_document') first."
+                return f"Error creating wedge: {NO_ACTIVE_DOCUMENT_ERROR}"
 
             wedge = doc.addObject("Part::Wedge", name)
             wedge.Label = name
