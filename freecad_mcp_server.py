@@ -11,6 +11,7 @@ import os
 import platform
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -406,6 +407,103 @@ def _scan_discovery(prune_stale: bool = True) -> list[dict]:
             except OSError:
                 pass
     return live
+
+
+def _discovery_file_path(instance_uuid: str) -> str:
+    """Path to a spawned instance's discovery JSON. Mirrors
+    AICopilot/instance_registry.py's discovery_path() -- the two sides
+    can't import each other (see _scan_discovery's docstring), so the
+    `f"{uuid}.json"` naming convention is duplicated by necessity, not
+    oversight."""
+    return os.path.join(DISCOVERY_DIR, f"{instance_uuid}.json")
+
+
+def _real_process_alive(instance_uuid: str | None) -> bool:
+    """Whether the process that actually wrote this discovery record is
+    still alive.
+
+    The discovery record's "pid" field is written by AICopilot from
+    os.getpid() inside the real running FreeCAD process (see
+    instance_registry.write_discovery) -- NOT the pid stop_freecad_instance
+    tracks via subprocess.Popen, which on Linux/AppImage is an outer AppRun
+    wrapper that forks (rather than exec's) into the real freecadcmd binary
+    through a FUSE mount. Terminating the wrapper alone leaves this real
+    process running (issue #90); checking its liveness via the discovery
+    record, rather than trusting the wrapper's exit status, is what lets
+    stop_freecad_instance detect that and avoid reporting false success.
+
+    Returns False -- "not alive", not "unknown" -- when there's no uuid or
+    the record is missing/corrupt: a caller with no uuid to check has no
+    better signal to act on, and a missing record is itself evidence the
+    instance already tore down its own discovery file on exit.
+    """
+    if not instance_uuid:
+        return False
+    try:
+        with open(_discovery_file_path(instance_uuid)) as f:
+            record_pid = json.load(f).get("pid")
+    except (OSError, json.JSONDecodeError):
+        return False
+    return _pid_alive(record_pid)
+
+
+def _terminate_process_group(proc, *, term_timeout: float = 5.0, kill_timeout: float = 3.0) -> None:
+    """Terminate proc's whole process group (POSIX) rather than just proc.
+
+    spawn_freecad_instance always launches with start_new_session=True, so
+    proc.pid doubles as the process group id. That matters because the
+    FreeCAD AppImage's AppRun wrapper forks -- rather than exec's -- into
+    the real freecadcmd binary via a FUSE mount (issue #90): a plain
+    proc.terminate()/proc.kill() only reaches that outer wrapper, leaving
+    the real FreeCAD process (and its FUSE mount helper) running as
+    orphans. Signalling the whole group reaches every descendant that
+    hasn't detached into its own session.
+
+    Best-effort throughout: a group that's already gone, or one this
+    process lacks permission to signal, is not an error here -- the
+    caller (stop_freecad_instance) verifies actual liveness afterward via
+    _real_process_alive rather than trusting this function's completion.
+    """
+    if sys.platform == "win32":
+        # start_new_session has no effect on Windows and process groups
+        # don't apply the same way -- fall back to the plain child signal.
+        try:
+            proc.terminate()
+            proc.wait(timeout=term_timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+        except OSError:
+            pass
+        return
+
+    try:
+        pgid = os.getpgid(proc.pid)
+    except ProcessLookupError:
+        return
+
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return
+
+    try:
+        proc.wait(timeout=term_timeout)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        return
+
+    try:
+        proc.wait(timeout=kill_timeout)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 # =============================================================================
@@ -3437,20 +3535,52 @@ async def main():
                 )]
 
             proc = info.get("proc")
+            instance_uuid = info.get("uuid")
+
             if proc:
-                try:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                except OSError:
-                    pass
+                _terminate_process_group(proc)
+
+            # Don't trust the terminate call's completion -- the tracked
+            # pid (proc) is the AppImage/wrapper launcher on Linux, not the
+            # real freecadcmd process; verify both independently (issue
+            # #90). If either is still alive, leave the instance registered
+            # (so a retry, or manual intervention, still has something to
+            # act on) and the socket/discovery files in place (so
+            # list_freecad_instances keeps reporting the leak instead of
+            # hiding it) rather than reporting false success.
+            wrapper_alive = proc is not None and proc.poll() is None
+            real_process_alive = _real_process_alive(instance_uuid)
+
+            if wrapper_alive or real_process_alive:
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({
+                        "error": (
+                            f"Instance {target_path} did not fully stop "
+                            f"(wrapper_alive={wrapper_alive}, "
+                            f"freecad_process_alive={real_process_alive}). "
+                            "Still registered -- retry stop_freecad_instance, "
+                            "or check `ps`/kill manually."
+                        ),
+                        "wrapper_alive": wrapper_alive,
+                        "freecad_process_alive": real_process_alive,
+                    })
+                )]
 
             # Clean up socket file if it still exists
             if os.path.exists(target_path):
                 try:
                     os.remove(target_path)
+                except OSError:
+                    pass
+
+            # Clean up the discovery record now, rather than waiting for a
+            # future _scan_discovery(prune_stale=True) call to notice --
+            # otherwise list_freecad_instances/check_freecad_connection
+            # keep reporting an instance that's already confirmed gone.
+            if instance_uuid:
+                try:
+                    os.unlink(_discovery_file_path(instance_uuid))
                 except OSError:
                     pass
 

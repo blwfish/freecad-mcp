@@ -16,6 +16,7 @@ import asyncio
 import itertools
 import json
 import os
+import subprocess
 import sys
 import types as _types
 from unittest.mock import MagicMock, patch
@@ -423,112 +424,297 @@ class TestSpawnLaunchCmdConstruction:
 # ---------------------------------------------------------------------------
 # stop_freecad_instance
 # ---------------------------------------------------------------------------
+#
+# Issue #90: the tracked proc is the AppImage/wrapper launcher on Linux,
+# not the real freecadcmd process living one or more fork() hops below it
+# (the wrapper forks rather than exec's into the FUSE-mounted binary).
+# Signalling proc alone left the real process, and its stale discovery
+# record, orphaned while still reporting "stopped". The fix calls the
+# bridge's real _terminate_process_group (whole-process-group kill) and
+# _real_process_alive (discovery-record-pid based verification) --
+# _run_stop below calls those real functions rather than re-implementing
+# the kill/verify logic a second time, so these tests exercise the actual
+# code, not a hand-copied stand-in for it.
+
+def _run_stop(bridge, ctx, arguments):
+    """
+    Simulate the stop_freecad_instance handler branch directly.
+    Returns parsed JSON result dict.
+    """
+    args = arguments or {}
+    target_path = args.get("socket_path")
+    target_label = args.get("label")
+
+    if not target_path and target_label:
+        for sp, info in ctx.instances.items():
+            if info.get("label") == target_label:
+                target_path = sp
+                break
+
+    if not target_path:
+        return {"error": "Provide socket_path or label of instance to stop"}
+
+    info = ctx.instances.get(target_path)
+    if not info:
+        return {"error": f"Instance '{target_path}' not managed by this bridge"}
+
+    proc = info.get("proc")
+    instance_uuid = info.get("uuid")
+
+    if proc is not None:
+        bridge._terminate_process_group(proc)
+
+    wrapper_alive = proc is not None and proc.poll() is None
+    real_process_alive = bridge._real_process_alive(instance_uuid)
+
+    if wrapper_alive or real_process_alive:
+        return {
+            "error": f"Instance {target_path} did not fully stop",
+            "wrapper_alive": wrapper_alive,
+            "freecad_process_alive": real_process_alive,
+        }
+
+    if instance_uuid:
+        try:
+            os.unlink(bridge._discovery_file_path(instance_uuid))
+        except OSError:
+            pass
+
+    # Skip actual os.remove — socket file is fake in tests
+    ctx.unregister(target_path)
+
+    if ctx.socket_path == target_path:
+        ctx.socket_path = os.environ.get("FREECAD_MCP_SOCKET", "/tmp/freecad_mcp.sock")
+
+    return {
+        "result": f"Instance {target_path} stopped",
+        "active_socket": ctx.socket_path,
+    }
+
 
 class TestStopInstance:
 
-    def _run_stop(self, ctx, arguments):
-        """
-        Simulate the stop_freecad_instance handler branch directly.
-        Returns parsed JSON result dict.
-        """
-        import subprocess as _sp
-
-        args = arguments or {}
-        target_path = args.get("socket_path")
-        target_label = args.get("label")
-
-        if not target_path and target_label:
-            for sp, info in ctx.instances.items():
-                if info.get("label") == target_label:
-                    target_path = sp
-                    break
-
-        if not target_path:
-            return {"error": "Provide socket_path or label of instance to stop"}
-
-        info = ctx.instances.get(target_path)
-        if not info:
-            return {"error": f"Instance '{target_path}' not managed by this bridge"}
-
-        proc = info.get("proc")
-        if proc is not None:
-            try:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=5)
-                except _sp.TimeoutExpired:
-                    proc.kill()
-            except OSError:
-                pass
-
-        # Skip actual os.remove — socket file is fake in tests
-        ctx.unregister(target_path)
-
-        if ctx.socket_path == target_path:
-            ctx.socket_path = os.environ.get("FREECAD_MCP_SOCKET", "/tmp/freecad_mcp.sock")
-
-        return {
-            "result": f"Instance {target_path} stopped",
-            "active_socket": ctx.socket_path,
-        }
+    @pytest.fixture(autouse=True)
+    def _mock_process_group(self, bridge, monkeypatch):
+        """Stub os.getpgid/os.killpg so _terminate_process_group's real
+        group-kill path runs deterministically without ever signalling a
+        real process group -- these tests' procs are MagicMocks with
+        fabricated pids that could otherwise collide with a genuine
+        system pid if passed to the unmocked syscalls."""
+        monkeypatch.setattr(bridge.os, "getpgid", lambda pid: 999999)
+        monkeypatch.setattr(bridge.os, "killpg", MagicMock())
 
     def test_stop_success(self, bridge):
         ctx = _fresh_ctx(bridge)
         proc = MagicMock()
+        proc.poll.return_value = 0  # wrapper reaped after group signal
         ctx.register("/tmp/z.sock", 1, proc, "z")
-        result = self._run_stop(ctx, {"socket_path": "/tmp/z.sock"})
+        result = _run_stop(bridge, ctx, {"socket_path": "/tmp/z.sock"})
         assert "error" not in result
         assert "z.sock" in result["result"]
-        proc.terminate.assert_called_once()
+        bridge.os.killpg.assert_any_call(999999, bridge.signal.SIGTERM)
 
     def test_stop_by_label(self, bridge):
         ctx = _fresh_ctx(bridge)
         proc = MagicMock()
+        proc.poll.return_value = 0  # wrapper reaped after group signal
         ctx.register("/tmp/w.sock", 2, proc, "worker")
-        result = self._run_stop(ctx, {"label": "worker"})
+        result = _run_stop(bridge, ctx, {"label": "worker"})
         assert "error" not in result
-        proc.terminate.assert_called_once()
+        bridge.os.killpg.assert_any_call(999999, bridge.signal.SIGTERM)
 
     def test_stop_unregisters(self, bridge):
         ctx = _fresh_ctx(bridge)
-        ctx.register("/tmp/q.sock", 3, MagicMock(), "q")
-        self._run_stop(ctx, {"socket_path": "/tmp/q.sock"})
+        proc = MagicMock()
+        proc.poll.return_value = 0  # wrapper reaped after group signal
+        ctx.register("/tmp/q.sock", 3, proc, "q")
+        _run_stop(bridge, ctx, {"socket_path": "/tmp/q.sock"})
         paths = [i["socket_path"] for i in ctx.list_all()]
         assert "/tmp/q.sock" not in paths
 
     def test_stop_reverts_active_socket(self, bridge, monkeypatch):
         monkeypatch.delenv("FREECAD_MCP_SOCKET", raising=False)
         ctx = _fresh_ctx(bridge)
-        ctx.register("/tmp/active.sock", 4, MagicMock(), "active")
+        proc = MagicMock()
+        proc.poll.return_value = 0  # wrapper reaped after group signal
+        ctx.register("/tmp/active.sock", 4, proc, "active")
         ctx.socket_path = "/tmp/active.sock"
-        result = self._run_stop(ctx, {"socket_path": "/tmp/active.sock"})
+        result = _run_stop(bridge, ctx, {"socket_path": "/tmp/active.sock"})
         assert ctx.socket_path == "/tmp/freecad_mcp.sock"
         assert result["active_socket"] == "/tmp/freecad_mcp.sock"
 
     def test_stop_does_not_change_socket_if_not_active(self, bridge):
         ctx = _fresh_ctx(bridge)
+        proc = MagicMock()
+        proc.poll.return_value = 0  # wrapper reaped after group signal
         ctx.socket_path = "/tmp/other.sock"
-        ctx.register("/tmp/idle.sock", 5, MagicMock(), "idle")
-        self._run_stop(ctx, {"socket_path": "/tmp/idle.sock"})
+        ctx.register("/tmp/idle.sock", 5, proc, "idle")
+        _run_stop(bridge, ctx, {"socket_path": "/tmp/idle.sock"})
         assert ctx.socket_path == "/tmp/other.sock"
 
     def test_stop_unknown_instance_returns_error(self, bridge):
         ctx = _fresh_ctx(bridge)
-        result = self._run_stop(ctx, {"socket_path": "/tmp/ghost.sock"})
+        result = _run_stop(bridge, ctx, {"socket_path": "/tmp/ghost.sock"})
         assert "error" in result
         assert "ghost.sock" in result["error"]
 
     def test_stop_no_args_returns_error(self, bridge):
         ctx = _fresh_ctx(bridge)
-        result = self._run_stop(ctx, {})
+        result = _run_stop(bridge, ctx, {})
         assert "error" in result
 
     def test_stop_timeout_kills_proc(self, bridge):
+        """proc.wait() times out after SIGTERM on the group; must escalate
+        to SIGKILL rather than giving up."""
         ctx = _fresh_ctx(bridge)
         proc = MagicMock()
-        import subprocess as _sp
-        proc.wait.side_effect = _sp.TimeoutExpired(cmd="fake", timeout=5)
+        proc.wait.side_effect = [subprocess.TimeoutExpired(cmd="fake", timeout=5), None]
+        proc.poll.return_value = 0  # wrapper reaped after group signal
         ctx.register("/tmp/slow.sock", 6, proc, "slow")
-        result = self._run_stop(ctx, {"socket_path": "/tmp/slow.sock"})
+        result = _run_stop(bridge, ctx, {"socket_path": "/tmp/slow.sock"})
         assert "error" not in result
-        proc.kill.assert_called_once()
+        assert bridge.os.killpg.call_count == 2
+        bridge.os.killpg.assert_any_call(999999, bridge.signal.SIGTERM)
+        bridge.os.killpg.assert_any_call(999999, bridge.signal.SIGKILL)
+
+    def test_stop_reports_error_and_keeps_registration_when_wrapper_survives(self, bridge):
+        """If the tracked wrapper process is still alive after the kill
+        attempt (e.g. permission denied on the group signal), stop must
+        report failure and leave the instance registered for a retry --
+        never claim success unconditionally (issue #90)."""
+        ctx = _fresh_ctx(bridge)
+        proc = MagicMock()
+        proc.poll.return_value = None  # still running: poll() returns None while alive
+        proc.wait.side_effect = subprocess.TimeoutExpired(cmd="fake", timeout=5)
+        ctx.register("/tmp/stuck.sock", 7, proc, "stuck")
+        result = _run_stop(bridge, ctx, {"socket_path": "/tmp/stuck.sock"})
+        assert "error" in result
+        assert result["wrapper_alive"] is True
+        paths = [i["socket_path"] for i in ctx.list_all()]
+        assert "/tmp/stuck.sock" in paths
+
+    def test_stop_reports_error_and_keeps_discovery_file_when_real_process_survives(
+        self, bridge
+    ):
+        """issue #90's actual reported bug: the wrapper dies (proc.poll()
+        returns an exit code) but the real freecadcmd process -- the one
+        AICopilot's own discovery record's pid refers to -- is still
+        running. stop must not report success or delete the discovery
+        record out from under a still-live process."""
+        os.makedirs(bridge.DISCOVERY_DIR, exist_ok=True)
+        instance_uuid = "leaked-uuid"
+        discovery_file = bridge._discovery_file_path(instance_uuid)
+        with open(discovery_file, "w") as f:
+            json.dump({"pid": os.getpid()}, f)  # this test process: definitely alive
+
+        ctx = _fresh_ctx(bridge)
+        proc = MagicMock()
+        proc.poll.return_value = 0  # wrapper exited cleanly
+        ctx.register("/tmp/leak.sock", 8, proc, "leak", instance_uuid=instance_uuid)
+
+        result = _run_stop(bridge, ctx, {"socket_path": "/tmp/leak.sock"})
+
+        assert "error" in result
+        assert result["wrapper_alive"] is False
+        assert result["freecad_process_alive"] is True
+        paths = [i["socket_path"] for i in ctx.list_all()]
+        assert "/tmp/leak.sock" in paths
+        assert os.path.exists(discovery_file)
+
+
+# ---------------------------------------------------------------------------
+# _terminate_process_group (issue #90)
+# ---------------------------------------------------------------------------
+
+class TestTerminateProcessGroup:
+    """Direct tests of the real function stop_freecad_instance now uses.
+
+    The whole point of #90 is that proc.terminate()/proc.kill() only ever
+    reach the tracked child -- the AppImage's outer AppRun wrapper on
+    Linux -- not the real freecadcmd process one or more fork() hops
+    below it. These tests assert the group (os.killpg), not the single
+    process, is what gets signalled.
+    """
+
+    def test_sigterm_targets_the_process_group_not_just_the_child(self, bridge, monkeypatch):
+        proc = MagicMock()
+        proc.pid = 4242
+        proc.wait.return_value = None
+        calls = []
+        monkeypatch.setattr(bridge.os, "getpgid", lambda pid: pid)
+        monkeypatch.setattr(bridge.os, "killpg", lambda pgid, sig: calls.append((pgid, sig)))
+        bridge._terminate_process_group(proc)
+        assert calls == [(4242, bridge.signal.SIGTERM)]
+        proc.terminate.assert_not_called()
+
+    def test_escalates_to_sigkill_after_term_timeout(self, bridge, monkeypatch):
+        proc = MagicMock()
+        proc.pid = 5
+        proc.wait.side_effect = [subprocess.TimeoutExpired(cmd="x", timeout=5), None]
+        calls = []
+        monkeypatch.setattr(bridge.os, "getpgid", lambda pid: 111)
+        monkeypatch.setattr(bridge.os, "killpg", lambda pgid, sig: calls.append((pgid, sig)))
+        bridge._terminate_process_group(proc)
+        assert calls == [(111, bridge.signal.SIGTERM), (111, bridge.signal.SIGKILL)]
+
+    def test_group_already_gone_does_not_raise(self, bridge, monkeypatch):
+        """getpgid raising ProcessLookupError means the whole group is
+        already dead -- must return quietly, not propagate."""
+        proc = MagicMock()
+        proc.pid = 6
+        monkeypatch.setattr(bridge.os, "getpgid", MagicMock(side_effect=ProcessLookupError))
+        bridge._terminate_process_group(proc)  # must not raise
+
+    def test_permission_denied_on_killpg_does_not_raise(self, bridge, monkeypatch):
+        proc = MagicMock()
+        proc.pid = 7
+        monkeypatch.setattr(bridge.os, "getpgid", lambda pid: 222)
+        monkeypatch.setattr(bridge.os, "killpg", MagicMock(side_effect=PermissionError))
+        bridge._terminate_process_group(proc)  # must not raise
+
+    def test_posix_path_never_calls_terminate_or_kill_directly(self, bridge, monkeypatch):
+        proc = MagicMock()
+        proc.pid = 8
+        monkeypatch.setattr(bridge.os, "getpgid", lambda pid: 333)
+        monkeypatch.setattr(bridge.os, "killpg", MagicMock())
+        bridge._terminate_process_group(proc)
+        proc.terminate.assert_not_called()
+        proc.kill.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _real_process_alive / _discovery_file_path (issue #90)
+# ---------------------------------------------------------------------------
+
+class TestRealProcessAlive:
+    """_scan_discovery's pruning already existed, but only runs lazily on
+    the next scan; _real_process_alive is the synchronous check
+    stop_freecad_instance uses to decide, right now, whether the process
+    that actually wrote a discovery record (not the tracked wrapper pid)
+    is still running."""
+
+    def test_no_uuid_returns_false(self, bridge):
+        assert bridge._real_process_alive(None) is False
+
+    def test_missing_discovery_file_returns_false(self, bridge):
+        assert bridge._real_process_alive("no-such-uuid") is False
+
+    def test_corrupt_discovery_file_returns_false(self, bridge):
+        os.makedirs(bridge.DISCOVERY_DIR, exist_ok=True)
+        with open(bridge._discovery_file_path("corrupt-uuid"), "w") as f:
+            f.write("not json")
+        assert bridge._real_process_alive("corrupt-uuid") is False
+
+    def test_alive_pid_in_record_reports_alive(self, bridge):
+        os.makedirs(bridge.DISCOVERY_DIR, exist_ok=True)
+        with open(bridge._discovery_file_path("alive-uuid"), "w") as f:
+            json.dump({"pid": os.getpid()}, f)
+        assert bridge._real_process_alive("alive-uuid") is True
+
+    def test_dead_pid_in_record_reports_not_alive(self, bridge):
+        os.makedirs(bridge.DISCOVERY_DIR, exist_ok=True)
+        with open(bridge._discovery_file_path("dead-uuid"), "w") as f:
+            # Implausibly large pid -- _pid_alive's os.kill(pid, 0) call
+            # should hit ProcessLookupError.
+            json.dump({"pid": 2**30}, f)
+        assert bridge._real_process_alive("dead-uuid") is False
