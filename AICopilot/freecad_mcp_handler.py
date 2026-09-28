@@ -927,98 +927,129 @@ class FreeCADSocketServer:
         Handles both synchronous tasks (req_id is an int, result goes to
         _gui_response_queue) and async jobs (req_id is "async:<job_id>",
         result stored in _async_jobs dict).
+
+        The whole body runs inside a try/finally: the reschedule at the
+        bottom must fire even if this tick raised, or the recurring loop
+        dies permanently and every future GUI-thread MCP call hangs until
+        FreeCAD is restarted (confirmed live 2026-09-28: an AttributeError
+        thrown before the old bare `if QtCore: QTimer.singleShot(...)` at
+        the end of this method silently killed the loop for the rest of
+        the FreeCAD session).
         """
-        # Confirms the Qt event loop is alive and this tick actually ran --
-        # the core heartbeat signal. Also re-stamped after grabbing each
-        # individual queued task below, so a slow multi-item batch doesn't
-        # go stale between items. A single task slower than the heartbeat's
-        # stale_after (default 2s) can still make the heartbeat look stale to
-        # a *different*, concurrently-checking caller for that task's
-        # duration -- an accepted narrow edge case, not a full fix, since the
-        # alternative (a background keep-alive ping during task execution)
-        # is real added complexity for a rare case that's still strictly
-        # better than today's only option, a 30-120s blind timeout.
-        self._heartbeat.stamp()
+        try:
+            # Confirms the Qt event loop is alive and this tick actually ran
+            # -- the core heartbeat signal. Also re-stamped after grabbing
+            # each individual queued task below, so a slow multi-item batch
+            # doesn't go stale between items. A single task slower than the
+            # heartbeat's stale_after (default 2s) can still make the
+            # heartbeat look stale to a *different*, concurrently-checking
+            # caller for that task's duration -- an accepted narrow edge
+            # case, not a full fix, since the alternative (a background
+            # keep-alive ping during task execution) is real added
+            # complexity for a rare case that's still strictly better than
+            # today's only option, a 30-120s blind timeout.
+            self._heartbeat.stamp()
 
-        # Previously refreshed unconditionally every tick (~100ms), even
-        # when idle -- iterating every object in ActiveDocument up to 10x/
-        # second with nothing queued. Skip it on idle ticks except every
-        # _VISIBILITY_REFRESH_EVERY_N_TICKS'th one (so a Visibility change
-        # made directly in the GUI, outside any MCP call, still gets picked
-        # up eventually); always refresh when there's real queued work,
-        # since that work may itself change Visibility.
-        queue_had_work = not self._gui_task_queue.empty()
-        self._visibility_cache_tick_counter += 1
-        if queue_had_work or self._visibility_cache_tick_counter >= self._VISIBILITY_REFRESH_EVERY_N_TICKS:
-            self._visibility_cache_tick_counter = 0
-            self._refresh_visibility_cache()
+            # Previously refreshed unconditionally every tick (~100ms), even
+            # when idle -- iterating every object in ActiveDocument up to
+            # 10x/second with nothing queued. Skip it on idle ticks except
+            # every _VISIBILITY_REFRESH_EVERY_N_TICKS'th one (so a
+            # Visibility change made directly in the GUI, outside any MCP
+            # call, still gets picked up eventually); always refresh when
+            # there's real queued work, since that work may itself change
+            # Visibility.
+            queue_had_work = not self._gui_task_queue.empty()
+            # getattr fallback: this attribute was added to __init__ after
+            # some already-running FreeCADSocketServer singletons were
+            # constructed. reload_modules() hot-swaps class code onto a live
+            # singleton but never re-runs __init__, so an instance built
+            # before this attribute existed would otherwise AttributeError
+            # here on every hot-reloaded tick.
+            self._visibility_cache_tick_counter = (
+                getattr(self, "_visibility_cache_tick_counter", 0) + 1
+            )
+            if (
+                queue_had_work
+                or self._visibility_cache_tick_counter >= self._VISIBILITY_REFRESH_EVERY_N_TICKS
+            ):
+                self._visibility_cache_tick_counter = 0
+                self._refresh_visibility_cache()
 
-        while not self._gui_task_queue.empty():
-            req_id = None
-            try:
-                req_id, task = self._gui_task_queue.get_nowait()
-                self._heartbeat.stamp()
+            while not self._gui_task_queue.empty():
+                req_id = None
+                try:
+                    req_id, task = self._gui_task_queue.get_nowait()
+                    self._heartbeat.stamp()
 
-                # Async job path
-                if isinstance(req_id, str) and req_id.startswith("async:"):
-                    job_id = req_id[6:]
-                    job = self._async_jobs.get(job_id)
-                    if job is None or job.get("status") != "running":
-                        # Job was cancelled before it even started — skip
-                        FreeCAD.Console.PrintMessage(
-                            f"[MCP] Skipping cancelled/missing async job {job_id}\n"
-                        )
-                        continue
-                    result = task()
-                    job.update({
-                        "status": "done",
-                        "result": result,
-                        "elapsed": time.time() - job["started"],
-                        "finished": time.time(),
-                    })
-                    FreeCAD.Console.PrintMessage(
-                        f"[MCP] async job {job_id} done\n"
-                    )
-
-                # Synchronous path
-                else:
-                    self._gui_thread_busy = True
-                    try:
+                    # Async job path
+                    if isinstance(req_id, str) and req_id.startswith("async:"):
+                        job_id = req_id[6:]
+                        job = self._async_jobs.get(job_id)
+                        if job is None or job.get("status") != "running":
+                            # Job was cancelled before it even started — skip
+                            FreeCAD.Console.PrintMessage(
+                                f"[MCP] Skipping cancelled/missing async job {job_id}\n"
+                            )
+                            continue
                         result = task()
-                    finally:
-                        self._gui_thread_busy = False
-                    if req_id in self._stale_req_ids:
-                        # Waiter already timed out — discard result, don't pollute the queue
-                        self._stale_req_ids.discard(req_id)
-                        FreeCAD.Console.PrintMessage(
-                            f"[MCP] Discarding result for stale request {req_id}\n"
-                        )
-                    else:
-                        self._gui_response_queue.put((req_id, result))
-
-            except queue.Empty:
-                break
-            except Exception as e:
-                tb = tb_module.format_exc()
-                if isinstance(req_id, str) and req_id.startswith("async:"):
-                    job_id = req_id[6:]
-                    job = self._async_jobs.get(job_id)
-                    if job is not None:
                         job.update({
-                            "status": "error",
-                            "error": str(e),
-                            "error_id": self.diagnostics_ops.store_traceback(tb),
+                            "status": "done",
+                            "result": result,
                             "elapsed": time.time() - job["started"],
                             "finished": time.time(),
                         })
                         FreeCAD.Console.PrintMessage(
-                            f"[MCP] async job {job_id} error: {e}\n"
+                            f"[MCP] async job {job_id} done\n"
                         )
-                elif req_id is not None:
-                    self._gui_response_queue.put((req_id, {"error": f"GUI task error: {e}"}))
 
-        if QtCore:
-            QtCore.QTimer.singleShot(100, self._process_gui_tasks)
+                    # Synchronous path
+                    else:
+                        self._gui_thread_busy = True
+                        try:
+                            result = task()
+                        finally:
+                            self._gui_thread_busy = False
+                        if req_id in self._stale_req_ids:
+                            # Waiter already timed out — discard result, don't pollute the queue
+                            self._stale_req_ids.discard(req_id)
+                            FreeCAD.Console.PrintMessage(
+                                f"[MCP] Discarding result for stale request {req_id}\n"
+                            )
+                        else:
+                            self._gui_response_queue.put((req_id, result))
+
+                except queue.Empty:
+                    break
+                except Exception as e:
+                    tb = tb_module.format_exc()
+                    if isinstance(req_id, str) and req_id.startswith("async:"):
+                        job_id = req_id[6:]
+                        job = self._async_jobs.get(job_id)
+                        if job is not None:
+                            job.update({
+                                "status": "error",
+                                "error": str(e),
+                                "error_id": self.diagnostics_ops.store_traceback(tb),
+                                "elapsed": time.time() - job["started"],
+                                "finished": time.time(),
+                            })
+                            FreeCAD.Console.PrintMessage(
+                                f"[MCP] async job {job_id} error: {e}\n"
+                            )
+                    elif req_id is not None:
+                        self._gui_response_queue.put((req_id, {"error": f"GUI task error: {e}"}))
+        except Exception as e:
+            # Nothing above this point is expected to raise past its own
+            # handling, but if it ever does, losing the reschedule below
+            # would wedge every future GUI-thread MCP call -- far worse
+            # than one noisy tick, so log and let `finally` keep the loop
+            # alive rather than letting this propagate.
+            FreeCAD.Console.PrintError(
+                f"[MCP] _process_gui_tasks tick failed: {e}\n{tb_module.format_exc()}"
+            )
+        finally:
+            if QtCore:
+                QtCore.QTimer.singleShot(100, self._process_gui_tasks)
 
     def _gui_unresponsive_error(self) -> str | None:
         """Return a JSON error string if the GUI thread's heartbeat is stale,
