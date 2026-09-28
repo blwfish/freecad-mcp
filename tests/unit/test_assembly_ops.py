@@ -24,24 +24,27 @@ the Phase 1 add_component tests).
 import unittest
 from unittest.mock import MagicMock
 
-from tests.unit._freecad_mocks import (
-    mock_FreeCAD,
-    mock_UtilsAssembly,
-    mock_JointObject,
-    reset_mocks,
+# _freecad_mocks must be imported (and its sys.path.insert(AICopilot) side
+# effect run) before `handlers.*` below -- the `isort: skip` pins this
+# import's position so a future `ruff --fix` (I001) can't reorder it ahead
+# of tests.unit._freecad_mocks again.
+from tests.unit._freecad_mocks import (  # isort: skip
+    _Placement,
+    _Vec,
+    assert_error_contains,
+    assert_success_contains,
+    make_assembly,
+    make_body,
+    make_box_object,
     make_handler,
     make_mock_doc,
     make_part_object,
-    make_box_object,
-    make_body,
-    make_assembly,
-    assert_error_contains,
-    assert_success_contains,
-    _Placement,
-    _Vec,
+    mock_FreeCAD,
+    mock_JointObject,
+    mock_UtilsAssembly,
+    reset_mocks,
 )
-
-from handlers.assembly_ops import AssemblyOpsHandler, _JOINT_TYPES
+from handlers.assembly_ops import _JOINT_TYPES, AssemblyOpsHandler  # isort: skip
 
 
 def _make_joint_group(name="Joints"):

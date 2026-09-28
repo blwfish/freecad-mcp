@@ -147,7 +147,7 @@ class TestClearance:
 
     def test_touching_boxes_report_zero(self, separated_boxes):
         # Move BoxB so the X-faces touch exactly
-        _exec(f"""
+        _exec("""
 import FreeCAD
 d = FreeCAD.ActiveDocument
 d.BoxB.Placement.Base = FreeCAD.Vector(10, 0, 0)

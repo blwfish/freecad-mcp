@@ -149,7 +149,8 @@ class TestConnectQuitCleanup:
         monkeypatch.setitem(sys.modules, "instance_registry", MagicMock())
 
         mock_freecad.GuiUp = True
-        source = open(INIT_GUI_PATH, encoding="utf-8").read()
+        with open(INIT_GUI_PATH, encoding="utf-8") as f:
+            source = f.read()
         code = compile(source, INIT_GUI_PATH, "exec")
         # g mirrors FreeCADGuiInit.py's OWN real module globals -- confirmed
         # via source read to include `import FreeCAD` and `import FreeCADGui`
@@ -164,10 +165,10 @@ class TestConnectQuitCleanup:
             "FreeCAD": sys.modules["FreeCAD"],
             "FreeCADGui": sys.modules["FreeCADGui"],
         }
-        l = {}
-        exec(code, g, l)  # mirrors FreeCADGuiInit.py's bare exec(code) inside a method
+        loc = {}
+        exec(code, g, loc)  # mirrors FreeCADGuiInit.py's bare exec(code) inside a method
 
-        GlobalAIService = l["GlobalAIService"]
+        GlobalAIService = loc["GlobalAIService"]
         service = GlobalAIService()
         assert service.start() is True
 

@@ -29,8 +29,9 @@ __version__ = "1.1.1"
 
 # Try to register with version system if available
 try:
-    from mcp_versions import register_component
     from datetime import datetime as _dt
+
+    from mcp_versions import register_component
     register_component("freecad_debug", __version__, _dt.now().isoformat())
 except ImportError:
     # Version system not available, continue without it
@@ -40,15 +41,15 @@ import functools
 import inspect
 import json
 import logging
-import os
 import sys
 import time
 import traceback
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import tmp_safety
-from typing import Any, Callable, Dict, List, Optional, Tuple
 
 try:
     # crash_watcher's redaction is deliberately reused (not a general-
@@ -83,14 +84,14 @@ LEAN_LOGGING = True
 
 class FreeCADDebugger:
     """Comprehensive debugging for FreeCAD MCP operations with production optimization."""
-    
+
     # Logging levels
     CRITICAL = logging.CRITICAL
     ERROR = logging.ERROR
     WARNING = logging.WARNING
     INFO = logging.INFO
     DEBUG = logging.DEBUG
-    
+
     def __init__(
         self,
         log_dir: str = "/tmp/freecad_mcp_debug",
@@ -118,18 +119,18 @@ class FreeCADDebugger:
         # follow a symlink an attacker with local access could have
         # planted there before this process started.
         tmp_safety.safe_mkdir(str(self.log_dir))
-        
+
         self.level = level
         self.max_log_size = max_log_size
         self.backup_count = backup_count
         self.lean_logging = lean_logging
-        
+
         # Setup main logger
         self.logger = logging.getLogger("FreeCAD_MCP")
         self.logger.setLevel(level)
         self.logger.handlers.clear()
         self.logger.propagate = False  # Don't let messages bubble to root → stderr → Report View
-        
+
         # Console handler
         if enable_console:
             console_handler = logging.StreamHandler(sys.stdout)
@@ -140,7 +141,7 @@ class FreeCADDebugger:
             )
             console_handler.setFormatter(console_formatter)
             self.logger.addHandler(console_handler)
-        
+
         # File handler with rotation
         if enable_file:
             from logging.handlers import RotatingFileHandler
@@ -165,25 +166,25 @@ class FreeCADDebugger:
             )
             file_handler.setFormatter(file_formatter)
             self.logger.addHandler(file_handler)
-        
+
         # Performance tracking
-        self.operation_times: Dict[str, List[float]] = {}
-        
+        self.operation_times: dict[str, list[float]] = {}
+
         # State tracking
-        self.last_freecad_state: Optional[Dict] = None
-        
+        self.last_freecad_state: dict | None = None
+
         mode = "LEAN" if lean_logging else "VERBOSE"
         self.logger.info(f"FreeCAD MCP Debugger initialized (MODE: {mode})")
         self.logger.info(f"Log directory: {self.log_dir}")
         self.logger.info(f"Log level: {logging.getLevelName(level)}")
-    
+
     def log_operation(
         self,
         operation: str,
-        parameters: Optional[Dict] = None,
-        result: Optional[Any] = None,
-        error: Optional[Exception] = None,
-        duration: Optional[float] = None,
+        parameters: dict | None = None,
+        result: Any | None = None,
+        error: Exception | None = None,
+        duration: float | None = None,
     ):
         """
         Log a FreeCAD operation with optional full details.
@@ -237,12 +238,12 @@ class FreeCADDebugger:
                 # previously lost with no other record at all.
                 self.logger.warning(f"Failed to write JSON log: {e}")
                 self.logger.warning(f"Lost JSON log entry, dumping here instead: {json.dumps(log_entry, default=str)}")
-        
+
         elif self.lean_logging and "START" not in operation and "QUEUE" not in operation:
             # In LEAN mode, only log DONE/RESULT/TIMEOUT operations, skip START/QUEUE
             # Skip the verbose JSON dump entirely
             self.logger.info(f"Op: {operation}")
-            
+
         elif not self.lean_logging:
             # VERBOSE mode: full logging
             log_entry = {
@@ -252,15 +253,15 @@ class FreeCADDebugger:
                 "duration_seconds": duration,
                 "success": True,
             }
-            
+
             if result is not None:
                 log_entry["result"] = self._serialize_result(result)
-            
+
             self.logger.info(f"Operation SUCCESS: {operation}")
             if duration:
                 self.logger.debug(f"Duration: {duration:.3f}s")
             self.logger.debug(f"Full details: {json.dumps(log_entry, indent=2)}")
-            
+
             # Save to JSON log file (only in verbose mode)
             json_log_file = self.log_dir / f"operations_{datetime.now().strftime('%Y%m%d')}.json"
             try:
@@ -271,7 +272,7 @@ class FreeCADDebugger:
                     f.write(json.dumps(log_entry) + '\n')
             except Exception as e:
                 self.logger.warning(f"Failed to write JSON log: {e}")
-    
+
     # Fallback str() of a non-JSON-serializable value (a FreeCAD object
     # reference, a large nested structure) previously had no length cap --
     # a single oversized value could balloon a log entry unboundedly, with
@@ -288,7 +289,7 @@ class FreeCADDebugger:
             s = s[:keep] + cls._SERIALIZED_TRUNCATION_SUFFIX
         return s
 
-    def _serialize_params(self, params: Optional[Dict]) -> Optional[Dict]:
+    def _serialize_params(self, params: dict | None) -> dict | None:
         """Serialize parameters for logging."""
         if params is None:
             return None
@@ -313,14 +314,14 @@ class FreeCADDebugger:
             return _redact_value(result)
         except (TypeError, ValueError):
             return self._str_with_cap(result)
-    
+
     # Above this many objects, capture_freecad_state stops per-object detail
     # and only reports names — matches document_ops.list_objects's cap so a
     # DXF-import-sized document doesn't make a crash snapshot itself hang or
     # balloon in size.
     _MAX_DETAILED_OBJECTS = 500
 
-    def capture_freecad_state(self) -> Dict:
+    def capture_freecad_state(self) -> dict:
         """
         Capture current FreeCAD document state.
 
@@ -357,7 +358,7 @@ class FreeCADDebugger:
             return {"error": str(e)}
 
     @staticmethod
-    def _capture_object_state(obj) -> Dict:
+    def _capture_object_state(obj) -> dict:
         """Capture enough about one object to diagnose a geometry-related
         crash: name/type/label (as before), plus Placement, Shape
         validity/bbox, State flags, and simple scalar PropertiesList values
@@ -465,7 +466,7 @@ class FreeCADDebugger:
             pass
 
         return info
-    
+
     def log_state_change(self, operation: str):
         """Log state before operation (returns state for comparison)."""
         if not self.lean_logging:
@@ -474,53 +475,53 @@ class FreeCADDebugger:
             self.logger.debug(json.dumps(before_state, indent=2))
             return before_state
         return None
-    
-    def compare_states(self, before_state: Optional[Dict], operation: str):
+
+    def compare_states(self, before_state: dict | None, operation: str):
         """Compare state before/after operation."""
         if before_state is None or self.lean_logging:
             return
-        
+
         after_state = self.capture_freecad_state()
         self.logger.debug(f"State AFTER {operation}:")
         self.logger.debug(json.dumps(after_state, indent=2))
-        
+
         # Detect changes
         changes = []
-        
+
         if before_state.get("object_count") != after_state.get("object_count"):
             changes.append(
                 f"Object count: {before_state.get('object_count')} -> {after_state.get('object_count')}"
             )
-        
+
         if changes:
             self.logger.info(f"State changes detected after {operation}:")
             for change in changes:
                 self.logger.info(f"  - {change}")
-    
+
     def track_performance(self, operation: str, duration: float):
         """Track operation performance over time."""
         if operation not in self.operation_times:
             self.operation_times[operation] = []
-        
+
         self.operation_times[operation].append(duration)
-        
+
         # Keep only last 100 measurements
         if len(self.operation_times[operation]) > 100:
             self.operation_times[operation] = self.operation_times[operation][-100:]
-        
+
         # Only log stats in verbose mode
         if not self.lean_logging:
             times = self.operation_times[operation]
             avg_time = sum(times) / len(times)
             min_time = min(times)
             max_time = max(times)
-            
+
             self.logger.debug(
                 f"Performance stats for {operation}: "
                 f"avg={avg_time:.3f}s, min={min_time:.3f}s, max={max_time:.3f}s, "
                 f"samples={len(times)}"
             )
-    
+
     def debug_decorator(self, track_state: bool = False, track_performance: bool = False):
         """
         Decorator for automatic debug logging of functions.
@@ -539,7 +540,7 @@ class FreeCADDebugger:
         if self.lean_logging:
             track_state = False
             track_performance = False
-        
+
         def decorator(func: Callable) -> Callable:
             # Computed once at decoration time, not per-call -- a
             # function's signature is static, and the wrapped function
@@ -562,33 +563,33 @@ class FreeCADDebugger:
                     bound_args = sig.bind(*args, **kwargs)
                     bound_args.apply_defaults()
                     parameters = dict(bound_args.arguments)
-                
+
                 if not self.lean_logging:
                     self.logger.info(f"Starting operation: {operation}")
                     self.logger.debug(f"Parameters: {parameters}")
-                
+
                 # Capture state before
                 before_state = None
                 if track_state:
                     before_state = self.log_state_change(operation)
-                
+
                 # Execute operation with timing
                 start_time = time.time()
                 error = None
                 result = None
-                
+
                 try:
                     result = func(*args, **kwargs)
                     return result
-                    
+
                 except Exception as e:
                     error = e
                     self.logger.error(f"Exception in {operation}:", exc_info=True)
                     raise
-                    
+
                 finally:
                     duration = time.time() - start_time
-                    
+
                     # Log operation
                     self.log_operation(
                         operation=operation,
@@ -597,36 +598,36 @@ class FreeCADDebugger:
                         error=error,
                         duration=duration,
                     )
-                    
+
                     # Track performance
                     if track_performance and error is None:
                         self.track_performance(operation, duration)
-                    
+
                     # Compare state after
                     if track_state and before_state:
                         self.compare_states(before_state, operation)
-            
+
             return wrapper
         return decorator
-    
+
     def get_performance_report(self) -> str:
         """Generate a performance report for all tracked operations."""
         if not self.operation_times:
             return "No performance data available"
-        
+
         report = ["Performance Report", "=" * 80]
-        
+
         for operation, times in sorted(self.operation_times.items()):
             avg_time = sum(times) / len(times)
             min_time = min(times)
             max_time = max(times)
-            
+
             report.append(f"\n{operation}:")
             report.append(f"  Samples: {len(times)}")
             report.append(f"  Average: {avg_time:.3f}s")
             report.append(f"  Min: {min_time:.3f}s")
             report.append(f"  Max: {max_time:.3f}s")
-        
+
         return "\n".join(report)
 
     def export_debug_package(self) -> str:
@@ -650,7 +651,7 @@ class FreeCADDebugger:
 
 
 # Global debugger instance
-_debugger: Optional[FreeCADDebugger] = None
+_debugger: FreeCADDebugger | None = None
 
 
 def get_debugger() -> FreeCADDebugger:
@@ -697,7 +698,7 @@ if __name__ == "__main__":
     debugger_lean = FreeCADDebugger(level=logging.DEBUG, lean_logging=True)
     debugger_lean.log_operation("test_op_start")
     debugger_lean.log_operation("test_op_done", result="Success")
-    
+
     print("\n=== Testing VERBOSE mode ===")
     debugger_verbose = FreeCADDebugger(level=logging.DEBUG, lean_logging=False)
     debugger_verbose.log_operation("test_op_start")

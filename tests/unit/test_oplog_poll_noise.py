@@ -32,7 +32,7 @@ class TestPollNoiseToolsSet:
     future edit can't silently widen or narrow it without a test noticing."""
 
     def test_contains_exactly_poll_job(self):
-        assert bridge._POLL_NOISE_TOOLS == {"poll_job"}
+        assert {"poll_job"} == bridge._POLL_NOISE_TOOLS
 
 
 class TestRecordOpSkipsPollJob:

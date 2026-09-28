@@ -17,13 +17,13 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
+from handlers.execute_python_ops import ExecutePythonOpsHandler
+
 from tests.unit._freecad_mocks import (
+    make_handler,
     mock_FreeCAD,
     reset_mocks,
-    make_handler,
 )
-
-from handlers.execute_python_ops import ExecutePythonOpsHandler
 
 
 def _run_on_gui_thread_headless(fn, timeout=30.0):

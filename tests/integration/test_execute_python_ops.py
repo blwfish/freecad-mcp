@@ -17,9 +17,10 @@ effect of a property set, not a manual PrintWarning() call — the
 PartDesign::Pad Midplane deprecation notice from the original bug report.
 """
 
-import json
 import time
+
 import pytest
+
 from ._geom_helpers import _result_text as _text
 from .test_e2e_workflows import send_command
 

@@ -9,7 +9,7 @@ import sys
 import tempfile
 import types
 import unittest
-from unittest.mock import Mock, MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock
 
 # ---------------------------------------------------------------------------
 # Mock FreeCAD modules before any handler imports
@@ -211,7 +211,7 @@ class TestImportMesh(unittest.TestCase):
             f.write(b"data")
             tmp_path = f.name
         try:
-            result = self.handler.import_mesh({'file_path': tmp_path})
+            self.handler.import_mesh({'file_path': tmp_path})
             # Name should be sanitized (hyphens → underscores)
             call_args = doc.addObject.call_args
             name_arg = call_args[0][1]
@@ -393,7 +393,7 @@ class TestMeshToSolid(unittest.TestCase):
             Volume=1.0)
         doc.addObject.return_value = MagicMock(Name="MySolid")
 
-        result = self.handler.mesh_to_solid({
+        self.handler.mesh_to_solid({
             'object_name': 'Terrain',
             'name': 'MySolid'
         })
@@ -826,7 +826,7 @@ class TestSimplifyMesh(unittest.TestCase):
         mock_FreeCAD.ActiveDocument = doc
         doc.addObject.return_value = MagicMock(Name="Terrain_Simplified")
 
-        result = self.handler.simplify_mesh({
+        self.handler.simplify_mesh({
             'object_name': 'Terrain',
             'reduction': 0.25
         })

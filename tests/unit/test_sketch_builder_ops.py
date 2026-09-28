@@ -15,15 +15,13 @@ import json
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, call, patch
 
 # Install FreeCAD mocks BEFORE importing the handler
 from tests.unit._freecad_mocks import (
+    make_mock_doc,
     mock_FreeCAD,
     reset_mocks,
-    make_mock_doc,
-    assert_error_contains,
-    assert_success_contains,
 )
 
 # ---------------------------------------------------------------------------
@@ -41,13 +39,12 @@ sys.modules['sketch_builder'] = _mock_sketch_builder_module
 # ---------------------------------------------------------------------------
 
 from handlers.sketch_builder_ops import (  # noqa: E402
+    _FALLBACK_PATHS,
     SketchBuilderOpsHandler,
-    _read_spreadsheet_params,
     _apply_layout,
     _ensure_sketch_builder_importable,
-    _FALLBACK_PATHS,
+    _read_spreadsheet_params,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

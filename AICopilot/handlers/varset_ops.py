@@ -7,10 +7,9 @@
 
 import json
 import re
-import FreeCAD
-from typing import Dict, Any
-from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
+from typing import Any
 
+from .base import NO_ACTIVE_DOCUMENT_ERROR, BaseHandler
 
 # Property::PropDynamic (src/App/Property.h) is the bit FreeCAD sets on every
 # property created through addDynamicProperty (DynamicProperty.cpp) -- it is
@@ -144,7 +143,7 @@ class VarSetOpsHandler(BaseHandler):
         "bind_property", "list_references",
     })
 
-    def create_varset(self, args: Dict[str, Any]) -> str:
+    def create_varset(self, args: dict[str, Any]) -> str:
         """Create a new App::VarSet in the active document."""
         try:
             name = args.get('varset_name', args.get('name', 'VarSet'))
@@ -161,7 +160,7 @@ class VarSetOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating VarSet: {e}"
 
-    def add_property(self, args: Dict[str, Any]) -> str:
+    def add_property(self, args: dict[str, Any]) -> str:
         """Add a dynamic, typed property to a VarSet."""
         try:
             varset_name = args.get('varset_name', '')
@@ -204,7 +203,7 @@ class VarSetOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error adding property: {e}"
 
-    def set_property(self, args: Dict[str, Any]) -> str:
+    def set_property(self, args: dict[str, Any]) -> str:
         """Set a VarSet property's value.
 
         Not used for App::PropertyEnumeration -- use set_enum_options, since
@@ -269,7 +268,7 @@ class VarSetOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error setting property: {e}"
 
-    def get_property(self, args: Dict[str, Any]) -> str:
+    def get_property(self, args: dict[str, Any]) -> str:
         """Get a VarSet property's value, type, and (for Quantity-derived
         types) a unit-aware display string."""
         try:
@@ -307,7 +306,7 @@ class VarSetOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error getting property: {e}"
 
-    def set_enum_options(self, args: Dict[str, Any]) -> str:
+    def set_enum_options(self, args: dict[str, Any]) -> str:
         """Set an App::PropertyEnumeration's allowed values and current value.
 
         FreeCAD overloads one Python attribute for both roles: assigning a
@@ -356,7 +355,7 @@ class VarSetOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error setting enum options: {e}"
 
-    def list_properties(self, args: Dict[str, Any]) -> str:
+    def list_properties(self, args: dict[str, Any]) -> str:
         """List a VarSet's dynamic properties (built-in DocumentObject
         properties like Placement/Label are excluded).
 
@@ -415,7 +414,7 @@ class VarSetOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error listing properties: {e}"
 
-    def remove_property(self, args: Dict[str, Any]) -> str:
+    def remove_property(self, args: dict[str, Any]) -> str:
         """Remove a dynamic property from a VarSet.
 
         Blocks by default if list_references finds anything bound to this
@@ -503,7 +502,7 @@ class VarSetOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error removing property: {e}"
 
-    def bind_property(self, args: Dict[str, Any]) -> str:
+    def bind_property(self, args: dict[str, Any]) -> str:
         """Bind an object's property to a VarSet property using expressions."""
         try:
             object_name = args.get('object_name', '')
@@ -529,7 +528,7 @@ class VarSetOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error binding property: {e}"
 
-    def list_references(self, args: Dict[str, Any]) -> str:
+    def list_references(self, args: dict[str, Any]) -> str:
         """List objects/properties bound to a VarSet (or one of its
         properties) via expressions.
 

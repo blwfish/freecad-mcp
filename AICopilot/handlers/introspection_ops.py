@@ -22,12 +22,11 @@ import sys
 import time
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import FreeCAD
 
 from .base import BaseHandler
-
 
 DEFAULT_MODULES = (
     "FreeCAD",
@@ -61,12 +60,12 @@ def _feedback_path() -> str:
     return os.environ.get("FREECAD_MCP_FEEDBACK_FILE", _FEEDBACK_FILE)
 
 
-def _load_feedback() -> Dict[str, Any]:
+def _load_feedback() -> dict[str, Any]:
     path = _feedback_path()
     if not os.path.isfile(path):
         return {"queries": {}}
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict):
             _quarantine_corrupt_feedback_file(path, reason="top-level JSON was not an object")
@@ -104,7 +103,7 @@ def _quarantine_corrupt_feedback_file(path: str, reason: str) -> None:
         pass
 
 
-def _save_feedback(data: Dict[str, Any]) -> None:
+def _save_feedback(data: dict[str, Any]) -> None:
     path = _feedback_path()
     parent = os.path.dirname(path)
     try:
@@ -119,7 +118,7 @@ def _save_feedback(data: Dict[str, Any]) -> None:
 # ------------------------------------------------------------------
 # Path resolution
 # ------------------------------------------------------------------
-def _resolve_path(path: str) -> Tuple[Optional[Any], Optional[str]]:
+def _resolve_path(path: str) -> tuple[Any | None, str | None]:
     """Resolve a dotted path like 'Part.makeBox' to a live object.
 
     Returns (obj, error). On success error is None; on failure obj is None.
@@ -206,12 +205,12 @@ def _collect_names(
     root: Any,
     root_path: str,
     max_depth: int = _WALK_MAX_DEPTH,
-) -> List[Tuple[str, str, str]]:
+) -> list[tuple[str, str, str]]:
     """Walk a module/class tree collecting (full_path, kind, short_doc).
 
     Avoids infinite recursion via a visited id() set. Skips private names.
     """
-    out: List[Tuple[str, str, str]] = []
+    out: list[tuple[str, str, str]] = []
     visited: set = set()
 
     def walk(obj: Any, path: str, depth: int) -> None:
@@ -316,7 +315,7 @@ def _recency_decay(last_used_iso: str) -> float:
     return max(0.1, decay)
 
 
-def _feedback_boost(feedback: Dict[str, Any], query: str, path: str) -> float:
+def _feedback_boost(feedback: dict[str, Any], query: str, path: str) -> float:
     """Multiplicative boost ≥ 1.0 for a (query, path) pair based on feedback."""
     q = (feedback.get("queries") or {}).get(query) or {}
     entry = q.get(path)
@@ -340,7 +339,7 @@ class IntrospectionOpsHandler(BaseHandler):
     # ------------------------------------------------------------------
     # inspect
     # ------------------------------------------------------------------
-    def inspect(self, args: Dict[str, Any]) -> str:
+    def inspect(self, args: dict[str, Any]) -> str:
         """Look up signature + docstring for a dotted path.
 
         Args:
@@ -365,7 +364,7 @@ class IntrospectionOpsHandler(BaseHandler):
             return json.dumps({"error": err, "path": path})
 
         kind = _kind_of(obj)
-        result: Dict[str, Any] = {"path": path, "kind": kind}
+        result: dict[str, Any] = {"path": path, "kind": kind}
 
         # Docstring
         try:
@@ -386,7 +385,7 @@ class IntrospectionOpsHandler(BaseHandler):
 
         # Members for classes / modules
         if kind in ("class", "module"):
-            members: List[Dict[str, str]] = []
+            members: list[dict[str, str]] = []
             try:
                 names = sorted(n for n in dir(obj) if _is_public(n))
             except Exception:
@@ -411,7 +410,7 @@ class IntrospectionOpsHandler(BaseHandler):
     # ------------------------------------------------------------------
     # search
     # ------------------------------------------------------------------
-    def search(self, args: Dict[str, Any]) -> str:
+    def search(self, args: dict[str, Any]) -> str:
         """Fuzzy-search the FreeCAD API for a query string.
 
         Args:
@@ -453,9 +452,9 @@ class IntrospectionOpsHandler(BaseHandler):
         limit = max(1, min(100, limit))
 
         feedback = _load_feedback()
-        scanned: List[str] = []
-        missing: List[Dict[str, str]] = []
-        candidates: List[Tuple[str, str, str]] = []
+        scanned: list[str] = []
+        missing: list[dict[str, str]] = []
+        candidates: list[tuple[str, str, str]] = []
 
         for mod_name in module_names:
             mod = sys.modules.get(mod_name)
@@ -482,7 +481,7 @@ class IntrospectionOpsHandler(BaseHandler):
                 missing.append({"module": mod_name, "reason": f"walk failed: {e}"})
 
         # Score and rank
-        scored: List[Dict[str, Any]] = []
+        scored: list[dict[str, Any]] = []
         for path, kind, doc in candidates:
             base = _fuzzy_score(query, path)
             if base <= 0.0:
@@ -513,7 +512,7 @@ class IntrospectionOpsHandler(BaseHandler):
     # ------------------------------------------------------------------
     # record_useful
     # ------------------------------------------------------------------
-    def record_useful(self, args: Dict[str, Any]) -> str:
+    def record_useful(self, args: dict[str, Any]) -> str:
         """Record that a search query → path resolution was useful.
 
         Future searches with the same query rank this path higher. Call this

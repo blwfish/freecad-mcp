@@ -1,9 +1,9 @@
 # CAM Tool Management Handler for FreeCAD MCP
 
-import FreeCAD
 import time
-from typing import Dict, Any, List
-from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
+from typing import Any
+
+from .base import NO_ACTIVE_DOCUMENT_ERROR, BaseHandler
 
 
 class CAMToolsHandler(BaseHandler):
@@ -13,7 +13,7 @@ class CAMToolsHandler(BaseHandler):
         "create_tool", "list_tools", "get_tool", "update_tool", "delete_tool",
     })
 
-    def create_tool(self, args: Dict[str, Any]) -> str:
+    def create_tool(self, args: dict[str, Any]) -> str:
         """Create a new tool in the tool library.
 
         Args:
@@ -54,17 +54,17 @@ class CAMToolsHandler(BaseHandler):
             if not tool_type:
                 return "Error: tool_type parameter required (e.g. 'endmill', 'ballend', 'drill')"
             diameter = args.get('diameter', 6.0)
-            flute_length = args.get('flute_length', None)
-            shank_diameter = args.get('shank_diameter', None)
+            flute_length = args.get('flute_length')
+            shank_diameter = args.get('shank_diameter')
             material = args.get('material', 'Carbide')
-            number_of_flutes = args.get('number_of_flutes', None)
-            length = args.get('length', None)
-            tip_angle = args.get('tip_angle', None)
-            cutting_edge_angle = args.get('cutting_edge_angle', None)
-            flat_radius = args.get('flat_radius', None)
-            corner_radius = args.get('corner_radius', None)
-            neck_diameter = args.get('neck_diameter', None)
-            neck_length = args.get('neck_length', None)
+            number_of_flutes = args.get('number_of_flutes')
+            length = args.get('length')
+            tip_angle = args.get('tip_angle')
+            cutting_edge_angle = args.get('cutting_edge_angle')
+            flat_radius = args.get('flat_radius')
+            corner_radius = args.get('corner_radius')
+            neck_diameter = args.get('neck_diameter')
+            neck_length = args.get('neck_length')
 
             if not name:
                 name = f"{tool_type}_{diameter}mm"
@@ -177,7 +177,7 @@ class CAMToolsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("create_tool", args, error=e, duration=time.time() - start_time)
 
-    def list_tools(self, args: Dict[str, Any]) -> str:
+    def list_tools(self, args: dict[str, Any]) -> str:
         """List all tools in the tool library.
 
         Returns:
@@ -211,7 +211,7 @@ class CAMToolsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("list_tools", args, error=e, duration=time.time() - start_time)
 
-    def get_tool(self, args: Dict[str, Any]) -> str:
+    def get_tool(self, args: dict[str, Any]) -> str:
         """Get detailed information about a specific tool.
 
         Args:
@@ -269,7 +269,7 @@ class CAMToolsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("get_tool", args, error=e, duration=time.time() - start_time)
 
-    def update_tool(self, args: Dict[str, Any]) -> str:
+    def update_tool(self, args: dict[str, Any]) -> str:
         """Update parameters of an existing tool.
 
         Args:
@@ -333,7 +333,7 @@ class CAMToolsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("update_tool", args, error=e, duration=time.time() - start_time)
 
-    def delete_tool(self, args: Dict[str, Any]) -> str:
+    def delete_tool(self, args: dict[str, Any]) -> str:
         """Delete a tool from the library.
 
         Args:

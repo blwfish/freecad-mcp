@@ -2,9 +2,9 @@
 
 import json
 import re
-import FreeCAD
-from typing import Dict, Any, Optional, Tuple
-from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
+from typing import Any
+
+from .base import NO_ACTIVE_DOCUMENT_ERROR, BaseHandler
 
 
 def _col_to_num(col):
@@ -35,7 +35,7 @@ def _num_to_col(num):
 _CELL_REF_RE = re.compile(r'([A-Z]+)(\d+)')
 
 
-def _parse_cell_ref(cell: str) -> Optional[Tuple[str, int]]:
+def _parse_cell_ref(cell: str) -> tuple[str, int] | None:
     """Parse a spreadsheet cell reference like "A1" into (col_letters, row).
 
     Single source of truth for this pattern -- previously re-declared
@@ -60,7 +60,7 @@ class SpreadsheetOpsHandler(BaseHandler):
         "list_aliases", "import_csv", "export_csv",
     })
 
-    def create_spreadsheet(self, args: Dict[str, Any]) -> str:
+    def create_spreadsheet(self, args: dict[str, Any]) -> str:
         """Create a new spreadsheet in the active document."""
         try:
             # Accept both 'name' and 'spreadsheet_name' parameters
@@ -79,7 +79,7 @@ class SpreadsheetOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating spreadsheet: {e}"
 
-    def set_cell(self, args: Dict[str, Any]) -> str:
+    def set_cell(self, args: dict[str, Any]) -> str:
         """Set a cell value in a spreadsheet."""
         try:
             spreadsheet_name = args.get('spreadsheet_name', '')
@@ -99,7 +99,7 @@ class SpreadsheetOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error setting cell: {e}"
 
-    def get_cell(self, args: Dict[str, Any]) -> str:
+    def get_cell(self, args: dict[str, Any]) -> str:
         """Get a cell value from a spreadsheet."""
         try:
             spreadsheet_name = args.get('spreadsheet_name', '')
@@ -129,7 +129,7 @@ class SpreadsheetOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error getting cell: {e}"
 
-    def set_alias(self, args: Dict[str, Any]) -> str:
+    def set_alias(self, args: dict[str, Any]) -> str:
         """Set an alias for a cell (allows referencing cell by name in expressions)."""
         try:
             spreadsheet_name = args.get('spreadsheet_name', '')
@@ -151,7 +151,7 @@ class SpreadsheetOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error setting alias: {e}"
 
-    def get_alias(self, args: Dict[str, Any]) -> str:
+    def get_alias(self, args: dict[str, Any]) -> str:
         """Get the alias for a cell."""
         try:
             spreadsheet_name = args.get('spreadsheet_name', '')
@@ -171,7 +171,7 @@ class SpreadsheetOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error getting alias: {e}"
 
-    def clear_cell(self, args: Dict[str, Any]) -> str:
+    def clear_cell(self, args: dict[str, Any]) -> str:
         """Clear a cell in a spreadsheet."""
         try:
             spreadsheet_name = args.get('spreadsheet_name', '')
@@ -189,7 +189,7 @@ class SpreadsheetOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error clearing cell: {e}"
 
-    def set_cell_range(self, args: Dict[str, Any]) -> str:
+    def set_cell_range(self, args: dict[str, Any]) -> str:
         """Set values for a range of cells."""
         try:
             spreadsheet_name = args.get('spreadsheet_name', '')
@@ -227,7 +227,7 @@ class SpreadsheetOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error setting cell range: {e}"
 
-    def get_cell_range(self, args: Dict[str, Any]) -> str:
+    def get_cell_range(self, args: dict[str, Any]) -> str:
         """Get values from a range of cells."""
         try:
             spreadsheet_name = args.get('spreadsheet_name', '')
@@ -269,7 +269,7 @@ class SpreadsheetOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error getting cell range: {e}"
 
-    def bind_property(self, args: Dict[str, Any]) -> str:
+    def bind_property(self, args: dict[str, Any]) -> str:
         """Bind an object property to a spreadsheet cell using expressions."""
         try:
             object_name = args.get('object_name', '')
@@ -299,7 +299,7 @@ class SpreadsheetOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error binding property: {e}"
 
-    def list_aliases(self, args: Dict[str, Any]) -> str:
+    def list_aliases(self, args: dict[str, Any]) -> str:
         """List all aliases in a spreadsheet."""
         try:
             spreadsheet_name = args.get('spreadsheet_name', '')
@@ -350,7 +350,7 @@ class SpreadsheetOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error listing aliases: {e}"
 
-    def import_csv(self, args: Dict[str, Any]) -> str:
+    def import_csv(self, args: dict[str, Any]) -> str:
         """Import CSV data into a spreadsheet."""
         try:
             spreadsheet_name = args.get('spreadsheet_name', '')
@@ -402,7 +402,7 @@ class SpreadsheetOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error importing CSV: {e}"
 
-    def export_csv(self, args: Dict[str, Any]) -> str:
+    def export_csv(self, args: dict[str, Any]) -> str:
         """Export spreadsheet data as CSV."""
         try:
             spreadsheet_name = args.get('spreadsheet_name', '')
@@ -435,7 +435,7 @@ class SpreadsheetOpsHandler(BaseHandler):
             parsed_start = _parse_cell_ref(start_cell)
             parsed_end = _parse_cell_ref(end_cell)
             if parsed_start is None or parsed_end is None:
-                return f"Invalid cell reference"
+                return "Invalid cell reference"
 
             start_col_num = _col_to_num(parsed_start[0])
             end_col_num = _col_to_num(parsed_end[0])

@@ -11,7 +11,6 @@ These tests do roundtrips through real Mesh/Part modules:
 Run with: python3 -m pytest tests/integration/test_mesh_ops.py -v
 """
 
-import json
 import os
 import tempfile
 import time
@@ -187,10 +186,6 @@ class TestSimplifyMesh:
                "file_path": stl, "linear_deflection": 0.01})
         _mesh({"operation": "import_mesh", "file_path": stl,
                "name": "SimpMesh"})
-
-        # Capture original facet count via get_mesh_info
-        info_before = _mesh({"operation": "get_mesh_info",
-                             "object_name": "SimpMesh"})
 
         result = _mesh({"operation": "simplify_mesh",
                         "object_name": "SimpMesh",

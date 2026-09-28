@@ -1,14 +1,21 @@
 # Part workbench operation handlers for FreeCAD MCP
 
+from typing import Any
+
 import FreeCAD
-from typing import Dict, Any
-from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR, axis_vector_or_none, OCCT_CONFUSION_TOLERANCE_DEFAULT
+
+from .base import (
+    NO_ACTIVE_DOCUMENT_ERROR,
+    OCCT_CONFUSION_TOLERANCE_DEFAULT,
+    BaseHandler,
+    axis_vector_or_none,
+)
 
 
 class PartOpsHandler(BaseHandler):
     """Handler for Part workbench operations (extrude, revolve, mirror, section, scale)."""
 
-    def extrude(self, args: Dict[str, Any]) -> str:
+    def extrude(self, args: dict[str, Any]) -> str:
         """Extrude a sketch or wire profile."""
         try:
             profile_sketch = args.get('profile_sketch', '')
@@ -51,7 +58,7 @@ class PartOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error extruding profile: {e}"
 
-    def revolve(self, args: Dict[str, Any]) -> str:
+    def revolve(self, args: dict[str, Any]) -> str:
         """Revolve a sketch profile around an axis."""
         try:
             profile_sketch = args.get('profile_sketch', '')
@@ -93,7 +100,7 @@ class PartOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error revolving profile: {e}"
 
-    def mirror_object(self, args: Dict[str, Any]) -> str:
+    def mirror_object(self, args: dict[str, Any]) -> str:
         """Mirror object across a plane."""
         try:
             object_name = args.get('object_name', '')
@@ -117,7 +124,6 @@ class PartOpsHandler(BaseHandler):
             else:
                 return f"Invalid plane '{plane}'. Valid options: XY, XZ, YZ"
 
-            import Part
             mirrored_shape = obj.Shape.mirror(mirror_point, normal)
 
             if name:
@@ -132,7 +138,7 @@ class PartOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error mirroring object: {e}"
 
-    def scale_object(self, args: Dict[str, Any]) -> str:
+    def scale_object(self, args: dict[str, Any]) -> str:
         """Scale object by modifying its dimensions directly."""
         try:
             object_name = args.get('object_name', '')
@@ -178,7 +184,6 @@ class PartOpsHandler(BaseHandler):
             else:
                 # Non-parametric object - create scaled copy
                 if hasattr(obj, 'Shape'):
-                    import Part
                     matrix = FreeCAD.Matrix()
                     matrix.scale(scale_factor, scale_factor, scale_factor)
                     scaled_shape = obj.Shape.transformGeometry(matrix)
@@ -192,7 +197,7 @@ class PartOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error scaling object: {e}"
 
-    def section(self, args: Dict[str, Any]) -> str:
+    def section(self, args: dict[str, Any]) -> str:
         """Create section of object - placeholder."""
         try:
             object_name = args.get('object_name', '')
@@ -229,7 +234,7 @@ class PartOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating section: {e}"
 
-    def loft(self, args: Dict[str, Any]) -> str:
+    def loft(self, args: dict[str, Any]) -> str:
         """Loft between multiple sketches to create complex shapes."""
         try:
             sketches = args.get('sketches', [])
@@ -267,7 +272,7 @@ class PartOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating loft: {e}"
 
-    def sweep(self, args: Dict[str, Any]) -> str:
+    def sweep(self, args: dict[str, Any]) -> str:
         """Sweep a profile sketch along a path sketch."""
         try:
             profile_sketch = args.get('profile_sketch', '')
@@ -303,7 +308,7 @@ class PartOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating sweep: {e}"
 
-    def compound(self, args: Dict[str, Any]) -> str:
+    def compound(self, args: dict[str, Any]) -> str:
         """Create a compound from multiple objects (non-boolean grouping)."""
         try:
             objects = args.get('objects', [])
@@ -336,7 +341,7 @@ class PartOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating compound: {e}"
 
-    def shape_string(self, args: Dict[str, Any]) -> str:
+    def shape_string(self, args: dict[str, Any]) -> str:
         """Create a Part ShapeString — parametric text as a wire compound.
 
         Uses Part.makeWireString() to produce a compound of closed wires from
@@ -394,7 +399,7 @@ class PartOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating Part ShapeString: {e}"
 
-    def check_geometry(self, args: Dict[str, Any]) -> str:
+    def check_geometry(self, args: dict[str, Any]) -> str:
         """Check geometry validity of an object (BRep check)."""
         try:
             object_name = args.get('object_name', '')

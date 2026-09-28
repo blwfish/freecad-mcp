@@ -18,17 +18,17 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot"))
 
+import pytest
+
 from tests.unit._freecad_mocks import (
-    mock_FreeCAD,
-    mock_Part,
     mock_Draft,
-    mock_Sketcher,
+    mock_FreeCAD,
     mock_Mesh,
     mock_MeshPart,
+    mock_Part,
+    mock_Sketcher,
     reset_mocks,
 )
-
-import pytest
 
 
 class TestSpecRejectsUnknownAttributes:
@@ -116,7 +116,7 @@ class TestSpecAllowsRealUsage:
         del-then-hasattr fidelity here would test something spec was never
         going to provide.
         """
-        setattr(mock_FreeCAD, "_ai_socket_server", object())
+        mock_FreeCAD._ai_socket_server = object()
         delattr(mock_FreeCAD, "_ai_socket_server")
 
 

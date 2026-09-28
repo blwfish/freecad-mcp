@@ -19,7 +19,6 @@ import os
 import re
 import unittest
 
-
 REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..'))
 SERVER_PY = os.path.join(REPO_ROOT, 'freecad_mcp_server.py')
 HANDLER_PY = os.path.join(REPO_ROOT, 'AICopilot', 'freecad_mcp_handler.py')
@@ -68,7 +67,7 @@ MCP_NAME_TRANSLATIONS = {
 
 
 def _read(path: str) -> str:
-    with open(path, 'r', encoding='utf-8') as f:
+    with open(path, encoding='utf-8') as f:
         return f.read()
 
 
@@ -212,8 +211,8 @@ class TestDispatchCompleteness(unittest.TestCase):
         unrouted = {reverse_translation.get(t, t) for t in unrouted_translated}
         self.assertEqual(
             unrouted, set(),
-            f"\nMCP tool(s) registered in freecad_mcp_server.py but with "
-            f"no dispatch path in freecad_mcp_handler.py:\n  "
+            "\nMCP tool(s) registered in freecad_mcp_server.py but with "
+            "no dispatch path in freecad_mcp_handler.py:\n  "
             + "\n  ".join(sorted(unrouted))
             + "\n\nFix: add the tool name to direct_map, generic_dispatch_map, "
               "or an explicit `tool_name ==` branch in _execute_tool_inner. "
@@ -237,9 +236,9 @@ class TestDispatchCompleteness(unittest.TestCase):
                         - self.bridge_dispatched)
         self.assertEqual(
             undispatched, set(),
-            f"\nMCP tool(s) advertised in handle_list_tools() with no branch in "
-            f"the bridge's handle_call_tool dispatch (they return 'Unknown "
-            f"tool'):\n  " + "\n  ".join(sorted(undispatched))
+            "\nMCP tool(s) advertised in handle_list_tools() with no branch in "
+            "the bridge's handle_call_tool dispatch (they return 'Unknown "
+            "tool'):\n  " + "\n  ".join(sorted(undispatched))
             + "\n\nFix: add the name to the smart-dispatcher `elif name in [...]` "
               "list (for socket-routed tools) or give it its own `elif name == "
               "...` branch in freecad_mcp_server.py."
@@ -265,7 +264,7 @@ class TestDispatchCompleteness(unittest.TestCase):
         orphans = BRIDGE_ONLY_TOOLS - self.server_tools
         self.assertEqual(
             orphans, set(),
-            f"\nBRIDGE_ONLY_TOOLS lists names not found as MCP tools:\n  "
+            "\nBRIDGE_ONLY_TOOLS lists names not found as MCP tools:\n  "
             + "\n  ".join(sorted(orphans))
             + "\n\nEither the bridge tool was renamed/removed (update this "
               "list), or our parser missed it (broaden extract_server_tool_names)."

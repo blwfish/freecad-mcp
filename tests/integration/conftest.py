@@ -11,10 +11,8 @@ which test_e2e_workflows.py imports.
 
 import os
 import shutil
-import signal
 import socket
 import subprocess
-import sys
 import threading
 import time
 import uuid
@@ -94,7 +92,7 @@ def _socket_responds(path: str, timeout: float = 2.0) -> bool:
         s.connect(path)
         s.close()
         return True
-    except (socket.error, OSError):
+    except OSError:
         return False
 
 

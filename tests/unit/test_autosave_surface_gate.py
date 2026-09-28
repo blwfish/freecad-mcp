@@ -395,7 +395,7 @@ def test_every_site_is_claimed_with_its_exact_shape():
     for key, sites in sorted(obs.items()):
         shapes = sorted(s[2] for s in sites)
         if key not in claims:
-            problems.append(f"UNCLAIMED {key[0]}::{key[1]}:\n" + "\n".join(f"      L{l} [{k}] {sh}" for l, k, sh in sites))
+            problems.append(f"UNCLAIMED {key[0]}::{key[1]}:\n" + "\n".join(f"      L{ln} [{k}] {sh}" for ln, k, sh in sites))
         elif shapes != claims[key]:
             problems.append(f"DRIFT {key[0]}::{key[1]}: claimed {claims[key]} found {shapes}")
     for key in claims:

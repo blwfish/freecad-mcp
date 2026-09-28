@@ -20,9 +20,9 @@ Tests should call reset_mocks() in setUp() to clear state between cases.
 import math
 import os
 import sys
-from typing import Any, Dict, Iterable, List, Optional
+from collections.abc import Iterable
+from typing import Any
 from unittest.mock import MagicMock
-
 
 # ---------------------------------------------------------------------------
 # Module-level mock installation. Runs once on import.
@@ -409,7 +409,7 @@ install_freecad_value_types()
 # Document and object factories
 # ---------------------------------------------------------------------------
 
-def make_mock_doc(objects: Optional[Iterable[Any]] = None, name: str = "TestDoc"):
+def make_mock_doc(objects: Iterable[Any] | None = None, name: str = "TestDoc"):
     """Create a mock FreeCAD document.
 
     Supports:
@@ -890,7 +890,7 @@ def make_spreadsheet(name="Spreadsheet"):
         aliases[cell.upper()] = alias
 
     def _get_alias(cell):
-        return aliases.get(cell.upper(), None)
+        return aliases.get(cell.upper())
 
     def _clear(cell):
         cells_data.pop(cell.upper(), None)
@@ -1097,7 +1097,7 @@ def assert_awaiting_selection(test_case, result):
     return result["operation_id"]
 
 
-def make_selector_with_picks(picks: List[Dict[str, Any]]):
+def make_selector_with_picks(picks: list[dict[str, Any]]):
     """Build a selector mock that returns the given picks on complete_selection.
 
     picks: list of {"object": "Box", "element": "Edge1"} dicts.

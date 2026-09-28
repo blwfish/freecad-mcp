@@ -2,9 +2,11 @@
 
 import json
 import platform
+from typing import Any
+
 import FreeCAD
-from typing import Dict, Any
-from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
+
+from .base import NO_ACTIVE_DOCUMENT_ERROR, BaseHandler
 
 # Conditional GUI import -- unconditional import here loaded Coin3D
 # regardless of GuiUp and could SIGSEGV on later weekly builds
@@ -79,7 +81,7 @@ class ViewOpsHandler(BaseHandler):
         self.gui_task_queue = gui_task_queue
         self.gui_response_queue = gui_response_queue
 
-    def set_view(self, args: Dict[str, Any]) -> str:
+    def set_view(self, args: dict[str, Any]) -> str:
         """Set the 3D view to a specific orientation.
 
         This method MUST run on the GUI thread.  The dispatch layer
@@ -114,7 +116,7 @@ class ViewOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error setting view: {e}"
 
-    def fit_all(self, args: Dict[str, Any]) -> str:
+    def fit_all(self, args: dict[str, Any]) -> str:
         """Fit all objects in the view.
 
         MUST run on the GUI thread (dispatch layer handles this).
@@ -127,7 +129,7 @@ class ViewOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error fitting view: {e}"
 
-    def zoom_in(self, args: Dict[str, Any]) -> str:
+    def zoom_in(self, args: dict[str, Any]) -> str:
         """Zoom in on the view."""
         try:
             if FreeCADGui.ActiveDocument:
@@ -138,7 +140,7 @@ class ViewOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error zooming in: {e}"
 
-    def zoom_out(self, args: Dict[str, Any]) -> str:
+    def zoom_out(self, args: dict[str, Any]) -> str:
         """Zoom out on the view."""
         try:
             if FreeCADGui.ActiveDocument:
@@ -149,7 +151,7 @@ class ViewOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error zooming out: {e}"
 
-    def select_object(self, args: Dict[str, Any]) -> str:
+    def select_object(self, args: dict[str, Any]) -> str:
         """Select an object in the 3D view."""
         try:
             object_name = args.get('object_name', '')
@@ -175,7 +177,7 @@ class ViewOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error selecting object: {e}"
 
-    def clear_selection(self, args: Dict[str, Any]) -> str:
+    def clear_selection(self, args: dict[str, Any]) -> str:
         """Clear the current selection."""
         try:
             if self.selector:
@@ -187,7 +189,7 @@ class ViewOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error clearing selection: {e}"
 
-    def get_selection(self, args: Dict[str, Any]) -> str:
+    def get_selection(self, args: dict[str, Any]) -> str:
         """Get the current selection."""
         try:
             if self.selector:
@@ -205,7 +207,7 @@ class ViewOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error getting selection: {e}"
 
-    def take_screenshot(self, args: Dict[str, Any]) -> str:
+    def take_screenshot(self, args: dict[str, Any]) -> str:
         """Take a screenshot of the FreeCAD viewport and return as base64-encoded PNG.
 
         MUST run on the GUI thread (dispatch layer handles this).
@@ -222,9 +224,9 @@ class ViewOpsHandler(BaseHandler):
         which is the one case where this handler is legitimately reached
         without the bridge-side shortcut having run first).
         """
-        import tempfile
-        import os
         import base64
+        import os
+        import tempfile
 
         req_width = args.get("width", 800)
         req_height = args.get("height", 600)
@@ -321,11 +323,11 @@ class ViewOpsHandler(BaseHandler):
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
 
-    def get_screenshot(self, args: Dict[str, Any]) -> str:
+    def get_screenshot(self, args: dict[str, Any]) -> str:
         """Alias for take_screenshot for backwards compatibility."""
         return self.take_screenshot(args)
 
-    def hide_object(self, args: Dict[str, Any]) -> str:
+    def hide_object(self, args: dict[str, Any]) -> str:
         """Hide an object in the 3D view."""
         try:
             object_name = args.get('object_name', '')
@@ -342,7 +344,7 @@ class ViewOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error hiding object: {e}"
 
-    def show_object(self, args: Dict[str, Any]) -> str:
+    def show_object(self, args: dict[str, Any]) -> str:
         """Show an object in the 3D view."""
         try:
             object_name = args.get('object_name', '')
@@ -359,7 +361,7 @@ class ViewOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error showing object: {e}"
 
-    def delete_object(self, args: Dict[str, Any]) -> str:
+    def delete_object(self, args: dict[str, Any]) -> str:
         """Delete an object from the document."""
         try:
             object_name = args.get('object_name', '')
@@ -382,7 +384,7 @@ class ViewOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error deleting object: {e}"
 
-    def recompute_object(self, args: Dict[str, Any]) -> str:
+    def recompute_object(self, args: dict[str, Any]) -> str:
         """Recompute the active document, or a single object within it, with timing.
 
         Named recompute_object (not recompute) to avoid shadowing
@@ -440,7 +442,7 @@ class ViewOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error in recompute: {e}"
 
-    def undo(self, args: Dict[str, Any]) -> str:
+    def undo(self, args: dict[str, Any]) -> str:
         """Undo the last operation.
 
         KNOWN LIMITATION: this is effectively a no-op for MCP-driven changes.
@@ -463,7 +465,7 @@ class ViewOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error during undo: {e}"
 
-    def redo(self, args: Dict[str, Any]) -> str:
+    def redo(self, args: dict[str, Any]) -> str:
         """Redo the last undone operation. See undo()'s docstring — same limitation."""
         try:
             doc = FreeCAD.ActiveDocument
@@ -474,7 +476,7 @@ class ViewOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error during redo: {e}"
 
-    def activate_workbench(self, args: Dict[str, Any]) -> str:
+    def activate_workbench(self, args: dict[str, Any]) -> str:
         """Activate a FreeCAD workbench."""
         try:
             wb_name = args.get('workbench_name', '')
@@ -485,7 +487,7 @@ class ViewOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error activating workbench: {e}"
 
-    def add_clip_plane(self, args: Dict[str, Any]) -> str:
+    def add_clip_plane(self, args: dict[str, Any]) -> str:
         """Add a clip plane to the 3D viewport to show a cross-section.
 
         Uses Coin3D SoClipPlane. Call remove_clip_plane when done.
@@ -543,7 +545,7 @@ class ViewOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error adding clip plane: {e}"
 
-    def remove_clip_plane(self, args: Dict[str, Any]) -> str:
+    def remove_clip_plane(self, args: dict[str, Any]) -> str:
         """Remove the most recently added clip plane from the 3D viewport."""
         try:
             if not FreeCAD.GuiUp:
@@ -570,7 +572,7 @@ class ViewOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error removing clip plane: {e}"
 
-    def get_report_view(self, args: Dict[str, Any]) -> str:
+    def get_report_view(self, args: dict[str, Any]) -> str:
         """Read text from FreeCAD's Report View widget.
 
         MUST run on the GUI thread (dispatch layer handles this).
@@ -593,7 +595,7 @@ class ViewOpsHandler(BaseHandler):
 
             filter_str = args.get('filter', '')
             if filter_str:
-                lines = [l for l in lines if filter_str.lower() in l.lower()]
+                lines = [line for line in lines if filter_str.lower() in line.lower()]
 
             tail = args.get('tail', 50)
             if tail and tail > 0:

@@ -12,7 +12,6 @@ FreeCAD mocking. Only the console-warning path needs FreeCAD mocked,
 since it does a local `import FreeCAD` inside the except block.
 """
 
-import importlib
 import json
 import os
 import stat

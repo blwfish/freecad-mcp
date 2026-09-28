@@ -478,7 +478,7 @@ class TestWalkMaxDepthBoundary:
         def fn0():
             pass
         fn0.__name__ = "fn_hop_0"
-        setattr(root, "fn_hop_0", fn0)
+        root.fn_hop_0 = fn0
 
         current, current_name = root, root_name
         for hop in range(1, max_hop + 1):

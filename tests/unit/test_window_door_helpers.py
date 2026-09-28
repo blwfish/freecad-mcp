@@ -21,20 +21,19 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from tests.unit._freecad_mocks import (  # noqa: E402
-    mock_FreeCAD,
-    reset_mocks,
-    make_mock_doc,
-    make_part_object,
-    make_box_object,
-    _Vec,
-    _Quantity,
-)
-
-import pytest
 from unittest.mock import MagicMock
 
+import pytest
+
 from helpers.window_door_helpers import WindowDoorHelpers  # noqa: E402
+from tests.unit._freecad_mocks import (  # noqa: E402
+    _Quantity,
+    _Vec,
+    make_box_object,
+    make_mock_doc,
+    make_part_object,
+    reset_mocks,
+)
 
 
 @pytest.fixture(autouse=True)

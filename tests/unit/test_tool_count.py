@@ -20,7 +20,6 @@ import re
 
 import pytest
 
-
 BRIDGE_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "freecad_mcp_server.py"
 )

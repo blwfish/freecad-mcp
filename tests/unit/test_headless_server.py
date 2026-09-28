@@ -29,9 +29,9 @@ import os
 import signal
 import sys
 import types
+from unittest.mock import MagicMock
 
 import pytest
-from unittest.mock import MagicMock
 
 AICOPILOT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot")
 HEADLESS_SERVER_PATH = os.path.join(AICOPILOT_DIR, "headless_server.py")

@@ -18,21 +18,19 @@ Run with: python3 -m pytest tests/unit/test_verification_ops.py -v
 """
 
 import json
-import math
 import unittest
 from unittest.mock import MagicMock
 
+from handlers.verification_ops import VerificationOpsHandler
+
 from tests.unit._freecad_mocks import (
-    mock_FreeCAD,
-    reset_mocks,
+    make_box_object,
     make_handler,
     make_mock_doc,
     make_part_object,
-    make_box_object,
+    mock_FreeCAD,
+    reset_mocks,
 )
-
-from handlers.verification_ops import VerificationOpsHandler
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -1,9 +1,9 @@
 # Measurement operation handlers for FreeCAD MCP
 
 import re
-import FreeCAD
-from typing import Any, Dict
-from .base import BaseHandler, OCCT_CONFUSION_TOLERANCE_DEFAULT
+from typing import Any
+
+from .base import OCCT_CONFUSION_TOLERANCE_DEFAULT, BaseHandler
 
 
 class MeasurementOpsHandler(BaseHandler):
@@ -29,7 +29,7 @@ class MeasurementOpsHandler(BaseHandler):
     # collides with every other space-separated class.
     _BOP_ERROR_LINE = re.compile(r'Error in \w+:\s*(.+?)\s*$')
 
-    def diagnose_invalid_shape(self, args: Dict[str, Any]) -> str:
+    def diagnose_invalid_shape(self, args: dict[str, Any]) -> str:
         """Check whether object_name's Shape is topologically valid
         (Shape.isValid(), OCCT's BRepCheck_Analyzer) and, if not, walk its
         dependency graph back to every upstream sketch and run a full
@@ -85,7 +85,7 @@ class MeasurementOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error diagnosing invalid shape: {e}"
 
-    def _classify_shape_findings(self, obj) -> Dict[str, Any]:
+    def _classify_shape_findings(self, obj) -> dict[str, Any]:
         """Return every anomaly obj's OWN Shape shows, independent of its
         inputs. Empty dict means clean. Keys are structured kinds:
           'sketch_open_wire' -- str diagnosis (Sketcher::SketchObject only)
@@ -102,7 +102,7 @@ class MeasurementOpsHandler(BaseHandler):
         AND carrying inherited BOP errors, and find_root_cause needs both
         signals to attribute each to the right place in the tree.
         """
-        findings: Dict[str, Any] = {}
+        findings: dict[str, Any] = {}
 
         if obj.TypeId == 'Sketcher::SketchObject':
             open_diag = self._diagnose_open_wires(obj)
@@ -129,7 +129,7 @@ class MeasurementOpsHandler(BaseHandler):
         try:
             shape.check(True)
         except Exception as e:
-            counts: Dict[str, int] = {}
+            counts: dict[str, int] = {}
             for line in str(e).splitlines():
                 m = self._BOP_ERROR_LINE.search(line)
                 if m:
@@ -138,7 +138,7 @@ class MeasurementOpsHandler(BaseHandler):
 
         return findings
 
-    def find_root_cause(self, args: Dict[str, Any]) -> str:
+    def find_root_cause(self, args: dict[str, Any]) -> str:
         """Walk object_name's full dependency subtree (via OutList) and
         report which object(s) FIRST introduce each defect, instead of just
         the symptom at object_name itself.
@@ -171,8 +171,8 @@ class MeasurementOpsHandler(BaseHandler):
                 return err
 
             order = []
-            findings_by_name: Dict[str, Any] = {}
-            objects_by_name: Dict[str, Any] = {}
+            findings_by_name: dict[str, Any] = {}
+            objects_by_name: dict[str, Any] = {}
             visited = set()
 
             def walk(o, depth=0):
@@ -204,7 +204,7 @@ class MeasurementOpsHandler(BaseHandler):
                 own = findings_by_name[name]
                 input_findings = [findings_by_name[i] for i in immediate_flagged_inputs(name)]
 
-                new_kinds: Dict[str, Any] = {}
+                new_kinds: dict[str, Any] = {}
                 for kind, detail in own.items():
                     if kind == 'bop_errors':
                         upstream_classes = set()
@@ -247,7 +247,7 @@ class MeasurementOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error finding root cause: {e}"
 
-    def measure_distance(self, args: Dict[str, Any]) -> str:
+    def measure_distance(self, args: dict[str, Any]) -> str:
         """Measure distance between two objects."""
         try:
             object1 = args.get('object1', '')
@@ -278,7 +278,7 @@ class MeasurementOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error measuring distance: {e}"
 
-    def get_volume(self, args: Dict[str, Any]) -> str:
+    def get_volume(self, args: dict[str, Any]) -> str:
         """Calculate volume of an object."""
         try:
             object_name = args.get('object_name', '')
@@ -293,7 +293,7 @@ class MeasurementOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error calculating volume: {e}"
 
-    def get_bounding_box(self, args: Dict[str, Any]) -> str:
+    def get_bounding_box(self, args: dict[str, Any]) -> str:
         """Get bounding box dimensions of an object."""
         try:
             object_name = args.get('object_name', '')
@@ -313,7 +313,7 @@ class MeasurementOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error calculating bounding box: {e}"
 
-    def get_mass_properties(self, args: Dict[str, Any]) -> str:
+    def get_mass_properties(self, args: dict[str, Any]) -> str:
         """Get mass properties of an object."""
         try:
             object_name = args.get('object_name', '')
@@ -341,7 +341,7 @@ class MeasurementOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error calculating mass properties: {e}"
 
-    def get_surface_area(self, args: Dict[str, Any]) -> str:
+    def get_surface_area(self, args: dict[str, Any]) -> str:
         """Calculate surface area of an object."""
         try:
             object_name = args.get('object_name', '')
@@ -358,7 +358,7 @@ class MeasurementOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error calculating surface area: {e}"
 
-    def get_center_of_mass(self, args: Dict[str, Any]) -> str:
+    def get_center_of_mass(self, args: dict[str, Any]) -> str:
         """Get center of mass of an object."""
         try:
             object_name = args.get('object_name', '')
@@ -373,7 +373,7 @@ class MeasurementOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error calculating center of mass: {e}"
 
-    def count_elements(self, args: Dict[str, Any]) -> str:
+    def count_elements(self, args: dict[str, Any]) -> str:
         """Count geometric elements (faces, edges, vertices) of an object."""
         try:
             object_name = args.get('object_name', '')
@@ -396,7 +396,7 @@ class MeasurementOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error counting elements: {e}"
 
-    def list_faces(self, args: Dict[str, Any]) -> str:
+    def list_faces(self, args: dict[str, Any]) -> str:
         """List all faces of an object with index, normal, centroid, and area."""
         try:
             object_name = args.get('object_name', '')
@@ -422,7 +422,7 @@ class MeasurementOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error listing faces: {e}"
 
-    def check_solid(self, args: Dict[str, Any]) -> str:
+    def check_solid(self, args: dict[str, Any]) -> str:
         """Check if object is a valid closed solid."""
         try:
             object_name = args.get('object_name', '')

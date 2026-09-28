@@ -16,18 +16,18 @@ import json
 import unittest
 from unittest.mock import MagicMock
 
+from handlers.spreadsheet_ops import SpreadsheetOpsHandler, _col_to_num, _num_to_col
+
 from tests.unit._freecad_mocks import (
-    mock_FreeCAD,
-    reset_mocks,
+    assert_error_contains,
+    assert_success_contains,
     make_handler,
     make_mock_doc,
     make_part_object,
     make_spreadsheet,
-    assert_error_contains,
-    assert_success_contains,
+    mock_FreeCAD,
+    reset_mocks,
 )
-
-from handlers.spreadsheet_ops import SpreadsheetOpsHandler, _col_to_num, _num_to_col
 
 
 class TestColumnConversionHelpers(unittest.TestCase):

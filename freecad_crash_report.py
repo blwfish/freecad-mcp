@@ -56,7 +56,6 @@ import time
 import zipfile
 from collections import deque
 from pathlib import Path
-from typing import Optional
 
 OPLOG_FILE   = "/tmp/freecad_mcp_oplog.json"
 MAX_OPLOG    = 10
@@ -94,7 +93,7 @@ class OpLog:
             self._ops[-1]["completed_at"] = time.time()
         self._flush()
 
-    def last_incomplete(self) -> Optional[dict]:
+    def last_incomplete(self) -> dict | None:
         for op in reversed(self._ops):
             if not op.get("completed"):
                 return op
@@ -161,7 +160,7 @@ def _summarize(tool: str, args: dict) -> str:
     """One-line summary of what an operation was doing."""
     if tool in ("execute_python", "execute_python_async"):
         code  = args.get("code", "")
-        lines = [l for l in code.strip().splitlines() if l.strip()]
+        lines = [line for line in code.strip().splitlines() if line.strip()]
         first = _redact_secrets_best_effort("\n".join(lines[:6]))
         tail  = f"\n… (+{len(lines)-6} lines)" if len(lines) > 6 else ""
         return f"{tool}:\n{first}{tail}"
@@ -175,7 +174,7 @@ def _summarize(tool: str, args: dict) -> str:
 # Crash diagnosis helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _read_last_op(pid: Optional[int] = None) -> Optional[dict]:
+def _read_last_op(pid: int | None = None) -> dict | None:
     """Read what FreeCAD was executing (written by crash_watcher inside FC).
 
     Only ever reads *this* pid's own file. Previously, when the pid-specific
@@ -209,7 +208,7 @@ def _read_last_op(pid: Optional[int] = None) -> Optional[dict]:
         return None
 
 
-def _find_macos_crash_report(max_age_s: int = 180) -> Optional[str]:
+def _find_macos_crash_report(max_age_s: int = 180) -> str | None:
     """Return a summary of the most recent FreeCAD crash report (macOS only)."""
     if platform.system() != "Darwin":
         return None
@@ -374,8 +373,8 @@ def _fc_process_info() -> dict:
             capture_output=True, text=True, timeout=3
         )
         if r.returncode == 0:
-            procs = [l for l in r.stdout.strip().splitlines()
-                     if "FreeCAD" in l and "grep" not in l]
+            procs = [line for line in r.stdout.strip().splitlines()
+                     if "FreeCAD" in line and "grep" not in line]
             if procs:
                 info["running"]   = True
                 info["processes"] = procs
@@ -505,11 +504,11 @@ def clear_recovery_files(dry_run: bool = False) -> list:
 
 def diagnose(
     *,
-    socket_path: Optional[str] = None,
+    socket_path: str | None = None,
     proc=None,              # subprocess.Popen for headless instances
-    op_log: Optional[OpLog] = None,
-    error: Optional[Exception] = None,
-    pid: Optional[int] = None,
+    op_log: OpLog | None = None,
+    error: Exception | None = None,
+    pid: int | None = None,
 ) -> str:
     """Return a human-readable markdown crash report.
 
@@ -622,7 +621,7 @@ def diagnose(
             "  1. Call `clear_recovery_files()` to remove corrupt FC session files\n"
             "  2. Then relaunch FreeCAD — it will start fresh without session restore\n"
             "  3. Open your explicitly-saved FCStd file (that file is likely intact)\n"
-            f"  Valid saved files you can reopen: "
+            "  Valid saved files you can reopen: "
             + (", ".join(f'`{v["path"]}`' for v in valid) or "(none found in recovery dir)")
         )
     else:

@@ -1,9 +1,11 @@
 # CAM workbench operation handlers for FreeCAD MCP
 
-import FreeCAD
 import time
-from typing import Dict, Any
-from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
+from typing import Any
+
+import FreeCAD
+
+from .base import NO_ACTIVE_DOCUMENT_ERROR, BaseHandler
 
 
 def _clear_expression_binding(obj, prop_name: str) -> None:
@@ -40,7 +42,7 @@ class CAMOpsHandler(BaseHandler):
         "export_gcode", "delete_job",
     })
 
-    def create_job(self, args: Dict[str, Any]) -> str:
+    def create_job(self, args: dict[str, Any]) -> str:
         """Create a new CAM Job."""
         start_time = time.time()
         try:
@@ -126,7 +128,7 @@ class CAMOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("create_job", args, error=e, duration=time.time() - start_time)
 
-    def setup_stock(self, args: Dict[str, Any]) -> str:
+    def setup_stock(self, args: dict[str, Any]) -> str:
         """Setup stock for CAM job."""
         start_time = time.time()
         try:
@@ -192,7 +194,7 @@ class CAMOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("setup_stock", args, error=e, duration=time.time() - start_time)
 
-    def profile(self, args: Dict[str, Any]) -> str:
+    def profile(self, args: dict[str, Any]) -> str:
         """Create a profile (contour) operation.
 
         With no faces/edges → exterior contour of the whole model (FC Profile
@@ -228,7 +230,7 @@ class CAMOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("profile", args, error=e, duration=time.time() - start_time)
 
-    def pocket(self, args: Dict[str, Any]) -> str:
+    def pocket(self, args: dict[str, Any]) -> str:
         """Create a pocket operation. Pass faces=['FaceN',...] to generate toolpath."""
         start_time = time.time()
         try:
@@ -280,7 +282,7 @@ class CAMOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("pocket", args, error=e, duration=time.time() - start_time)
 
-    def drilling(self, args: Dict[str, Any]) -> str:
+    def drilling(self, args: dict[str, Any]) -> str:
         """Create a drilling operation.
 
         Pass faces=['FaceN'] where FaceN is a cylindrical hole wall — FC extracts
@@ -339,7 +341,7 @@ class CAMOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("drilling", args, error=e, duration=time.time() - start_time)
 
-    def adaptive(self, args: Dict[str, Any]) -> str:
+    def adaptive(self, args: dict[str, Any]) -> str:
         """Create an adaptive clearing operation.
 
         Trochoidal algorithm for constant tool engagement.
@@ -396,35 +398,35 @@ class CAMOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("adaptive", args, error=e, duration=time.time() - start_time)
 
-    def face(self, args: Dict[str, Any]) -> str:
+    def face(self, args: dict[str, Any]) -> str:
         """Create a face milling operation."""
         return self._placeholder_operation("Face Milling", args)
 
-    def helix(self, args: Dict[str, Any]) -> str:
+    def helix(self, args: dict[str, Any]) -> str:
         """Create a helix operation."""
         return self._placeholder_operation("Helix", args)
 
-    def slot(self, args: Dict[str, Any]) -> str:
+    def slot(self, args: dict[str, Any]) -> str:
         """Create a slot milling operation."""
         return self._placeholder_operation("Slot Milling", args)
 
-    def engrave(self, args: Dict[str, Any]) -> str:
+    def engrave(self, args: dict[str, Any]) -> str:
         """Create an engrave operation."""
         return self._placeholder_operation("Engrave", args)
 
-    def vcarve(self, args: Dict[str, Any]) -> str:
+    def vcarve(self, args: dict[str, Any]) -> str:
         """Create a V-carve operation."""
         return self._placeholder_operation("V-Carve", args)
 
-    def deburr(self, args: Dict[str, Any]) -> str:
+    def deburr(self, args: dict[str, Any]) -> str:
         """Create a deburr operation."""
         return self._placeholder_operation("Deburr", args)
 
-    def surface(self, args: Dict[str, Any]) -> str:
+    def surface(self, args: dict[str, Any]) -> str:
         """Create a surface milling operation."""
         return self._placeholder_operation("Surface Milling", args)
 
-    def surface_stl(self, args: Dict[str, Any]) -> str:
+    def surface_stl(self, args: dict[str, Any]) -> str:
         """Create an OCL PathDropCutter surface operation from an STL file.
 
         This is the production replacement for the 'surface' placeholder.
@@ -508,47 +510,47 @@ class CAMOpsHandler(BaseHandler):
             return self.log_and_return("surface_stl", args, error=e,
                                        duration=time.time() - start)
 
-    def waterline(self, args: Dict[str, Any]) -> str:
+    def waterline(self, args: dict[str, Any]) -> str:
         """Create a waterline operation."""
         return self._placeholder_operation("Waterline", args)
 
-    def pocket_3d(self, args: Dict[str, Any]) -> str:
+    def pocket_3d(self, args: dict[str, Any]) -> str:
         """Create a 3D pocket operation."""
         return self._placeholder_operation("3D Pocket", args)
 
-    def thread_milling(self, args: Dict[str, Any]) -> str:
+    def thread_milling(self, args: dict[str, Any]) -> str:
         """Create a thread milling operation."""
         return self._placeholder_operation("Thread Milling", args)
 
-    def dogbone(self, args: Dict[str, Any]) -> str:
+    def dogbone(self, args: dict[str, Any]) -> str:
         """Add dogbone dressup to a path."""
         return self._placeholder_dressup("Dogbone", args)
 
-    def lead_in_out(self, args: Dict[str, Any]) -> str:
+    def lead_in_out(self, args: dict[str, Any]) -> str:
         """Add lead-in/lead-out to a path."""
         return self._placeholder_dressup("Lead In/Out", args)
 
-    def ramp_entry(self, args: Dict[str, Any]) -> str:
+    def ramp_entry(self, args: dict[str, Any]) -> str:
         """Add ramp entry to a path."""
         return self._placeholder_dressup("Ramp Entry", args)
 
-    def tag(self, args: Dict[str, Any]) -> str:
+    def tag(self, args: dict[str, Any]) -> str:
         """Add holding tags to a path."""
         return self._placeholder_dressup("Tag", args)
 
-    def axis_map(self, args: Dict[str, Any]) -> str:
+    def axis_map(self, args: dict[str, Any]) -> str:
         """Add axis mapping to a path."""
         return self._placeholder_dressup("Axis Map", args)
 
-    def drag_knife(self, args: Dict[str, Any]) -> str:
+    def drag_knife(self, args: dict[str, Any]) -> str:
         """Add drag knife compensation to a path."""
         return self._placeholder_dressup("Drag Knife", args)
 
-    def z_correct(self, args: Dict[str, Any]) -> str:
+    def z_correct(self, args: dict[str, Any]) -> str:
         """Add Z-axis correction to a path."""
         return self._placeholder_dressup("Z-Correction", args)
 
-    def create_tool(self, args: Dict[str, Any]) -> str:
+    def create_tool(self, args: dict[str, Any]) -> str:
         """Create a tool bit.
 
         cam_operations' create_tool/tool_controller are legacy aliases (see
@@ -561,7 +563,7 @@ class CAMOpsHandler(BaseHandler):
         """
         return self.server.cam_tools.create_tool(args)
 
-    def tool_controller(self, args: Dict[str, Any]) -> str:
+    def tool_controller(self, args: dict[str, Any]) -> str:
         """Create/attach a tool controller to a CAM job.
 
         See create_tool's docstring above -- delegates to the real
@@ -569,7 +571,7 @@ class CAMOpsHandler(BaseHandler):
         """
         return self.server.cam_tool_controllers.add_tool_controller(args)
 
-    def simulate(self, args: Dict[str, Any]) -> str:
+    def simulate(self, args: dict[str, Any]) -> str:
         """Simulate CAM operations.
 
         Legacy alias -- delegates to simulate_job, the real implementation.
@@ -578,7 +580,7 @@ class CAMOpsHandler(BaseHandler):
         """
         return self.simulate_job(args)
 
-    def _do_post_process(self, args: Dict[str, Any]):
+    def _do_post_process(self, args: dict[str, Any]):
         """Core post-process logic, returning a typed (result, error) pair
         instead of a plain string. Split out of post_process() so callers
         (export_gcode) can tell success from failure without string-
@@ -629,7 +631,7 @@ class CAMOpsHandler(BaseHandler):
         result = f"Generated G-code for job '{job_name}' -> {output_file} ({total_lines} lines)"
         return result, None
 
-    def post_process(self, args: Dict[str, Any]) -> str:
+    def post_process(self, args: dict[str, Any]) -> str:
         """Post-process CAM job to generate G-code."""
         start_time = time.time()
         try:
@@ -643,7 +645,7 @@ class CAMOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("post_process", args, error=e, duration=time.time() - start_time)
 
-    def inspect(self, args: Dict[str, Any]) -> str:
+    def inspect(self, args: dict[str, Any]) -> str:
         """Inspect CAM job and operations."""
         start_time = time.time()
         try:
@@ -680,7 +682,7 @@ class CAMOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("inspect", args, error=e, duration=time.time() - start_time)
 
-    def list_operations(self, args: Dict[str, Any]) -> str:
+    def list_operations(self, args: dict[str, Any]) -> str:
         """List all operations in a CAM job with detailed information.
 
         Args:
@@ -741,7 +743,7 @@ class CAMOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("list_operations", args, error=e, duration=time.time() - start_time)
 
-    def get_operation(self, args: Dict[str, Any]) -> str:
+    def get_operation(self, args: dict[str, Any]) -> str:
         """Get detailed information about a specific CAM operation.
 
         Args:
@@ -825,7 +827,7 @@ class CAMOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("get_operation", args, error=e, duration=time.time() - start_time)
 
-    def configure_operation(self, args: Dict[str, Any]) -> str:
+    def configure_operation(self, args: dict[str, Any]) -> str:
         """Configure/update parameters of an existing CAM operation.
 
         Args:
@@ -926,7 +928,7 @@ class CAMOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("configure_operation", args, error=e, duration=time.time() - start_time)
 
-    def delete_operation(self, args: Dict[str, Any]) -> str:
+    def delete_operation(self, args: dict[str, Any]) -> str:
         """Delete an operation from a CAM job.
 
         Args:
@@ -978,7 +980,7 @@ class CAMOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("delete_operation", args, error=e, duration=time.time() - start_time)
 
-    def configure_job(self, args: Dict[str, Any]) -> str:
+    def configure_job(self, args: dict[str, Any]) -> str:
         """Configure job parameters.
 
         Args:
@@ -1011,7 +1013,7 @@ class CAMOpsHandler(BaseHandler):
                 # Stock type changes require setup_stock operation. Checked before any
                 # other field is applied so this doesn't silently half-apply a call that
                 # combines stock_type with output_file/post_processor/post_processor_args.
-                result = f"To change stock type, use the setup_stock operation instead"
+                result = "To change stock type, use the setup_stock operation instead"
                 return self.log_and_return("configure_job", args, result=result, duration=time.time() - start_time)
 
             updates = []
@@ -1039,7 +1041,7 @@ class CAMOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("configure_job", args, error=e, duration=time.time() - start_time)
 
-    def inspect_job(self, args: Dict[str, Any]) -> str:
+    def inspect_job(self, args: dict[str, Any]) -> str:
         """Get complete job structure and status.
 
         Args:
@@ -1070,7 +1072,7 @@ class CAMOpsHandler(BaseHandler):
 
             # Base model
             if hasattr(job, 'Model') and job.Model.Group:
-                result += f"Base Model:\n"
+                result += "Base Model:\n"
                 for obj in job.Model.Group:
                     result += f"  - {obj.Label}\n"
                 result += "\n"
@@ -1113,7 +1115,7 @@ class CAMOpsHandler(BaseHandler):
                 result += f"Post Processor Args: {job.PostProcessorArgs}\n"
 
             # Status
-            result += f"\nStatus:\n"
+            result += "\nStatus:\n"
             ready = True
             issues = []
 
@@ -1137,7 +1139,7 @@ class CAMOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("inspect_job", args, error=e, duration=time.time() - start_time)
 
-    def job_status(self, args: Dict[str, Any]) -> str:
+    def job_status(self, args: dict[str, Any]) -> str:
         """Quick status check of a CAM job.
 
         Args:
@@ -1179,7 +1181,7 @@ class CAMOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("job_status", args, error=e, duration=time.time() - start_time)
 
-    def simulate_job(self, args: Dict[str, Any]) -> str:
+    def simulate_job(self, args: dict[str, Any]) -> str:
         """Launch the CAM simulator for a job.
 
         Args:
@@ -1224,7 +1226,7 @@ class CAMOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("simulate_job", args, error=e, duration=time.time() - start_time)
 
-    def export_gcode(self, args: Dict[str, Any]) -> str:
+    def export_gcode(self, args: dict[str, Any]) -> str:
         """Generate G-code (alias for post_process).
 
         Args:
@@ -1254,7 +1256,7 @@ class CAMOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("export_gcode", args, error=e, duration=time.time() - start_time)
 
-    def delete_job(self, args: Dict[str, Any]) -> str:
+    def delete_job(self, args: dict[str, Any]) -> str:
         """Delete a CAM job.
 
         Args:
@@ -1298,7 +1300,7 @@ class CAMOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("delete_job", args, error=e, duration=time.time() - start_time)
 
-    def _create_path_op(self, create_fn, args: Dict[str, Any], default_name: str):
+    def _create_path_op(self, create_fn, args: dict[str, Any], default_name: str):
         """Shared scaffold for CAM path operations.
 
         Owns everything that is identical across profile, pocket, drilling,
@@ -1365,14 +1367,14 @@ class CAMOpsHandler(BaseHandler):
 
         return doc, op
 
-    def _placeholder_operation(self, operation_name: str, args: Dict[str, Any]) -> str:
+    def _placeholder_operation(self, operation_name: str, args: dict[str, Any]) -> str:
         """Placeholder for CAM operations not yet implemented."""
         job_name = args.get('job_name', '')
         name = args.get('name', operation_name)
 
         return f"{operation_name} operation: This operation is available in FreeCAD but not yet automated via MCP. Please create '{name}' operation manually in job '{job_name}' using the CAM workbench UI."
 
-    def _placeholder_dressup(self, dressup_name: str, args: Dict[str, Any]) -> str:
+    def _placeholder_dressup(self, dressup_name: str, args: dict[str, Any]) -> str:
         """Placeholder for CAM dressup operations not yet implemented."""
         operation = args.get('operation', '')
 

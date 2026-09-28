@@ -9,7 +9,7 @@ import os
 import sys
 import threading
 import traceback as tb_module
-from typing import Any, Dict
+from typing import Any
 
 import FreeCAD
 
@@ -19,7 +19,6 @@ else:
     FreeCADGui = None
 
 from .base import BaseHandler, autosave_before
-
 
 # CLAUDE.md's "prefer primary tool over execute_python" rule, made
 # observable instead of just documented -- same result-level, same-task
@@ -84,7 +83,7 @@ class ExecutePythonOpsHandler(BaseHandler):
         super().__init__(server, log_operation, capture_state)
         # Persistent namespace for execute_python calls.
         # Variables created in one call survive to the next.
-        self._python_namespace: Dict[str, Any] = {}
+        self._python_namespace: dict[str, Any] = {}
 
     def _capture_console_stderr_start(self):
         """Redirect the real OS-level stderr fd to a pipe with a background
@@ -255,7 +254,7 @@ class ExecutePythonOpsHandler(BaseHandler):
             return {"success": True, "result": "\n".join(parts)}
         return {"success": True, "result": "Code executed successfully"}
 
-    def execute(self, args: Dict[str, Any]) -> str:
+    def execute(self, args: dict[str, Any]) -> str:
         """Execute Python code in FreeCAD context with expression value capture (GUI-safe).
 
         Handles both statements and expressions, returning the value

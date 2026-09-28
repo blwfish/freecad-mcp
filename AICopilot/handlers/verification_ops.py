@@ -11,7 +11,7 @@
 
 import json
 import math
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .base import BaseHandler
 
@@ -103,7 +103,7 @@ class VerificationOpsHandler(BaseHandler):
     # verify_handedness
     # ------------------------------------------------------------------
 
-    def verify_handedness(self, args: Dict[str, Any]) -> str:
+    def verify_handedness(self, args: dict[str, Any]) -> str:
         """Check that a 3×3 rotation matrix has determinant ≈ +1 (right-handed).
 
         When to call this:
@@ -173,7 +173,7 @@ class VerificationOpsHandler(BaseHandler):
     # verify_orientation
     # ------------------------------------------------------------------
 
-    def verify_orientation(self, args: Dict[str, Any]) -> str:
+    def verify_orientation(self, args: dict[str, Any]) -> str:
         """Check face normals of a shape point in the expected direction.
 
         When to call this:
@@ -311,7 +311,7 @@ class VerificationOpsHandler(BaseHandler):
                 "message": f"Error in verify_orientation: {e}"
             })
 
-    def _parse_axis(self, raw) -> Optional[tuple]:
+    def _parse_axis(self, raw) -> tuple | None:
         """Parse expected_axis arg to a unit (x,y,z) tuple, or None on failure."""
         if isinstance(raw, (list, tuple)) and len(raw) == 3:
             try:
@@ -337,7 +337,7 @@ class VerificationOpsHandler(BaseHandler):
     # verify_no_self_intersection
     # ------------------------------------------------------------------
 
-    def verify_no_self_intersection(self, args: Dict[str, Any]) -> str:
+    def verify_no_self_intersection(self, args: dict[str, Any]) -> str:
         """Run an OCCT-level validity check on a shape (no self-intersecting faces).
 
         When to call this:
@@ -446,7 +446,7 @@ class VerificationOpsHandler(BaseHandler):
     # verify_topology
     # ------------------------------------------------------------------
 
-    def verify_topology(self, args: Dict[str, Any]) -> str:
+    def verify_topology(self, args: dict[str, Any]) -> str:
         """Flexible topology check: compare actual counts/volume against expectations.
 
         When to call this:

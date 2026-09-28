@@ -22,11 +22,10 @@ spuriously fail (see diff_snapshots' docstring for the full three-outcome
 shape this produces).
 """
 
-from typing import Dict, List, Set
 
 
-def diff_snapshots(scope: Dict[str, Set[str]], golden: Dict[str, Dict[str, str]],
-                    live: Dict[str, Dict[str, str]]) -> Dict[str, object]:
+def diff_snapshots(scope: dict[str, set[str]], golden: dict[str, dict[str, str]],
+                    live: dict[str, dict[str, str]]) -> dict[str, object]:
     """Three-outcome diff (match / changed / removed) over ``scope``, plus a
     fourth bucket for scope entries the golden snapshot doesn't know about
     yet (a stale snapshot, not necessarily a break -- see
@@ -65,10 +64,10 @@ def diff_snapshots(scope: Dict[str, Set[str]], golden: Dict[str, Dict[str, str]]
     reported -- see the module-level docstring and DEFERRED_TESTS.md for
     why additions are out of scope for this mechanism.
     """
-    stale_snapshot_types: Dict[str, List[str]] = {}
-    types_no_longer_resolve: Dict[str, str] = {}
-    properties_removed: Dict[str, List[str]] = {}
-    properties_changed: Dict[str, List[str]] = {}
+    stale_snapshot_types: dict[str, list[str]] = {}
+    types_no_longer_resolve: dict[str, str] = {}
+    properties_removed: dict[str, list[str]] = {}
+    properties_changed: dict[str, list[str]] = {}
 
     for type_id, props in scope.items():
         props = sorted(props)

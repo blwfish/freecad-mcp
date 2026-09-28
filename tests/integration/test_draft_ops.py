@@ -7,10 +7,12 @@ names must match method names exactly.
 """
 
 import time
-import pytest
-from ._geom_helpers import assert_op_succeeded, _result_text as _text
-from .test_e2e_workflows import send_command
 
+import pytest
+
+from ._geom_helpers import _result_text as _text
+from ._geom_helpers import assert_op_succeeded
+from .test_e2e_workflows import send_command
 
 # ---------------------------------------------------------------------------
 # Module-level guard: skip all tests if Draft module isn't available

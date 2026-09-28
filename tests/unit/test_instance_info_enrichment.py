@@ -6,7 +6,6 @@ simulated by a small threaded socket server that speaks the same length-
 prefixed framing protocol and returns a canned `get_instance_info` reply.
 """
 
-import asyncio
 import json
 import os
 import socket
@@ -15,6 +14,7 @@ import threading
 import time
 import types as _types
 import uuid as _uuid
+
 import pytest
 
 BRIDGE_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "freecad_mcp_server.py")
@@ -87,7 +87,7 @@ class FakeAICopilot:
         while not self._stop.is_set():
             try:
                 conn, _ = self._srv.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 break
