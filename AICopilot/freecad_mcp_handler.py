@@ -157,7 +157,22 @@
 #                   property. Full findings ledger in .claude-review/
 #                   ledger.jsonl.
 
-__version__ = "8.2.0"
+# Version: 8.2.1 - Two externally-reported bugs (#89, #90). AGENT-INSTALL.md's
+#                   Step 3 never accounted for the mcp-agent-notes dependency
+#                   or usage_guidance.py added by 8.2.0's usage-guidance
+#                   rework, so following it verbatim produced a bridge that
+#                   died during the MCP initialize handshake -- now installs
+#                   from requirements.txt and copies usage_guidance.py.
+#                   stop_freecad_instance only signalled the tracked wrapper
+#                   pid (the AppImage AppRun launcher on Linux, not the real
+#                   freecadcmd process living behind a fork + FUSE mount) and
+#                   reported success unconditionally -- now kills the whole
+#                   process group via os.killpg(), verifies both the wrapper
+#                   and the real process (via the discovery record's own pid)
+#                   are actually dead before reporting success, and cleans up
+#                   the stale discovery JSON immediately on confirmed stop.
+
+__version__ = "8.2.1"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
