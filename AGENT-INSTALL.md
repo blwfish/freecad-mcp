@@ -62,10 +62,13 @@ The MCP bridge runs on the system Python (not FreeCAD's bundled Python).
 
 ### 3. MCP Python packages (required)
 
-The bridge depends on the `mcp` package (protocol implementation) and `mcp-events`
-(structured warning signals — see Architecture above).
-
-**Install:** `pip3 install mcp>=2.0.0 mcp-events>=0.1.0`
+The bridge depends on the `mcp` package (protocol implementation), `mcp-events`
+(structured warning signals — see Architecture above), and `mcp-agent-notes`
+(renders `usage_guidance.py`'s notes into the `initialize` handshake and the
+`get_usage_guidance` tool). The last one isn't published to PyPI — it's pinned
+to a commit in `requirements.txt`. All three are installed together in Step 3
+below, from that file — don't install them by hand here, since `mcp-agent-notes`
+has no plain package name to give `pip`.
 
 ## Installation
 
@@ -103,8 +106,8 @@ renumber and any future change.
 
 ```bash
 mkdir -p ~/.freecad-mcp
-cp freecad_mcp_server.py mcp_bridge_framing.py ~/.freecad-mcp/
-pip3 install mcp>=2.0.0 mcp-events>=0.1.0
+cp freecad_mcp_server.py mcp_bridge_framing.py usage_guidance.py ~/.freecad-mcp/
+pip3 install -r requirements.txt
 ```
 
 ### Step 4: Register as an MCP Server
@@ -159,7 +162,8 @@ Pull the latest changes, then re-copy the workbench and bridge files (Steps 2-3 
 ```bash
 git pull
 cp -r AICopilot "$MOD_DIR/"
-cp freecad_mcp_server.py mcp_bridge_framing.py ~/.freecad-mcp/
+cp freecad_mcp_server.py mcp_bridge_framing.py usage_guidance.py ~/.freecad-mcp/
+pip3 install -r requirements.txt
 ```
 
 ## Uninstalling
