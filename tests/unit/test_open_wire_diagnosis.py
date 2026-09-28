@@ -9,8 +9,7 @@ Run with: python3 -m pytest tests/unit/test_open_wire_diagnosis.py -v
 
 import os
 import sys
-import types
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
 # Minimal FreeCAD mocks — must happen before handler imports
@@ -71,12 +70,11 @@ sys.modules['FreeCAD'].ActiveDocument = None
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'AICopilot'))
 
 import handlers.base as base_module
-from handlers.base import BaseHandler
-import handlers.sketch_ops as sketch_ops_module
-from handlers.sketch_ops import SketchOpsHandler
 import handlers.partdesign_ops as partdesign_ops_module
+import handlers.sketch_ops as sketch_ops_module
+from handlers.base import BaseHandler
 from handlers.partdesign_ops import PartDesignOpsHandler
-
+from handlers.sketch_ops import SketchOpsHandler
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -123,8 +121,8 @@ def _make_sketch(geom_list, construction_flags=None):
 
 def _with_vector(test_fn):
     """Context manager: patch base_module.FreeCAD.Vector to FakeVectorFactory."""
-    from contextlib import contextmanager
     import unittest.mock as um
+    from contextlib import contextmanager
 
     @contextmanager
     def _ctx():

@@ -29,7 +29,6 @@ sys.modules['FreeCAD'].ActiveDocument = None
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'AICopilot'))
 
 import handlers.base as base_module
-import handlers.measurement_ops as measurement_ops_module
 from handlers.measurement_ops import MeasurementOpsHandler
 
 

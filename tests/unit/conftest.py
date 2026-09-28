@@ -6,8 +6,9 @@ These tests run WITHOUT FreeCAD installed by mocking the FreeCAD modules.
 
 import sys
 import types
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 
 @pytest.fixture(autouse=True)

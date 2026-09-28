@@ -7,9 +7,9 @@ All FreeCAD dependencies are mocked via conftest.py.
 import json
 import os
 import sys
-import types
+from unittest.mock import MagicMock, PropertyMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
 
 # Add AICopilot to path for imports
 AICOPILOT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot")
@@ -178,7 +178,7 @@ class TestSaveDocument:
         assert "No active document" in result
 
     def test_save_error(self, doc_handler, mock_doc):
-        mock_doc.save.side_effect = IOError("disk full")
+        mock_doc.save.side_effect = OSError("disk full")
         result = doc_handler.save_document({})
         assert "Error" in result
 

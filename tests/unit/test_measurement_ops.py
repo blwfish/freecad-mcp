@@ -11,18 +11,18 @@ Run with: python3 -m pytest tests/unit/test_measurement_ops.py -v
 import unittest
 from unittest.mock import MagicMock
 
+from handlers.measurement_ops import MeasurementOpsHandler
+
 from tests.unit._freecad_mocks import (
-    mock_FreeCAD,
-    reset_mocks,
+    assert_error_contains,
+    assert_success_contains,
+    make_box_object,
     make_handler,
     make_mock_doc,
     make_part_object,
-    make_box_object,
-    assert_error_contains,
-    assert_success_contains,
+    mock_FreeCAD,
+    reset_mocks,
 )
-
-from handlers.measurement_ops import MeasurementOpsHandler
 
 
 def _attach_face_geometry(obj, faces_data):

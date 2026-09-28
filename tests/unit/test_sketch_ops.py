@@ -20,20 +20,20 @@ import math
 import unittest
 from unittest.mock import MagicMock
 
+from handlers.sketch_ops import SketchOpsHandler
+
 from tests.unit._freecad_mocks import (
+    assert_error_contains,
+    assert_success_contains,
+    make_body,
+    make_handler,
+    make_mock_doc,
+    make_sketch,
     mock_FreeCAD,
     mock_Part,
     mock_Sketcher,
     reset_mocks,
-    make_handler,
-    make_mock_doc,
-    make_sketch,
-    make_body,
-    assert_error_contains,
-    assert_success_contains,
 )
-
-from handlers.sketch_ops import SketchOpsHandler
 
 
 def _make_real_sketch_mock(name="Sketch"):

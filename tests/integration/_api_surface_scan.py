@@ -30,7 +30,6 @@ run against the real repo.
 import ast
 import glob
 import os
-from typing import Dict, Set, Tuple
 
 HANDLERS_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "..", "AICopilot", "handlers"
@@ -113,7 +112,7 @@ def _literal_type_str(node: ast.AST) -> str | None:
     return None
 
 
-def _ternary_literal_type_strs(node: ast.AST) -> Tuple[str, ...]:
+def _ternary_literal_type_strs(node: ast.AST) -> tuple[str, ...]:
     """If node is ``"A" if cond else "B"`` with both sides literal
     '::'-containing strings, return (A, B); else ()."""
     if isinstance(node, ast.IfExp):
@@ -124,7 +123,7 @@ def _ternary_literal_type_strs(node: ast.AST) -> Tuple[str, ...]:
     return ()
 
 
-def _type_ids_from_call(node: ast.AST, type_string_vars: Dict[str, Tuple[str, ...]]) -> Tuple[str, ...]:
+def _type_ids_from_call(node: ast.AST, type_string_vars: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
     """Extends _type_id_from_call to also resolve addObject/newObject calls
     whose type argument is a variable bound (in this same function scope)
     to a ternary of literal Type::Strings, e.g. add_component's
@@ -181,8 +180,8 @@ def _base_var_and_property(target: ast.AST):
     return node.id, chain[-1]
 
 
-def _record_type_call(type_id: str, type_properties: Dict[str, Set[str]],
-                       type_call_sites: Dict[str, int]) -> None:
+def _record_type_call(type_id: str, type_properties: dict[str, set[str]],
+                       type_call_sites: dict[str, int]) -> None:
     """Register a Type::String call site with zero properties (yet) -- the
     same bookkeeping needed whether the call is bound to a variable
     (Assign), handed straight back (Return), or fire-and-forget (a bare
@@ -191,10 +190,10 @@ def _record_type_call(type_id: str, type_properties: Dict[str, Set[str]],
     type_properties.setdefault(type_id, set())
 
 
-def _walk_stmts(stmts, bindings: Dict[str, Tuple[str, ...]],
-                 type_string_vars: Dict[str, Tuple[str, ...]],
-                 type_properties: Dict[str, Set[str]],
-                 type_call_sites: Dict[str, int]):
+def _walk_stmts(stmts, bindings: dict[str, tuple[str, ...]],
+                 type_string_vars: dict[str, tuple[str, ...]],
+                 type_properties: dict[str, set[str]],
+                 type_call_sites: dict[str, int]):
     """Process a statement list with its own copy of var->type(s) bindings,
     so mutually-exclusive branches (if/else, try/except) don't leak into
     each other. `bindings`/`type_string_vars` are copied on entry, never
@@ -320,14 +319,14 @@ def _walk_stmts(stmts, bindings: Dict[str, Tuple[str, ...]],
     return bindings, type_string_vars
 
 
-def scan_type_properties(handlers_dir: str = HANDLERS_DIR) -> Dict[str, Set[str]]:
+def scan_type_properties(handlers_dir: str = HANDLERS_DIR) -> dict[str, set[str]]:
     """Return {type_id: {property_names actually set by handler code}} for
     every literal "Type::String" passed to addObject/newObject across
     handlers_dir. Types with zero properties set (pure containers like
     PartDesign::Body, populated via .Group/.addObject rather than scalar
     properties) appear with an empty set, not omitted."""
-    type_properties: Dict[str, Set[str]] = {}
-    type_call_sites: Dict[str, int] = {}
+    type_properties: dict[str, set[str]] = {}
+    type_call_sites: dict[str, int] = {}
 
     for path in sorted(glob.glob(os.path.join(handlers_dir, "*.py"))):
         with open(path) as f:

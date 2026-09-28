@@ -22,12 +22,10 @@
 #     re-saving produces a clean update with no hidden state.
 
 import json
-import math
 import os
 import re
-import struct
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .base import BaseHandler
 
@@ -96,7 +94,7 @@ def _safe_name(name: str) -> bool:
     return bool(re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$', name))
 
 
-def _extract_topology(shape) -> Dict[str, Any]:
+def _extract_topology(shape) -> dict[str, Any]:
     """Pull topology summary from a FreeCAD Part.Shape object.
 
     Returns a dict matching the topology.json schema (schema_version 2).
@@ -203,7 +201,7 @@ def _try_screenshot(path: str) -> bool:
         return False
 
 
-def _compare_values(actual, saved, tolerances: Dict[str, Any]) -> Dict[str, Any]:
+def _compare_values(actual, saved, tolerances: dict[str, Any]) -> dict[str, Any]:
     """Compare actual topology dict against saved dict using tolerances.
 
     Returns a dict of field → {ok, actual, saved, delta} for each field
@@ -332,7 +330,7 @@ class FixtureOpsHandler(BaseHandler):
     # save_fixture
     # ------------------------------------------------------------------
 
-    def save_fixture(self, args: Dict[str, Any]) -> str:
+    def save_fixture(self, args: dict[str, Any]) -> str:
         """Save a topology summary, STL, optional screenshot, and fixture.md
         for an object under fixtures/<fixture_name>/.
 
@@ -453,9 +451,9 @@ class FixtureOpsHandler(BaseHandler):
                 '',
                 '## Usage',
                 '',
-                f'```python',
+                '```python',
                 f'compare_to_fixture(shape="{object_name}", fixture_name="{fixture_name}")',
-                f'```',
+                '```',
                 '',
             ]
             md_path = os.path.join(fdir, 'fixture.md')
@@ -496,7 +494,7 @@ class FixtureOpsHandler(BaseHandler):
     # compare_to_fixture
     # ------------------------------------------------------------------
 
-    def compare_to_fixture(self, args: Dict[str, Any]) -> str:
+    def compare_to_fixture(self, args: dict[str, Any]) -> str:
         """Compare a FreeCAD object's topology against a saved fixture.
 
         Checks face/edge/vertex counts (exact), volume (within 0.1% by
@@ -560,7 +558,7 @@ class FixtureOpsHandler(BaseHandler):
                 })
 
             # Load saved topology
-            with open(topo_path, 'r', encoding='utf-8') as f:
+            with open(topo_path, encoding='utf-8') as f:
                 saved_topo = json.load(f)
 
             # Check schema version compatibility

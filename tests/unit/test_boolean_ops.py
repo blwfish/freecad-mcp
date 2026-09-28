@@ -10,18 +10,17 @@ shape parameter assembly, source visibility hiding, and error paths
 import unittest
 from unittest.mock import MagicMock
 
+from handlers.boolean_ops import BooleanOpsHandler
+
 from tests.unit._freecad_mocks import (
-    mock_FreeCAD,
-    reset_mocks,
-    make_handler,
-    make_mock_doc,
-    make_part_object,
-    make_box_object,
     assert_error_contains,
     assert_success_contains,
+    make_box_object,
+    make_handler,
+    make_mock_doc,
+    mock_FreeCAD,
+    reset_mocks,
 )
-
-from handlers.boolean_ops import BooleanOpsHandler
 
 
 class TestFuseObjects(unittest.TestCase):

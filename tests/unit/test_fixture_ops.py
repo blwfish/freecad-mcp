@@ -17,22 +17,20 @@ Run with: python3 -m pytest tests/unit/test_fixture_ops.py -v
 
 import json
 import os
-import sys
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+
+import handlers.fixture_ops as _fixture_ops_module
+from handlers.fixture_ops import FixtureOpsHandler
 
 from tests.unit._freecad_mocks import (
-    mock_FreeCAD,
-    reset_mocks,
     make_handler,
     make_mock_doc,
     make_part_object,
+    mock_FreeCAD,
+    reset_mocks,
 )
-
-from handlers.fixture_ops import FixtureOpsHandler, _fixtures_root
-import handlers.fixture_ops as _fixture_ops_module
-
 
 # ---------------------------------------------------------------------------
 # Helpers

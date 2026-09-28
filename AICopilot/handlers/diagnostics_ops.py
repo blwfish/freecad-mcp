@@ -9,12 +9,12 @@
 # the socket server's GUI-thread dispatch error paths (self.server calls
 # through this handler rather than owning the buffer itself).
 
+import collections
 import glob
 import json
 import os
 import time
-import collections
-from typing import Any, Dict
+from typing import Any
 
 import FreeCAD
 
@@ -52,7 +52,7 @@ class DiagnosticsOpsHandler(BaseHandler):
         })
         return error_id
 
-    def get_last_traceback(self, args: Dict[str, Any]) -> str:
+    def get_last_traceback(self, args: dict[str, Any]) -> str:
         """Retrieve full traceback(s) from the in-memory ring buffer.
 
         Pass error_id to fetch a specific traceback, or omit to get the most recent ones.
@@ -79,7 +79,7 @@ class DiagnosticsOpsHandler(BaseHandler):
             "total_stored": len(self._last_tracebacks),
         })
 
-    def get_debug_logs(self, args: Dict[str, Any]) -> str:
+    def get_debug_logs(self, args: dict[str, Any]) -> str:
         """Retrieve recent debug logs for analysis."""
         try:
             log_dir = "/tmp/freecad_mcp_debug"
@@ -93,7 +93,7 @@ class DiagnosticsOpsHandler(BaseHandler):
             # count must not silently read from the FRONT of the file
             # instead of the tail.
             count = max(0, count)
-            operation_filter = args.get("operation", None)
+            operation_filter = args.get("operation")
 
             if not os.path.exists(log_dir):
                 return json.dumps({"result": "No debug logs available (logging may be disabled)"})
@@ -106,7 +106,7 @@ class DiagnosticsOpsHandler(BaseHandler):
 
             entries = []
             skipped_malformed = 0
-            with open(latest_log, "r") as f:
+            with open(latest_log) as f:
                 lines = f.readlines()
                 tail = lines[-count:] if count > 0 else []
                 for line in tail:
@@ -144,7 +144,7 @@ class DiagnosticsOpsHandler(BaseHandler):
         except Exception as e:
             return json.dumps({"error": f"Failed to retrieve debug logs: {e}"})
 
-    def restart_freecad(self, args: Dict[str, Any]) -> str:
+    def restart_freecad(self, args: dict[str, Any]) -> str:
         """Restart FreeCAD: save documents, spawn new instance, exit current.
 
         The response is sent BEFORE the restart happens, so the MCP bridge

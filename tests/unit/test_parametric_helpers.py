@@ -9,8 +9,8 @@ names (e.g. param "w" substituted inside identifier "width").
 
 import os
 import sys
-import pytest
 
+import pytest
 
 # Make sure the repo's `helpers/` package can be imported. tests/unit/conftest
 # already mocks FreeCAD before any import happens.

@@ -7,12 +7,13 @@
 # This handler can live standalone or be folded into measurement_ops later;
 # every method takes (self, args) and returns a string, same as all handlers.
 
-import json
 import math
 import re
+from typing import Any
+
 import FreeCAD
-from typing import Dict, Any, List, Tuple
-from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR, OCCT_CONFUSION_TOLERANCE_DEFAULT
+
+from .base import NO_ACTIVE_DOCUMENT_ERROR, OCCT_CONFUSION_TOLERANCE_DEFAULT, BaseHandler
 
 # OCCT Precision::Confusion() — the linear tolerance below which OCCT's boolean
 # operations consider two points identical.  Overlaps thinner than this in any
@@ -43,7 +44,7 @@ class SpatialOpsHandler(BaseHandler):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _get_two_shapes(self, args: Dict[str, Any]):
+    def _get_two_shapes(self, args: dict[str, Any]):
         """Extract and validate two shapes from args.
 
         Returns (shape1, shape2, name1, name2) or (None, None, None, error_string).
@@ -95,7 +96,7 @@ class SpatialOpsHandler(BaseHandler):
     # Operations
     # ------------------------------------------------------------------
 
-    def interference_check(self, args: Dict[str, Any]) -> str:
+    def interference_check(self, args: dict[str, Any]) -> str:
         """Check whether two objects intersect (collide).
 
         Returns intersection volume and bounding box of the intersection.
@@ -139,7 +140,7 @@ class SpatialOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error in interference_check: {e}"
 
-    def clearance(self, args: Dict[str, Any]) -> str:
+    def clearance(self, args: dict[str, Any]) -> str:
         """Measure minimum distance between two objects.
 
         Returns distance, closest point pairs, and gap direction.
@@ -160,7 +161,7 @@ class SpatialOpsHandler(BaseHandler):
             # tolerance, not _VOL_TOL (1e-9 mm³), which as a distance threshold is
             # far tighter than OCCT's own resolution and misreports contact as a gap.
             if min_dist < _OCCT_LIN_TOL:
-                lines.append(f"  Status: TOUCHING (zero clearance)")
+                lines.append("  Status: TOUCHING (zero clearance)")
             else:
                 lines.append(f"  Status: {min_dist:.4f} mm gap")
 
@@ -189,7 +190,7 @@ class SpatialOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error in clearance: {e}"
 
-    def containment(self, args: Dict[str, Any]) -> str:
+    def containment(self, args: dict[str, Any]) -> str:
         """Check if one object is fully contained within another.
 
         Tests both bounding-box containment and actual geometric containment.
@@ -232,12 +233,12 @@ class SpatialOpsHandler(BaseHandler):
             # clearance() (see the comment near _OCCT_LIN_TOL's first use).
             any_overhang = any(v > _OCCT_LIN_TOL for v in overhangs.values())
             if any_overhang:
-                lines.append(f"  Overhangs:")
+                lines.append("  Overhangs:")
                 for axis, val in overhangs.items():
                     if val > _OCCT_LIN_TOL:
                         lines.append(f"    {axis}: {val:.4f} mm")
             else:
-                lines.append(f"  No bounding-box overhang")
+                lines.append("  No bounding-box overhang")
 
             # Geometric containment: inner cut by outer should have same volume as inner
             if bb_contained:
@@ -258,7 +259,7 @@ class SpatialOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error in containment: {e}"
 
-    def contains_point(self, args: Dict[str, Any]) -> str:
+    def contains_point(self, args: dict[str, Any]) -> str:
         """Check whether a single 3D point lies inside an object's solid.
 
         Distinct from containment() above, which tests whether one whole
@@ -316,7 +317,7 @@ class SpatialOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error in contains_point: {e}"
 
-    def face_relationship(self, args: Dict[str, Any]) -> str:
+    def face_relationship(self, args: dict[str, Any]) -> str:
         """Analyze relationship between two specific faces on two objects.
 
         Checks if faces are coplanar, parallel, or at an angle.
@@ -401,16 +402,16 @@ class SpatialOpsHandler(BaseHandler):
                     except Exception:
                         lines.append(f"  Overlap: {len(section.Edges)} shared edges (area computation failed)")
                 else:
-                    lines.append(f"  Overlap: none (faces don't share area)")
+                    lines.append("  Overlap: none (faces don't share area)")
             except Exception:
-                lines.append(f"  Overlap: could not compute")
+                lines.append("  Overlap: could not compute")
 
             return "\n".join(lines)
 
         except Exception as e:
             return f"Error in face_relationship: {e}"
 
-    def batch_interference(self, args: Dict[str, Any]) -> str:
+    def batch_interference(self, args: dict[str, Any]) -> str:
         """Check all pairs from a list of objects for interference.
 
         Returns all colliding pairs with intersection volumes.
@@ -485,7 +486,7 @@ class SpatialOpsHandler(BaseHandler):
                     lines.append(f"    {n1} ↔ {n2}: interference check errored")
 
             if collisions:
-                lines.append(f"  Colliding pairs:")
+                lines.append("  Colliding pairs:")
                 for entry in collisions:
                     if len(entry) == 4 and entry[3] == "SUB-TOL":
                         n1, n2 = entry[0], entry[1]
@@ -495,14 +496,14 @@ class SpatialOpsHandler(BaseHandler):
                         n1, n2, vol = entry
                         lines.append(f"    {n1} ↔ {n2}: {vol:.4f} mm³")
             else:
-                lines.append(f"  No collisions detected")
+                lines.append("  No collisions detected")
 
             return "\n".join(lines)
 
         except Exception as e:
             return f"Error in batch_interference: {e}"
 
-    def alignment_check(self, args: Dict[str, Any]) -> str:
+    def alignment_check(self, args: dict[str, Any]) -> str:
         """Check how well two objects are aligned along a given axis.
 
         Reports center-of-mass offset and angular misalignment.
@@ -540,9 +541,9 @@ class SpatialOpsHandler(BaseHandler):
             lines.append(f"  Lateral offset ({perp_desc}): {lateral_offset:.4f} mm")
 
             if lateral_offset < 0.01:
-                lines.append(f"  Status: ALIGNED (< 0.01mm lateral offset)")
+                lines.append("  Status: ALIGNED (< 0.01mm lateral offset)")
             elif lateral_offset < 0.1:
-                lines.append(f"  Status: NEARLY ALIGNED (< 0.1mm)")
+                lines.append("  Status: NEARLY ALIGNED (< 0.1mm)")
             else:
                 lines.append(f"  Status: MISALIGNED by {lateral_offset:.4f} mm")
 

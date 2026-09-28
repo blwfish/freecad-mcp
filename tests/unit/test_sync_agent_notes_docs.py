@@ -9,7 +9,6 @@ than exercising the real repo files main() operates on.
 """
 
 import importlib.util
-import os
 import sys
 from datetime import date
 from pathlib import Path

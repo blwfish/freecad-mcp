@@ -6,11 +6,10 @@ Run with: python3 -m pytest tests/unit/test_spatial_ops.py -v
 
 import os
 import sys
-import math
-import types as py_types
 import unittest
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import Mock, MagicMock, patch
 
 # ---------------------------------------------------------------------------
 # FakeVector — needed because the handler does real math on Vector fields

@@ -10,7 +10,6 @@ called .multiply() with non-coincident axes; two production call sites
 call it, so a real bug here could have masked a real bug there.
 """
 
-import math
 import os
 import sys
 

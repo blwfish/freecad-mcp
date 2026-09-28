@@ -6,15 +6,16 @@ FreeCAD is mocked via conftest.py fixtures.
 
 import collections
 import json
+import os
 import queue
 import struct
 import sys
-import os
-import types
 import threading
 import time
+import types
+from unittest.mock import MagicMock, create_autospec, patch
+
 import pytest
-from unittest.mock import MagicMock, create_autospec, patch, PropertyMock
 
 # Add AICopilot to path for imports
 AICOPILOT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot")
@@ -24,12 +25,12 @@ sys.path.insert(0, AICOPILOT_DIR)
 # mock_handlers fixture below builds its stub module from this instead of
 # hand-typing its own copy of the class-name list, so a handler added to
 # the real registry can't silently go missing here.
-from handler_registry import _HANDLER_CLASS_NAMES
-
 # Grab the real module now, before the mock_handlers fixture (below) replaces
 # sys.modules["freecad_health"] with an import-blocking stub for the duration
 # of each test that uses it.
 import freecad_health
+from handler_registry import _HANDLER_CLASS_NAMES
+from handlers.partdesign_ops import PartDesignOpsHandler
 
 # Likewise grab the real PartDesignOpsHandler class now, before mock_handlers
 # replaces sys.modules["handlers"] with a plain (non-package) module of
@@ -37,8 +38,6 @@ import freecad_health
 # a resume-route method name really exists, not a MagicMock that
 # auto-vivifies any attribute you ask for.
 import tests.unit._freecad_mocks  # noqa: F401 — installs FreeCAD/Part/etc. mocks into sys.modules
-from handlers.partdesign_ops import PartDesignOpsHandler
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -129,7 +128,7 @@ class TestServerFraming:
     def test_receive_message(self, ss_module):
         client, peer = self._make_socketpair()
         try:
-            msg_bytes = "hello".encode("utf-8")
+            msg_bytes = b"hello"
             peer.sendall(struct.pack(">I", len(msg_bytes)) + msg_bytes)
             result = ss_module.receive_message(client, timeout=5.0)
             assert result == "hello"
@@ -184,7 +183,6 @@ class TestServerFraming:
         a synchronous sendall() before receive_message starts draining would
         deadlock — both sides must run concurrently.
         """
-        import threading
         client, peer = self._make_socketpair()
         try:
             msg = "x" * ss_module.MAX_MESSAGE_SIZE
@@ -341,7 +339,7 @@ class TestProcessGuiTasks:
             results.append(server._gui_response_queue.get_nowait())
         assert len(results) == 3
         # Each result should be a (req_id, result_dict) tuple
-        for req_id, result in results:
+        for _req_id, result in results:
             assert "success" in result
 
 
@@ -427,7 +425,7 @@ class TestExecuteTool:
     def test_direct_map_routing(self, server):
         """Tools in the direct_map should call the handler via _call_on_gui_thread_async."""
         server._call_on_gui_thread_async = MagicMock(return_value=json.dumps({"result": "box"}))
-        result = server._execute_tool("create_box", {"length": 10})
+        server._execute_tool("create_box", {"length": 10})
         server._call_on_gui_thread_async.assert_called_once()
         call_args = server._call_on_gui_thread_async.call_args
         assert call_args[0][1] == {"length": 10}  # args passed through
@@ -1069,8 +1067,9 @@ class TestCleanupStaleAsyncJobs:
         """age == TTL is NOT removed — the check is strict `>`. Pins which side
         of the boundary the `>`/`>=` choice falls on. Time is mocked so the
         boundary is deterministic (real time would drift age just past TTL)."""
-        import freecad_mcp_handler as ss_mod
         from unittest.mock import patch
+
+        import freecad_mcp_handler as ss_mod
         T = 1_000_000.0
         server._async_jobs["b"] = {"status": "done", "started": T - ss_mod.ASYNC_JOB_TTL}
         with patch.object(ss_mod.time, "time", return_value=T):
@@ -1078,8 +1077,9 @@ class TestCleanupStaleAsyncJobs:
         assert "b" in server._async_jobs
 
     def test_one_second_over_ttl_is_removed(self, server):
-        import freecad_mcp_handler as ss_mod
         from unittest.mock import patch
+
+        import freecad_mcp_handler as ss_mod
         T = 1_000_000.0
         server._async_jobs["b"] = {"status": "done", "started": T - ss_mod.ASYNC_JOB_TTL - 1}
         with patch.object(ss_mod.time, "time", return_value=T):

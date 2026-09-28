@@ -15,10 +15,9 @@ Usage:
   wdh.populate_holes("Imported master window", "WallEast", tolerance=0.3)
 """
 
+
 import FreeCAD as App
 from FreeCAD import Vector
-import Part
-import math
 
 
 class WindowDoorHelpers:
@@ -91,7 +90,7 @@ class WindowDoorHelpers:
                             print(f"Failed to fix {obj.Label}: {e}")
 
         # Report
-        print(f"\nLink Copy On Change Audit:")
+        print("\nLink Copy On Change Audit:")
         print(f"  Issues found: {len(issues)}")
         for issue in issues:
             status = "FIXED" if issue['label'] in fixed else "NEEDS FIX"
@@ -171,14 +170,11 @@ class WindowDoorHelpers:
         """
         try:
             master = self.get_object(master_obj) if isinstance(master_obj, str) else master_obj
-        except ValueError:
-            raise ValueError(f"Master '{master_obj}' not found")
+        except ValueError as e:
+            raise ValueError(f"Master '{master_obj}' not found") from e
 
         # If it's a Link, get the linked object
-        if master.TypeId == "App::Link":
-            target_doc = master.LinkedObject.Document
-        else:
-            target_doc = self.doc
+        target_doc = master.LinkedObject.Document if master.TypeId == "App::Link" else self.doc
 
         # Find the spreadsheet in the target document
         spreadsheet = None
@@ -278,13 +274,12 @@ class WindowDoorHelpers:
         """
         try:
             master = self.get_object(master_obj) if isinstance(master_obj, str) else master_obj
-        except ValueError:
-            raise ValueError(f"Master '{master_obj}' not found")
+        except ValueError as e:
+            raise ValueError(f"Master '{master_obj}' not found") from e
 
         # Get master dimensions for frame offset
         if dims is None:
             dims = self.get_master_dimensions(master)
-        casing_depth = dims.get('casingDepth', 0)
 
         # Hole position (center of hole)
         hole_pos = hole['position']
@@ -374,7 +369,7 @@ class WindowDoorHelpers:
             return {'matches': matches, 'created': []}
 
         if matches and auto_place:
-            for i, hole in enumerate(matches):
+            for _i, hole in enumerate(matches):
                 try:
                     clone = self.clone_and_position(master, hole, dims=master_dims)
                     if clone:

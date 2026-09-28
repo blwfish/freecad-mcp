@@ -1,14 +1,16 @@
 # Transform operation handlers for FreeCAD MCP
 
+from typing import Any
+
 import FreeCAD
-from typing import Dict, Any
+
 from .base import BaseHandler
 
 
 class TransformsHandler(BaseHandler):
     """Handler for transform operations (move, rotate, copy, array)."""
 
-    def move_object(self, args: Dict[str, Any]) -> str:
+    def move_object(self, args: dict[str, Any]) -> str:
         """Move an object.
 
         By default moves by a relative offset. Pass relative=False to set
@@ -47,7 +49,7 @@ class TransformsHandler(BaseHandler):
             duration = time.time() - start_time
             return self.log_and_return("move_object", args, error=e, duration=duration)
 
-    def rotate_object(self, args: Dict[str, Any]) -> str:
+    def rotate_object(self, args: dict[str, Any]) -> str:
         """Rotate an object around axis."""
         try:
             object_name = args.get('object_name', '')
@@ -82,7 +84,7 @@ class TransformsHandler(BaseHandler):
         except Exception as e:
             return f"Error rotating object: {e}"
 
-    def copy_object(self, args: Dict[str, Any]) -> str:
+    def copy_object(self, args: dict[str, Any]) -> str:
         """Create a copy of an object."""
         try:
             object_name = args.get('object_name', '')
@@ -112,7 +114,7 @@ class TransformsHandler(BaseHandler):
         except Exception as e:
             return f"Error copying object: {e}"
 
-    def array_object(self, args: Dict[str, Any]) -> str:
+    def array_object(self, args: dict[str, Any]) -> str:
         """Create linear array of object."""
         try:
             object_name = args.get('object_name', '')

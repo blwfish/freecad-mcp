@@ -22,11 +22,11 @@ import json
 import os
 import sys
 import xml.etree.ElementTree as ET
-from typing import Any, Dict
+from typing import Any
 
 import FreeCAD
 
-from .base import BaseHandler, AICOPILOT_PREF_PATH
+from .base import AICOPILOT_PREF_PATH, BaseHandler
 
 _FALLBACK_PATHS = [
     os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'FC-tools')),
@@ -100,13 +100,13 @@ def _resolve_by_name_or_label(doc, name: str):
     return results[0]
 
 
-def _read_spreadsheet_params(doc, spreadsheet_name: str) -> Dict[str, float]:
+def _read_spreadsheet_params(doc, spreadsheet_name: str) -> dict[str, float]:
     """Read all aliased cells from a spreadsheet, return {alias: float_value}."""
     ss = _resolve_by_name_or_label(doc, spreadsheet_name)
     if ss is None:
         raise ValueError(f"Spreadsheet '{spreadsheet_name}' not found in document")
 
-    params: Dict[str, float] = {}
+    params: dict[str, float] = {}
     try:
         tree = ET.fromstring(ss.Content)
     except ET.ParseError as e:
@@ -123,7 +123,7 @@ def _read_spreadsheet_params(doc, spreadsheet_name: str) -> Dict[str, float]:
     return params
 
 
-def _apply_layout(sb, layout: Dict[str, Any]) -> None:
+def _apply_layout(sb, layout: dict[str, Any]) -> None:
     """Walk layout['elements'] and call the corresponding sb.add_* methods."""
     for el in layout.get('elements', []):
         t = el.get('type')
@@ -184,7 +184,7 @@ class SketchBuilderOpsHandler(BaseHandler):
     so no override is needed here.
     """
 
-    def build_sketch(self, args: Dict[str, Any]) -> str:
+    def build_sketch(self, args: dict[str, Any]) -> str:
         """
         Validate and emit a parametric sketch from a JSON layout descriptor.
 

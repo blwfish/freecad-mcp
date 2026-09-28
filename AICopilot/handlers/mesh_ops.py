@@ -3,11 +3,13 @@
 # Provides mesh import/export, mesh-to-solid conversion, validation,
 # simplification, and generic CAD file I/O (STL, OBJ, STEP, IGES, BREP).
 
-import FreeCAD
 import os
 import time
-from typing import Dict, Any
-from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
+from typing import Any
+
+import FreeCAD
+
+from .base import NO_ACTIVE_DOCUMENT_ERROR, BaseHandler
 
 
 class MeshOpsHandler(BaseHandler):
@@ -30,7 +32,7 @@ class MeshOpsHandler(BaseHandler):
     MESH_FORMATS = {'.stl', '.obj', '.ply', '.off', '.amf', '.3mf'}
     CAD_FORMATS = {'.step', '.stp', '.iges', '.igs', '.brep', '.brp'}
 
-    def import_mesh(self, args: Dict[str, Any]) -> str:
+    def import_mesh(self, args: dict[str, Any]) -> str:
         """Import a mesh file (STL, OBJ, PLY, OFF, AMF, 3MF).
 
         Args:
@@ -97,7 +99,7 @@ class MeshOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("import_mesh", args, error=e, duration=time.time() - start_time)
 
-    def export_mesh(self, args: Dict[str, Any]) -> str:
+    def export_mesh(self, args: dict[str, Any]) -> str:
         """Export an object to mesh format (STL, OBJ, PLY, OFF, AMF, 3MF).
 
         Handles both Mesh::Feature and Part::Feature objects. Part objects
@@ -156,7 +158,7 @@ class MeshOpsHandler(BaseHandler):
                 # Part object — tessellate first
                 import MeshPart
                 linear = args.get('linear_deflection', 0.1)
-                angular = args.get('angular_deflection', None)
+                angular = args.get('angular_deflection')
 
                 mesh_params = {"Shape": obj.Shape, "LinearDeflection": linear}
                 if angular is not None:
@@ -190,7 +192,7 @@ class MeshOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("export_mesh", args, error=e, duration=time.time() - start_time)
 
-    def mesh_to_solid(self, args: Dict[str, Any]) -> str:
+    def mesh_to_solid(self, args: dict[str, Any]) -> str:
         """Convert a mesh object to a Part solid for CAM compatibility.
 
         This is the critical bridge between mesh-based workflows (terrain STL files,
@@ -276,7 +278,7 @@ class MeshOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("mesh_to_solid", args, error=e, duration=time.time() - start_time)
 
-    def get_mesh_info(self, args: Dict[str, Any]) -> str:
+    def get_mesh_info(self, args: dict[str, Any]) -> str:
         """Get detailed information about a mesh object.
 
         Args:
@@ -333,7 +335,7 @@ class MeshOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("get_mesh_info", args, error=e, duration=time.time() - start_time)
 
-    def import_file(self, args: Dict[str, Any]) -> str:
+    def import_file(self, args: dict[str, Any]) -> str:
         """Import a file with automatic format detection.
 
         Supports mesh formats (STL, OBJ, PLY, OFF, AMF, 3MF),
@@ -415,7 +417,7 @@ class MeshOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("import_file", args, error=e, duration=time.time() - start_time)
 
-    def export_file(self, args: Dict[str, Any]) -> str:
+    def export_file(self, args: dict[str, Any]) -> str:
         """Export an object with automatic format detection.
 
         Supports mesh formats (STL, OBJ, PLY, OFF, AMF, 3MF) and
@@ -490,7 +492,7 @@ class MeshOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("export_file", args, error=e, duration=time.time() - start_time)
 
-    def validate_mesh(self, args: Dict[str, Any]) -> str:
+    def validate_mesh(self, args: dict[str, Any]) -> str:
         """Validate mesh topology and optionally auto-repair issues.
 
         Checks for non-manifold edges, self-intersections, degenerate facets,
@@ -643,7 +645,7 @@ class MeshOpsHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("validate_mesh", args, error=e, duration=time.time() - start_time)
 
-    def simplify_mesh(self, args: Dict[str, Any]) -> str:
+    def simplify_mesh(self, args: dict[str, Any]) -> str:
         """Simplify a mesh by reducing face count (decimation).
 
         Useful for large terrain meshes that need to be converted to solids
@@ -679,8 +681,8 @@ class MeshOpsHandler(BaseHandler):
             mesh = obj.Mesh
             original_count = mesh.CountFacets
 
-            target_count = args.get('target_count', None)
-            reduction = args.get('reduction', None)
+            target_count = args.get('target_count')
+            reduction = args.get('reduction')
 
             if target_count is None and reduction is None:
                 return self.log_and_return("simplify_mesh", args,

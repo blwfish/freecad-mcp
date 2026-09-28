@@ -18,11 +18,11 @@
 import json
 import os
 import sys
+from typing import Any
+
 import FreeCAD
-from typing import Dict, Any, List, Optional
 
-from .base import BaseHandler, AICOPILOT_PREF_PATH, NO_ACTIVE_DOCUMENT_ERROR
-
+from .base import AICOPILOT_PREF_PATH, NO_ACTIVE_DOCUMENT_ERROR, BaseHandler
 
 _FALLBACK_PATHS = [
     os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'FC-tools')),
@@ -81,7 +81,7 @@ def _finding_to_dict(f) -> dict:
 class InspectorOpsHandler(BaseHandler):
     """Runs Inspector DRC checks against the active FreeCAD document."""
 
-    def run(self, args: Dict[str, Any]) -> str:
+    def run(self, args: dict[str, Any]) -> str:
         """Run Inspector DRC and return findings as JSON.
 
         Args (all optional):
@@ -110,7 +110,7 @@ class InspectorOpsHandler(BaseHandler):
 
         try:
             from inspector.findings import Profile
-            from inspector.runner import run_drc, _default_rules
+            from inspector.runner import _default_rules, run_drc
         except ImportError as e:
             return json.dumps({"error": f"Failed to import inspector: {e}"})
 

@@ -3,14 +3,12 @@ Tests for the _BridgeCtx instance manager and related helpers in freecad_mcp_ser
 """
 
 import os
-import sys
 import socket
-import subprocess
-import time
-import threading
+import sys
 import types as _types
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, call
 
 # ---------------------------------------------------------------------------
 # Inject freecad_mcp_server module without running asyncio.run(main())
@@ -57,13 +55,10 @@ class TestBridgeCtx:
 
     def test_default_socket_path_uses_env(self, monkeypatch):
         monkeypatch.setenv("FREECAD_MCP_SOCKET", "/tmp/test_mcp.sock")
-        from importlib.util import spec_from_file_location, module_from_spec
-        import types as _t
+        from importlib.util import module_from_spec, spec_from_file_location
         # Re-instantiate to pick up monkeypatched env
         spec = spec_from_file_location("wb2", BRIDGE_PATH)
         mod = module_from_spec(spec)
-        for k in list(sys.modules):
-            pass  # don't clobber existing stubs
         spec.loader.exec_module(mod)
         ctx = mod._BridgeCtx()
         assert ctx.socket_path == "/tmp/test_mcp.sock"
@@ -210,9 +205,9 @@ class TestTcpSocketAlive:
 
 class TestReadWindowsAuthToken:
     def test_path_matches_handler_side_convention(self, bridge):
-        assert bridge.WINDOWS_AUTH_TOKEN_PATH == os.path.expanduser(
+        assert os.path.expanduser(
             "~/.freecad-mcp/windows_auth_token"
-        )
+        ) == bridge.WINDOWS_AUTH_TOKEN_PATH
 
     def test_missing_file_returns_none(self, bridge, monkeypatch, tmp_path):
         monkeypatch.setattr(bridge, "WINDOWS_AUTH_TOKEN_PATH", str(tmp_path / "no-such-file"))
@@ -399,7 +394,8 @@ class TestRunOnGuiThreadHeadless:
         aicopilot_dir = os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot")
         sys.path.insert(0, aicopilot_dir)
 
-        import importlib.util, types as _t
+        import importlib.util
+        import types as _t
 
         # Build minimal FreeCAD mock
         fc = _t.ModuleType("FreeCAD")

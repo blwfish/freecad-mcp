@@ -11,9 +11,11 @@
 # measurement_operations.list_faces) — no GUI click-selection needed for
 # joints either, unlike fillet/chamfer.
 
+from typing import Any
+
 import FreeCAD
-from typing import Dict, Any, Optional
-from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
+
+from .base import NO_ACTIVE_DOCUMENT_ERROR, BaseHandler
 
 # Mirrors JointObject.JointTypes exactly (JointObject.py) -- index order is
 # load-bearing, since Joint(joint, type_index) takes a positional index, not
@@ -78,7 +80,7 @@ class AssemblyOpsHandler(BaseHandler):
         "get_part_status", "set_joint_offset", "set_joint_limits",
     })
 
-    def create_assembly(self, args: Dict[str, Any]) -> str:
+    def create_assembly(self, args: dict[str, Any]) -> str:
         """Create an Assembly::AssemblyObject container in the active document.
 
         Args:
@@ -106,7 +108,7 @@ class AssemblyOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating assembly: {e}"
 
-    def create_lcs(self, args: Dict[str, Any]) -> str:
+    def create_lcs(self, args: dict[str, Any]) -> str:
         """Create a Local Coordinate System (joint mating reference).
 
         Uses Part::LocalCoordinateSystem, not the bare App::LocalCoordinateSystem
@@ -207,7 +209,7 @@ class AssemblyOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating LCS: {e}"
 
-    def add_component(self, args: Dict[str, Any]) -> str:
+    def add_component(self, args: dict[str, Any]) -> str:
         """Add an object into an assembly as a lightweight link (not a copy).
 
         Mirrors FreeCAD's own Assembly_InsertLink command: a nested sub-assembly
@@ -313,7 +315,7 @@ class AssemblyOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error adding component: {e}"
 
-    def list_components(self, args: Dict[str, Any]) -> str:
+    def list_components(self, args: dict[str, Any]) -> str:
         """List the components (links) inside an assembly.
 
         Args:
@@ -428,7 +430,7 @@ class AssemblyOpsHandler(BaseHandler):
                            "Create one first with create_assembly.")
         return assembly, None
 
-    def _require_component(self, obj, assembly, exempt_types=()) -> "Optional[str]":
+    def _require_component(self, obj, assembly, exempt_types=()) -> "str | None":
         """Return an error string if obj is not a direct component of
         assembly (i.e. not in assembly.Group), else None.
 
@@ -473,7 +475,7 @@ class AssemblyOpsHandler(BaseHandler):
     # element type at all" questions read from this one dict.
     _ELEMENT_COLLECTIONS = {"Face": "Faces", "Edge": "Edges", "Vertex": "Vertexes"}
 
-    def _validate_element(self, obj, element_name: str) -> "Optional[str]":
+    def _validate_element(self, obj, element_name: str) -> "str | None":
         """Return an error string if element_name doesn't exist on obj.Shape.
 
         FreeCAD's own joint machinery does NOT validate this: a nonexistent
@@ -507,7 +509,7 @@ class AssemblyOpsHandler(BaseHandler):
             return None
         return None
 
-    def create_joint(self, args: Dict[str, Any]) -> str:
+    def create_joint(self, args: dict[str, Any]) -> str:
         """Create a joint between two objects' geometry.
 
         Reference tuples are addressed programmatically -- e.g. "Face3" from
@@ -560,9 +562,9 @@ class AssemblyOpsHandler(BaseHandler):
 
             name = args.get('name', '') or f"{joint_type}Joint"
             assembly_name = args.get('assembly_name', '')
-            distance = args.get('distance', None)
-            distance2 = args.get('distance2', None)
-            angle = args.get('angle', None)
+            distance = args.get('distance')
+            distance2 = args.get('distance2')
+            angle = args.get('angle')
 
             doc = self.get_document()
             if not doc:
@@ -600,8 +602,8 @@ class AssemblyOpsHandler(BaseHandler):
             if elem_err:
                 return elem_err
 
-            import UtilsAssembly
             import JointObject
+            import UtilsAssembly
 
             joint_group = UtilsAssembly.getJointGroup(assembly)
 
@@ -643,7 +645,7 @@ class AssemblyOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating joint: {e}"
 
-    def ground_part(self, args: Dict[str, Any]) -> str:
+    def ground_part(self, args: dict[str, Any]) -> str:
         """Fix a part in place ("ground" it) -- every assembly needs at least
         one grounded part before solve() can succeed (code -6 otherwise).
 
@@ -691,8 +693,8 @@ class AssemblyOpsHandler(BaseHandler):
             if comp_err:
                 return comp_err
 
-            import UtilsAssembly
             import JointObject
+            import UtilsAssembly
 
             joint_group = UtilsAssembly.getJointGroup(assembly)
             ground_name = name or f"{object_name}_Ground"
@@ -716,7 +718,7 @@ class AssemblyOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error grounding part: {e}"
 
-    def solve(self, args: Dict[str, Any]) -> str:
+    def solve(self, args: dict[str, Any]) -> str:
         """Solve the assembly, updating part placements from its joints.
 
         The return code is mapped to a named status rather than left as a
@@ -757,7 +759,7 @@ class AssemblyOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error solving assembly: {e}"
 
-    def list_joints(self, args: Dict[str, Any]) -> str:
+    def list_joints(self, args: dict[str, Any]) -> str:
         """List the joints (and grounded parts) inside an assembly.
 
         Args:
@@ -875,7 +877,7 @@ class AssemblyOpsHandler(BaseHandler):
         except Exception:
             return str(ref)
 
-    def get_part_status(self, args: Dict[str, Any]) -> str:
+    def get_part_status(self, args: dict[str, Any]) -> str:
         """Report whether a part is grounded and/or connected to ground through joints.
 
         "Grounded" (isPartGrounded) means the part has its own GroundedJoint.
@@ -973,7 +975,7 @@ class AssemblyOpsHandler(BaseHandler):
             return None, f"'{joint_name}' is not a joint (no JointType property)"
         return joint, None
 
-    def set_joint_offset(self, args: Dict[str, Any]) -> str:
+    def set_joint_offset(self, args: dict[str, Any]) -> str:
         """Set a joint connector's attachment offset (Offset1 or Offset2).
 
         Args:
@@ -993,7 +995,7 @@ class AssemblyOpsHandler(BaseHandler):
             x = args.get('x', 0)
             y = args.get('y', 0)
             z = args.get('z', 0)
-            detach = args.get('detach', None)
+            detach = args.get('detach')
 
             doc = self.get_document()
             if not doc:
@@ -1021,7 +1023,7 @@ class AssemblyOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error setting joint offset: {e}"
 
-    def set_joint_limits(self, args: Dict[str, Any]) -> str:
+    def set_joint_limits(self, args: dict[str, Any]) -> str:
         """Set a joint's motion limits (length and/or angle, min and/or max).
 
         Setting a limit value also enables it (EnableLengthMin/Max,
@@ -1041,10 +1043,10 @@ class AssemblyOpsHandler(BaseHandler):
         """
         try:
             joint_name = args.get('joint_name', '')
-            length_min = args.get('length_min', None)
-            length_max = args.get('length_max', None)
-            angle_min = args.get('angle_min', None)
-            angle_max = args.get('angle_max', None)
+            length_min = args.get('length_min')
+            length_max = args.get('length_max')
+            angle_min = args.get('angle_min')
+            angle_max = args.get('angle_max')
 
             doc = self.get_document()
             if not doc:

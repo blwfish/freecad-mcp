@@ -25,7 +25,6 @@ manually in sync.
 import socket
 import struct
 import sys
-from typing import Optional
 
 # Maximum message size for the length-prefixed protocol (single source of truth
 # on the bridge side). The handler (freecad_mcp_handler.py) embeds its own copy
@@ -82,7 +81,7 @@ def send_message(sock: socket.socket, message_str: str) -> bool:
         sock.sendall(length_prefix + message_bytes)
         return True
 
-    except (socket.error, BrokenPipeError, OSError) as e:
+    except (BrokenPipeError, OSError) as e:
         _log(f"⚠️  Socket send error: {e}")
         return False
     except Exception as e:
@@ -90,7 +89,7 @@ def send_message(sock: socket.socket, message_str: str) -> bool:
         return False
 
 
-def receive_message(sock: socket.socket, timeout: float = 30.0) -> Optional[str]:
+def receive_message(sock: socket.socket, timeout: float = 30.0) -> str | None:
     """Receive a length-prefixed message from socket (client-side).
     
     Must match the protocol used by freecad_mcp_handler (length-prefixed framing; see MAX_MESSAGE_SIZE parity test, not a version number).
@@ -140,7 +139,7 @@ def receive_message(sock: socket.socket, timeout: float = 30.0) -> Optional[str]
         # Decode and return
         return message_bytes.decode('utf-8')
 
-    except socket.timeout:
+    except TimeoutError:
         _log("⚠️  Socket receive timeout")
         return None
     except UnicodeDecodeError as e:
@@ -154,7 +153,7 @@ def receive_message(sock: socket.socket, timeout: float = 30.0) -> Optional[str]
         sock.settimeout(old_timeout)
 
 
-def _recv_exact(sock: socket.socket, num_bytes: int) -> Optional[bytes]:
+def _recv_exact(sock: socket.socket, num_bytes: int) -> bytes | None:
     """Receive exactly num_bytes from socket, handling partial reads.
     
     This is critical because recv() may return less than requested bytes,
@@ -168,7 +167,7 @@ def _recv_exact(sock: socket.socket, num_bytes: int) -> Optional[bytes]:
         Complete byte buffer of exactly num_bytes, or None if connection closed
     """
     buffer = bytearray()
-    
+
     while len(buffer) < num_bytes:
         remaining = num_bytes - len(buffer)
         chunk = sock.recv(min(remaining, 65536))  # Read in 64KB chunks max
@@ -176,6 +175,6 @@ def _recv_exact(sock: socket.socket, num_bytes: int) -> Optional[bytes]:
             # Connection closed before receiving all bytes
             return None
         buffer.extend(chunk)
-    
+
     return bytes(buffer)
 

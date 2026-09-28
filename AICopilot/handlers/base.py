@@ -1,9 +1,9 @@
 # Base handler class for FreeCAD MCP operations
 
 import os
+from collections.abc import Callable
+
 import FreeCAD
-import time
-from typing import Dict, Any, Optional, Callable
 
 # Conditional GUI import (not available in console mode)
 if FreeCAD.GuiUp:
@@ -151,7 +151,7 @@ def _autosave(doc, reason: str) -> str:
     try:
         enabled = FreeCAD.ParamGet(AICOPILOT_PREF_PATH).GetBool(AUTOSAVE_PREF_KEY, AUTOSAVE_DEFAULT)
     except Exception as e:
-        _report('PrintWarning', lambda: (
+        _report('PrintWarning', lambda e=e: (
             f"[MCP] autosave[{reason}]: preference {AUTOSAVE_PREF_KEY} unreadable ({e}); "
             f"NOT saving {path}\n"))
         return 'pref_unreadable'
@@ -161,7 +161,7 @@ def _autosave(doc, reason: str) -> str:
     try:
         doc.save()
     except Exception as e:
-        _report('PrintError', lambda: f"[MCP] autosave[{reason}]: save FAILED for {path}: {e}\n")
+        _report('PrintError', lambda e=e: f"[MCP] autosave[{reason}]: save FAILED for {path}: {e}\n")
         return 'failed'
     _report('PrintMessage', lambda: f"[MCP] autosave[{reason}]: saved {path}\n")
     return 'saved'
@@ -188,7 +188,7 @@ def autosave_before(doc, reason: str) -> str:
         # has its own boundary above), so nothing is known to have been
         # written: `failed` is the honest outcome and the cause is named —
         # by type first, so a cause whose __str__ raises still gets a name.
-        _report('PrintError', lambda: f"[MCP] autosave[{reason}]: aborted before saving — {type(e).__name__}: {e}\n")
+        _report('PrintError', lambda e=e: f"[MCP] autosave[{reason}]: aborted before saving — {type(e).__name__}: {e}\n")
         return 'failed'
 
 
@@ -198,7 +198,7 @@ class BaseHandler:
     Provides common utilities and document access patterns.
     """
 
-    def __init__(self, server=None, log_operation: Optional[Callable] = None, capture_state: Optional[Callable] = None):
+    def __init__(self, server=None, log_operation: Callable | None = None, capture_state: Callable | None = None):
         """Initialize handler with optional reference to server.
 
         Args:
@@ -241,7 +241,7 @@ class BaseHandler:
         except Exception as e:
             return f"Error: {e}"
 
-    def log_and_return(self, operation: str, parameters: Dict, result: str = None, error: Exception = None, duration: float = None):
+    def log_and_return(self, operation: str, parameters: dict, result: str = None, error: Exception = None, duration: float = None):
         """Helper to log operation and return result/error.
 
         Args:
@@ -901,7 +901,7 @@ class BaseHandler:
     # Allowlist approach: only home dir, /tmp, and platform-specific temp dirs
     # are permitted for file I/O operations.
     @staticmethod
-    def _validate_file_path(path: str) -> "Optional[str]":
+    def _validate_file_path(path: str) -> "str | None":
         """Return an error string if path is outside safe user-writable locations, else None.
 
         Safe locations: user home directory, /tmp/, /var/folders/ (macOS),
@@ -982,7 +982,7 @@ class BaseHandler:
         """
         return 'Invalid' in getattr(feature, 'State', [])
 
-    def _check_feature_state(self, feature, feature_label: str, sketch=None) -> Optional[str]:
+    def _check_feature_state(self, feature, feature_label: str, sketch=None) -> str | None:
         """Return a diagnostic error string if feature.State contains
         'Invalid' after recompute(), else None.
 

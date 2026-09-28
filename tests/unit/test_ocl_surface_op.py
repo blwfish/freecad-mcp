@@ -15,13 +15,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "AICopilo
 
 # Triggers sys.modules mocking for FreeCAD/Path/etc before ocl_surface_op's
 # module-level `import FreeCAD` / `import Path` resolve.
-from tests.unit._freecad_mocks import mock_FreeCAD, reset_mocks  # noqa: E402
-
-import pytest
 from unittest.mock import MagicMock
 
 import ocl_surface_op  # noqa: E402
+import pytest
 
+from tests.unit._freecad_mocks import reset_mocks  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Binary STL file builder

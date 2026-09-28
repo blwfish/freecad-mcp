@@ -1,9 +1,11 @@
 # Draft workbench operation handlers for FreeCAD MCP
 
 import os
+from typing import Any
+
 import FreeCAD
-from typing import Dict, Any
-from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
+
+from .base import NO_ACTIVE_DOCUMENT_ERROR, BaseHandler
 
 
 class DraftOpsHandler(BaseHandler):
@@ -13,7 +15,7 @@ class DraftOpsHandler(BaseHandler):
         "clone", "array", "polar_array", "path_array", "shape_string", "text", "point_array",
     })
 
-    def clone(self, args: Dict[str, Any]) -> str:
+    def clone(self, args: dict[str, Any]) -> str:
         """Create a Draft clone of an object (parametric copy that updates with original)."""
         try:
             object_name = args.get('object_name', '')
@@ -40,7 +42,7 @@ class DraftOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating clone: {e}"
 
-    def array(self, args: Dict[str, Any]) -> str:
+    def array(self, args: dict[str, Any]) -> str:
         """Create a Draft rectangular/ortho array."""
         try:
             object_name = args.get('object_name', '')
@@ -78,7 +80,7 @@ class DraftOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating array: {e}"
 
-    def polar_array(self, args: Dict[str, Any]) -> str:
+    def polar_array(self, args: dict[str, Any]) -> str:
         """Create a Draft polar (circular) array."""
         try:
             object_name = args.get('object_name', '')
@@ -104,6 +106,7 @@ class DraftOpsHandler(BaseHandler):
                 return f"Invalid axis '{axis}': must be 'x', 'y', or 'z'"
 
             import inspect
+
             import Draft
 
             center = FreeCAD.Vector(center_x, center_y, center_z)
@@ -143,7 +146,7 @@ class DraftOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating polar array: {e}"
 
-    def path_array(self, args: Dict[str, Any]) -> str:
+    def path_array(self, args: dict[str, Any]) -> str:
         """Create a Draft path array (objects distributed along a path)."""
         try:
             object_name = args.get('object_name', '')
@@ -178,7 +181,7 @@ class DraftOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating path array: {e}"
 
-    def shape_string(self, args: Dict[str, Any]) -> str:
+    def shape_string(self, args: dict[str, Any]) -> str:
         """Create a Draft ShapeString — text as extrudable wire profiles.
 
         The result is a compound of closed wires (one per character) that can be:
@@ -235,7 +238,7 @@ class DraftOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating ShapeString: {e}"
 
-    def text(self, args: Dict[str, Any]) -> str:
+    def text(self, args: dict[str, Any]) -> str:
         """Create a Draft Text annotation in the 3D view.
 
         Creates a non-extrudable text label. For extrudable 3D text use shape_string instead.
@@ -270,7 +273,7 @@ class DraftOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating Draft Text: {e}"
 
-    def point_array(self, args: Dict[str, Any]) -> str:
+    def point_array(self, args: dict[str, Any]) -> str:
         """Create a Draft point array (objects placed at point locations)."""
         try:
             object_name = args.get('object_name', '')

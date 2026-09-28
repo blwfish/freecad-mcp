@@ -14,28 +14,26 @@ without explicit edges/faces. Tests verify the handshake structure
 plus the non-selection auto/explicit-edges paths.
 """
 
-import json
 import unittest
 from unittest.mock import MagicMock
 
+from handlers.partdesign_ops import PartDesignOpsHandler
+
 from tests.unit._freecad_mocks import (
-    mock_FreeCAD,
-    mock_Part,
-    reset_mocks,
+    _Placement,
+    _Vec,
+    assert_awaiting_selection,
+    assert_error_contains,
+    assert_success_contains,
+    make_body,
+    make_box_object,
     make_handler,
     make_mock_doc,
     make_part_object,
-    make_box_object,
     make_sketch,
-    make_body,
-    assert_error_contains,
-    assert_success_contains,
-    assert_awaiting_selection,
-    _Vec,
-    _Placement,
+    mock_FreeCAD,
+    reset_mocks,
 )
-
-from handlers.partdesign_ops import PartDesignOpsHandler
 
 
 def _make_next_addobject_invalid(doc, type_id):
@@ -195,7 +193,7 @@ class TestPocket(unittest.TestCase):
         doc = make_mock_doc([body, sketch])
         mock_FreeCAD.ActiveDocument = doc
 
-        result = self.handler.pocket({'sketch_name': 'S', 'depth': 12})
+        self.handler.pocket({'sketch_name': 'S', 'depth': 12})
 
         pocket = body.newObject.return_value
         self.assertEqual(pocket.Length, 12)
@@ -339,7 +337,7 @@ class TestChamferEdges(unittest.TestCase):
         result = self.handler.chamfer_edges({
             'object_name': 'B', 'distance': 1.5,
         })
-        op_id = assert_awaiting_selection(self, result)
+        assert_awaiting_selection(self, result)
         kwargs = self.handler.selector.request_selection.call_args.kwargs
         self.assertEqual(kwargs.get("tool_name"), "chamfer_edges")
         self.assertEqual(kwargs.get("distance"), 1.5)

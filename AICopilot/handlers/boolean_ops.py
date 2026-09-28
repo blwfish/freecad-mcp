@@ -1,14 +1,16 @@
 # Boolean operation handlers for FreeCAD MCP
 
+from typing import Any
+
 import FreeCAD
-from typing import Dict, Any
-from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
+
+from .base import NO_ACTIVE_DOCUMENT_ERROR, BaseHandler
 
 
 class BooleanOpsHandler(BaseHandler):
     """Handler for boolean operations (fuse, cut, common)."""
 
-    def fuse_objects(self, args: Dict[str, Any]) -> str:
+    def fuse_objects(self, args: dict[str, Any]) -> str:
         """Fuse (union) multiple objects together."""
         try:
             objects = args.get('objects', [])
@@ -44,8 +46,8 @@ class BooleanOpsHandler(BaseHandler):
             # OCCT can yield a null shape (non-manifold/coincident geometry) without
             # raising, which would otherwise leave the user with a hidden, empty result.
             if not getattr(fusion, 'Shape', None) or fusion.Shape.isNull():
-                return (f"Fusion produced an empty/invalid shape — sources left visible "
-                        f"(check for non-manifold or coincident geometry)")
+                return ("Fusion produced an empty/invalid shape — sources left visible "
+                        "(check for non-manifold or coincident geometry)")
             for obj in objs:
                 obj.Visibility = False
 
@@ -54,7 +56,7 @@ class BooleanOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error fusing objects: {e}"
 
-    def cut_objects(self, args: Dict[str, Any]) -> str:
+    def cut_objects(self, args: dict[str, Any]) -> str:
         """Cut (subtract) tools from base object."""
         try:
             base = args.get('base', '')
@@ -103,8 +105,8 @@ class BooleanOpsHandler(BaseHandler):
                 cut.Tool = fusion
             self.recompute(doc)
             if not getattr(cut, 'Shape', None) or cut.Shape.isNull():
-                return (f"Cut produced an empty/invalid shape — sources left visible "
-                        f"(the tools may fully consume the base, or geometry is degenerate)")
+                return ("Cut produced an empty/invalid shape — sources left visible "
+                        "(the tools may fully consume the base, or geometry is degenerate)")
             base_obj.Visibility = False
             for obj in tool_objs:
                 obj.Visibility = False
@@ -114,7 +116,7 @@ class BooleanOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error cutting objects: {e}"
 
-    def common_objects(self, args: Dict[str, Any]) -> str:
+    def common_objects(self, args: dict[str, Any]) -> str:
         """Find intersection of multiple objects."""
         try:
             objects = args.get('objects', [])
@@ -149,8 +151,8 @@ class BooleanOpsHandler(BaseHandler):
             # An empty intersection is a legitimate geometric answer (no overlap),
             # but hiding the sources and reporting success would hide that fact.
             if not getattr(common, 'Shape', None) or common.Shape.isNull():
-                return (f"Intersection is empty — the objects do not overlap; "
-                        f"sources left visible")
+                return ("Intersection is empty — the objects do not overlap; "
+                        "sources left visible")
             for obj in objs:
                 obj.Visibility = False
 

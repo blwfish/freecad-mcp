@@ -22,17 +22,18 @@ import socket
 import subprocess
 import sys
 import uuid
+
 import pytest
 
 AICOPILOT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot")
 sys.path.insert(0, AICOPILOT_DIR)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-import instance_registry  # noqa: E402
-import freecad_mcp_server  # noqa: E402
-
-import tests.unit._freecad_mocks  # noqa: E402,F401 -- installs FreeCAD/Part/etc. mocks into sys.modules, required before importing freecad_mcp_handler below
 import freecad_mcp_handler  # noqa: E402
+import instance_registry  # noqa: E402
+
+import freecad_mcp_server  # noqa: E402
+import tests.unit._freecad_mocks  # noqa: E402,F401 -- installs FreeCAD/Part/etc. mocks into sys.modules, required before importing freecad_mcp_handler below
 
 
 @pytest.fixture
@@ -143,8 +144,8 @@ class TestWindowsAuthTokenPathParity:
 
     def test_both_sides_agree_with_the_documented_literal(self):
         expected = os.path.expanduser("~/.freecad-mcp/windows_auth_token")
-        assert freecad_mcp_handler.WINDOWS_AUTH_TOKEN_PATH == expected
-        assert freecad_mcp_server.WINDOWS_AUTH_TOKEN_PATH == expected
+        assert expected == freecad_mcp_handler.WINDOWS_AUTH_TOKEN_PATH
+        assert expected == freecad_mcp_server.WINDOWS_AUTH_TOKEN_PATH
 
 
 class TestScanDiscoveryParity:

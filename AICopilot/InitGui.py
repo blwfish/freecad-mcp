@@ -5,16 +5,16 @@
 # Starts the MCP socket server automatically when FreeCAD GUI loads.
 # The service runs globally across all workbenches.
 
-import FreeCAD
 import os
 import sys
+
+import FreeCAD
 
 # Only load if GUI is available (skip in freecadcmd/console mode)
 if not FreeCAD.GuiUp:
     FreeCAD.Console.PrintMessage("AICopilot: GUI not available, skipping initialization\n")
     __all__ = []
 else:
-    import FreeCADGui
     import inspect
 
     # Add our directory to Python path
@@ -98,7 +98,8 @@ else:
             # once for __version__ with an ImportError fallback, once more
             # unconditionally for FreeCADSocketServer itself).
             try:
-                from freecad_mcp_handler import FreeCADSocketServer, __version__ as _handler_version
+                from freecad_mcp_handler import FreeCADSocketServer
+                from freecad_mcp_handler import __version__ as _handler_version
             except ImportError as e:
                 FreeCAD.Console.PrintError(f"Could not import freecad_mcp_handler: {e}\n")
                 return False

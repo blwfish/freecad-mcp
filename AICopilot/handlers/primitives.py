@@ -16,22 +16,23 @@
 #     returns an explicit error naming the offending keys.
 # ───────────────────────────────────────────────────────────────────────────
 
-import FreeCAD
-from typing import Dict, Any, Optional
-from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
+from typing import Any
 
+import FreeCAD
+
+from .base import NO_ACTIVE_DOCUMENT_ERROR, BaseHandler
 
 _INJECTED_KEYS = frozenset({"operation", "_continue_selection", "_operation_id"})
 
 
-def _check_unknown_keys(primitive: str, args: dict, allowed: frozenset) -> Optional[str]:
+def _check_unknown_keys(primitive: str, args: dict, allowed: frozenset) -> str | None:
     unknown = set(args) - allowed - _INJECTED_KEYS
     if unknown:
         return f"Error creating {primitive}: unknown argument(s) {sorted(unknown)} — check for typos"
     return None
 
 
-def _validate_positive(prim: str, **dims) -> Optional[str]:
+def _validate_positive(prim: str, **dims) -> str | None:
     """Return an 'Error creating <prim>: ...' string if any named dimension is
     not a number > 0; otherwise None. Names the offending parameter so the MCP
     caller (often an LLM) can correct it."""
@@ -44,7 +45,7 @@ def _validate_positive(prim: str, **dims) -> Optional[str]:
     return None
 
 
-def _validate_wedge_bounds(xmin, xmax, ymin, ymax, zmin, zmax, x2min, x2max) -> Optional[str]:
+def _validate_wedge_bounds(xmin, xmax, ymin, ymax, zmin, zmax, x2min, x2max) -> str | None:
     """Return an 'Error creating wedge: ...' string if any min/max pair is
     inverted or degenerate; otherwise None.
 
@@ -73,7 +74,7 @@ def _validate_wedge_bounds(xmin, xmax, ymin, ymax, zmin, zmax, x2min, x2max) -> 
 class PrimitivesHandler(BaseHandler):
     """Handler for creating primitive shapes (Part workbench)."""
 
-    def create_box(self, args: Dict[str, Any]) -> str:
+    def create_box(self, args: dict[str, Any]) -> str:
         """Create a box with specified dimensions."""
         try:
             err = _check_unknown_keys('box', args, frozenset({'length', 'width', 'height', 'x', 'y', 'z', 'name'}))
@@ -109,7 +110,7 @@ class PrimitivesHandler(BaseHandler):
         except Exception as e:
             return f"Error creating box: {e}"
 
-    def create_cylinder(self, args: Dict[str, Any]) -> str:
+    def create_cylinder(self, args: dict[str, Any]) -> str:
         """Create a cylinder with specified dimensions."""
         try:
             err = _check_unknown_keys('cylinder', args, frozenset({'radius', 'height', 'x', 'y', 'z', 'name'}))
@@ -143,7 +144,7 @@ class PrimitivesHandler(BaseHandler):
         except Exception as e:
             return f"Error creating cylinder: {e}"
 
-    def create_sphere(self, args: Dict[str, Any]) -> str:
+    def create_sphere(self, args: dict[str, Any]) -> str:
         """Create a sphere with specified radius."""
         try:
             err = _check_unknown_keys('sphere', args, frozenset({'radius', 'x', 'y', 'z', 'name'}))
@@ -175,7 +176,7 @@ class PrimitivesHandler(BaseHandler):
         except Exception as e:
             return f"Error creating sphere: {e}"
 
-    def create_cone(self, args: Dict[str, Any]) -> str:
+    def create_cone(self, args: dict[str, Any]) -> str:
         """Create a cone with specified radii and height."""
         try:
             err = _check_unknown_keys('cone', args, frozenset({'radius1', 'radius2', 'height', 'x', 'y', 'z', 'name'}))
@@ -220,7 +221,7 @@ class PrimitivesHandler(BaseHandler):
         except Exception as e:
             return f"Error creating cone: {e}"
 
-    def create_torus(self, args: Dict[str, Any]) -> str:
+    def create_torus(self, args: dict[str, Any]) -> str:
         """Create a torus (donut shape) with specified radii."""
         try:
             err = _check_unknown_keys('torus', args, frozenset({'radius1', 'radius2', 'x', 'y', 'z', 'name'}))
@@ -260,7 +261,7 @@ class PrimitivesHandler(BaseHandler):
         except Exception as e:
             return f"Error creating torus: {e}"
 
-    def create_wedge(self, args: Dict[str, Any]) -> str:
+    def create_wedge(self, args: dict[str, Any]) -> str:
         """Create a wedge (triangular prism) with specified dimensions."""
         try:
             err = _check_unknown_keys('wedge', args, frozenset({'xmin', 'ymin', 'zmin', 'x2min', 'x2max', 'xmax', 'ymax', 'zmax', 'name'}))

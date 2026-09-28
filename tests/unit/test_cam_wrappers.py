@@ -20,28 +20,27 @@ Coverage:
 """
 
 import unittest
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, mock_open, patch
+
+from handlers.cam_ops import CAMOpsHandler
+from handlers.cam_tool_controllers import CAMToolControllersHandler
+from handlers.cam_tools import CAMToolsHandler
 
 from tests.unit._freecad_mocks import (
-    mock_FreeCAD,
-    mock_Path_Tool_Bit,
-    mock_Path_Tool_Controller,
-    mock_Path_Main_Job,
-    mock_Path_Main_Stock,
-    mock_Path_Post_Processor,
-    reset_mocks,
+    assert_error_contains,
+    assert_success_contains,
+    make_box_object,
     make_handler,
     make_mock_doc,
     make_part_object,
-    make_box_object,
-    assert_error_contains,
-    assert_success_contains,
+    mock_FreeCAD,
+    mock_Path_Main_Job,
+    mock_Path_Main_Stock,
+    mock_Path_Post_Processor,
+    mock_Path_Tool_Bit,
+    mock_Path_Tool_Controller,
+    reset_mocks,
 )
-
-from handlers.cam_tools import CAMToolsHandler
-from handlers.cam_tool_controllers import CAMToolControllersHandler
-from handlers.cam_ops import CAMOpsHandler
-
 
 # ---------------------------------------------------------------------------
 # Helpers

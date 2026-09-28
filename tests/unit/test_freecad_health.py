@@ -12,7 +12,7 @@ import os
 import struct
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -20,7 +20,6 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot"))
 
 import freecad_health
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -159,8 +158,7 @@ class TestCheckSocketResponsive:
 
         mock_sock = MagicMock()
         mock_socket_cls.return_value = mock_sock
-        import socket as real_socket
-        mock_sock.connect.side_effect = real_socket.timeout("timed out")
+        mock_sock.connect.side_effect = TimeoutError("timed out")
 
         responsive, error = m.check_socket_responsive()
         assert responsive is False

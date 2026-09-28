@@ -2,16 +2,18 @@
 
 import json
 import math
+from typing import Any
+
 import FreeCAD
 import Part
-from typing import Dict, Any
-from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR, axis_vector_or_none
+
+from .base import NO_ACTIVE_DOCUMENT_ERROR, BaseHandler, axis_vector_or_none
 
 
 class PartDesignOpsHandler(BaseHandler):
     """Handler for PartDesign workbench operations."""
 
-    def pad_sketch(self, args: Dict[str, Any]) -> str:
+    def pad_sketch(self, args: dict[str, Any]) -> str:
         """Extrude a sketch to create solid (pad) - requires PartDesign Body."""
         try:
             sketch_name = args.get('sketch_name', '')
@@ -63,7 +65,7 @@ class PartDesignOpsHandler(BaseHandler):
             # which endpoints are disconnected and what constraints to add.
             return self._error_with_sketch_diagnosis(f"Error creating pad: {e}", sketch_name)
 
-    def pocket(self, args: Dict[str, Any]) -> str:
+    def pocket(self, args: dict[str, Any]) -> str:
         """Create a pocket (subtractive extrusion) from a sketch."""
         try:
             sketch_name = args.get('sketch_name', '')
@@ -106,7 +108,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return self._error_with_sketch_diagnosis(f"Error creating pocket: {e}", sketch_name)
 
-    def fillet_edges(self, args: Dict[str, Any]) -> str:
+    def fillet_edges(self, args: dict[str, Any]) -> str:
         """Add fillets to object edges (Interactive selection workflow)."""
         try:
             object_name = args.get('object_name', '')
@@ -163,7 +165,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error in fillet operation: {e}"
 
-    def _create_fillet_with_selection(self, args: Dict[str, Any], selection_result: Dict[str, Any]) -> str:
+    def _create_fillet_with_selection(self, args: dict[str, Any], selection_result: dict[str, Any]) -> str:
         """Create fillet using selected edges."""
         try:
             object_name = args.get('object_name', '')
@@ -269,7 +271,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating fillet with edges: {e}"
 
-    def _create_fillet_auto(self, args: Dict[str, Any]) -> str:
+    def _create_fillet_auto(self, args: dict[str, Any]) -> str:
         """Create fillet on all edges."""
         try:
             object_name = args.get('object_name', '')
@@ -305,7 +307,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating auto fillet: {e}"
 
-    def chamfer_edges(self, args: Dict[str, Any]) -> str:
+    def chamfer_edges(self, args: dict[str, Any]) -> str:
         """Add chamfers (angled cuts) to object edges (with interactive selection)."""
         try:
             object_name = args.get('object_name', '')
@@ -344,7 +346,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error in chamfer operation: {e}"
 
-    def _create_chamfer_with_selection(self, args: Dict[str, Any], selection_result: Dict[str, Any]) -> str:
+    def _create_chamfer_with_selection(self, args: dict[str, Any], selection_result: dict[str, Any]) -> str:
         """Create chamfer using selected edges."""
         try:
             object_name = args.get('object_name', '')
@@ -397,7 +399,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating chamfer with selection: {e}"
 
-    def _create_chamfer_auto(self, args: Dict[str, Any]) -> str:
+    def _create_chamfer_auto(self, args: dict[str, Any]) -> str:
         """Create chamfer on all edges."""
         try:
             object_name = args.get('object_name', '')
@@ -435,7 +437,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating auto chamfer: {e}"
 
-    def hole_wizard(self, args: Dict[str, Any]) -> str:
+    def hole_wizard(self, args: dict[str, Any]) -> str:
         """Create standard holes (simple, counterbore, countersink).
 
         Body-aware like mirror_feature/linear_pattern/polar_pattern/
@@ -621,7 +623,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating hole: {e}"
 
-    def linear_pattern(self, args: Dict[str, Any]) -> str:
+    def linear_pattern(self, args: dict[str, Any]) -> str:
         """Create linear pattern of features.
 
         Body-aware like mirror_feature/create_helix: creates a genuine
@@ -734,7 +736,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating linear pattern: {e}"
 
-    def polar_pattern(self, args: Dict[str, Any]) -> str:
+    def polar_pattern(self, args: dict[str, Any]) -> str:
         """Create circular/polar pattern of features.
 
         Body-aware like linear_pattern/mirror_feature/create_helix:
@@ -836,7 +838,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating polar pattern: {e}"
 
-    def mirror_feature(self, args: Dict[str, Any]) -> str:
+    def mirror_feature(self, args: dict[str, Any]) -> str:
         """Mirror features across a plane.
 
         Body-aware like create_helix/revolution/groove: creates a genuine
@@ -950,7 +952,7 @@ class PartDesignOpsHandler(BaseHandler):
         axis_v = FreeCAD.Vector(*axis_vector)
         return abs(normal.dot(axis_v)) > 1 - 1e-6
 
-    def revolution(self, args: Dict[str, Any]) -> str:
+    def revolution(self, args: dict[str, Any]) -> str:
         """Revolve a sketch around an axis to create solid of revolution.
 
         Body-aware like fillet/chamfer/thickness elsewhere in this file:
@@ -1053,7 +1055,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating revolution: {e}"
 
-    def groove(self, args: Dict[str, Any]) -> str:
+    def groove(self, args: dict[str, Any]) -> str:
         """Create a groove (subtractive revolution) from a sketch."""
         try:
             sketch_name = args.get('sketch_name', '')
@@ -1111,7 +1113,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating groove: {e}"
 
-    def loft_profiles(self, args: Dict[str, Any]) -> str:
+    def loft_profiles(self, args: dict[str, Any]) -> str:
         """Loft between multiple sketches to create complex shapes."""
         try:
             sketches = args.get('sketches', [])
@@ -1150,7 +1152,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating loft: {e}"
 
-    def sweep_path(self, args: Dict[str, Any]) -> str:
+    def sweep_path(self, args: dict[str, Any]) -> str:
         """Sweep a profile sketch along a path sketch."""
         try:
             profile_sketch = args.get('profile_sketch', '')
@@ -1186,7 +1188,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating sweep: {e}"
 
-    def additive_pipe(self, args: Dict[str, Any]) -> str:
+    def additive_pipe(self, args: dict[str, Any]) -> str:
         """Create additive pipe (sweep along path within PartDesign Body)."""
         try:
             profile_sketch = args.get('profile_sketch', '')
@@ -1226,7 +1228,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating additive pipe: {e}"
 
-    def subtractive_loft(self, args: Dict[str, Any]) -> str:
+    def subtractive_loft(self, args: dict[str, Any]) -> str:
         """Create subtractive loft through multiple profiles."""
         try:
             sketches = args.get('sketches', [])
@@ -1280,7 +1282,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating subtractive loft: {e}"
 
-    def subtractive_sweep(self, args: Dict[str, Any]) -> str:
+    def subtractive_sweep(self, args: dict[str, Any]) -> str:
         """Create subtractive pipe/sweep."""
         try:
             profile_sketch = args.get('profile_sketch', '')
@@ -1320,7 +1322,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating subtractive pipe: {e}"
 
-    def draft_faces(self, args: Dict[str, Any]) -> str:
+    def draft_faces(self, args: dict[str, Any]) -> str:
         """Add draft angles to faces for manufacturing (Interactive selection workflow)."""
         try:
             object_name = args.get('object_name', '')
@@ -1367,7 +1369,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error in draft operation: {e}"
 
-    def _create_draft_with_selection(self, args: Dict[str, Any], selection_result: Dict[str, Any]) -> str:
+    def _create_draft_with_selection(self, args: dict[str, Any], selection_result: dict[str, Any]) -> str:
         """Create draft using selected faces."""
         try:
             object_name = args.get('object_name', '')
@@ -1408,7 +1410,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating draft with selection: {e}"
 
-    def shell_solid(self, args: Dict[str, Any]) -> str:
+    def shell_solid(self, args: dict[str, Any]) -> str:
         """Hollow out a solid by removing material."""
         try:
             object_name = args.get('object_name', '')
@@ -1446,7 +1448,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error in shell operation: {e}"
 
-    def _create_shell_with_selection(self, args: Dict[str, Any], selection_result: Dict[str, Any]) -> str:
+    def _create_shell_with_selection(self, args: dict[str, Any], selection_result: dict[str, Any]) -> str:
         """Create shell using selected faces for opening."""
         try:
             object_name = args.get('object_name', '')
@@ -1507,7 +1509,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating shell with selection: {e}"
 
-    def _create_shell_closed(self, args: Dict[str, Any]) -> str:
+    def _create_shell_closed(self, args: dict[str, Any]) -> str:
         """Create closed shell (no opening)."""
         try:
             object_name = args.get('object_name', '')
@@ -1551,7 +1553,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating closed shell: {e}"
 
-    def add_thickness(self, args: Dict[str, Any]) -> str:
+    def add_thickness(self, args: dict[str, Any]) -> str:
         """Add PartDesign thickness with face selection."""
         try:
             object_name = args.get('object_name', '')
@@ -1596,7 +1598,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error in thickness operation: {e}"
 
-    def _create_thickness_with_selection(self, args: Dict[str, Any], selection_result: Dict[str, Any]) -> str:
+    def _create_thickness_with_selection(self, args: dict[str, Any], selection_result: dict[str, Any]) -> str:
         """Create PartDesign thickness using selected faces."""
         try:
             object_name = args.get('object_name', '')
@@ -1634,7 +1636,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating thickness with selection: {e}"
 
-    def create_helix(self, args: Dict[str, Any]) -> str:
+    def create_helix(self, args: dict[str, Any]) -> str:
         """Create helical features (threads, springs).
 
         Body-aware like revolution()/groove(): creates a genuine
@@ -1773,7 +1775,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating helix: {e}"
 
-    def create_rib(self, args: Dict[str, Any]) -> str:
+    def create_rib(self, args: dict[str, Any]) -> str:
         """Create structural ribs from sketch."""
         try:
             sketch_name = args.get('sketch_name', '')
@@ -1829,7 +1831,7 @@ class PartDesignOpsHandler(BaseHandler):
     # Datum features
     # -----------------------------------------------------------------
 
-    def create_datum_plane(self, args: Dict[str, Any]) -> str:
+    def create_datum_plane(self, args: dict[str, Any]) -> str:
         """Create a datum plane in the active PartDesign Body.
 
         A datum plane provides a reference surface for sketching at
@@ -1899,7 +1901,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating datum plane: {e}"
 
-    def create_datum_line(self, args: Dict[str, Any]) -> str:
+    def create_datum_line(self, args: dict[str, Any]) -> str:
         """Create a datum line (axis) in the active PartDesign Body.
 
         A datum line provides a reference axis for patterns, revolutions, etc.
@@ -1946,7 +1948,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating datum line: {e}"
 
-    def create_datum_point(self, args: Dict[str, Any]) -> str:
+    def create_datum_point(self, args: dict[str, Any]) -> str:
         """Create a datum point in the active PartDesign Body.
 
         A datum point provides a reference location for constraints,
@@ -2006,7 +2008,7 @@ class PartDesignOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating datum point: {e}"
 
-    def datum_from_face(self, args: Dict[str, Any]) -> str:
+    def datum_from_face(self, args: dict[str, Any]) -> str:
         """Create a datum plane aligned to a specific face of an object.
 
         Shortcut that combines list_faces + create_datum_plane: given an object

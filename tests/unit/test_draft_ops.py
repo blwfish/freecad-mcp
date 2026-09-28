@@ -18,20 +18,19 @@ Not covered here:
 import unittest
 from unittest.mock import MagicMock, patch
 
+from handlers.draft_ops import DraftOpsHandler
+
 from tests.unit._freecad_mocks import (
-    mock_FreeCAD,
-    mock_Draft,
-    reset_mocks,
+    assert_error_contains,
+    assert_success_contains,
+    make_box_object,
     make_handler,
     make_mock_doc,
     make_part_object,
-    make_box_object,
-    assert_error_contains,
-    assert_success_contains,
+    mock_Draft,
+    mock_FreeCAD,
+    reset_mocks,
 )
-
-from handlers.draft_ops import DraftOpsHandler
-
 
 # ---------------------------------------------------------------------------
 # Clone

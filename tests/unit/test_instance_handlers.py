@@ -18,8 +18,9 @@ import json
 import os
 import sys
 import types as _types
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
 
 # ---------------------------------------------------------------------------
 # Load the bridge module without executing __main__
@@ -196,7 +197,6 @@ class TestSpawnInstance:
         popen_proc.poll.return_value = exit_code
 
         async def _inner():
-            import socket as _socket
             import uuid as _uuid
 
             freecadcmd_val = freecadcmd
@@ -386,7 +386,7 @@ class TestSpawnLaunchCmdConstruction:
     """
 
     def _server_source(self):
-        with open(BRIDGE_PATH, "r", encoding="utf-8") as f:
+        with open(BRIDGE_PATH, encoding="utf-8") as f:
             return f.read()
 
     def test_headless_launch_cmd_does_not_pass_socket_path_flag(self):
@@ -415,7 +415,7 @@ class TestSpawnLaunchCmdConstruction:
         headless_path = os.path.join(
             os.path.dirname(BRIDGE_PATH), "AICopilot", "headless_server.py"
         )
-        with open(headless_path, "r", encoding="utf-8") as f:
+        with open(headless_path, encoding="utf-8") as f:
             headless_src = f.read()
         assert 'os.environ.get("FREECAD_MCP_SOCKET")' in headless_src
 

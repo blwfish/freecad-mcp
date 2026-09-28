@@ -16,14 +16,14 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
+from handlers.diagnostics_ops import DiagnosticsOpsHandler
+
 from tests.unit._freecad_mocks import (
+    assert_error_contains,
+    make_handler,
     mock_FreeCAD,
     reset_mocks,
-    make_handler,
-    assert_error_contains,
 )
-
-from handlers.diagnostics_ops import DiagnosticsOpsHandler
 
 
 class TestGetDebugLogs(unittest.TestCase):
@@ -44,7 +44,8 @@ class TestGetDebugLogs(unittest.TestCase):
         return log_file
 
     def test_count_zero_returns_no_entries(self):
-        import tempfile, pathlib
+        import pathlib
+        import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             log_file = self._write_log(pathlib.Path(tmp))
             with patch("os.path.exists", return_value=True), \
@@ -53,7 +54,8 @@ class TestGetDebugLogs(unittest.TestCase):
             self.assertEqual(out["entries"], [])
 
     def test_negative_count_returns_no_entries_not_reversed(self):
-        import tempfile, pathlib
+        import pathlib
+        import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             log_file = self._write_log(pathlib.Path(tmp))
             with patch("os.path.exists", return_value=True), \
@@ -62,7 +64,8 @@ class TestGetDebugLogs(unittest.TestCase):
             self.assertEqual(out["entries"], [])
 
     def test_positive_count_returns_tail_entries(self):
-        import tempfile, pathlib
+        import pathlib
+        import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             log_file = self._write_log(pathlib.Path(tmp))
             with patch("os.path.exists", return_value=True), \
@@ -71,7 +74,8 @@ class TestGetDebugLogs(unittest.TestCase):
             self.assertEqual([e["operation"] for e in out["entries"]], ["b", "c"])
 
     def test_non_numeric_count_falls_back_to_default(self):
-        import tempfile, pathlib
+        import pathlib
+        import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             log_file = self._write_log(pathlib.Path(tmp))
             with patch("os.path.exists", return_value=True), \
@@ -179,7 +183,8 @@ class TestRestartFreecad(unittest.TestCase):
     def _gui(self, tmp):
         """A GUI-mode FreeCAD whose home has a real bin/FreeCAD(.exe) and one
         file-backed document."""
-        import os, pathlib
+        import os
+        import pathlib
         bin_dir = pathlib.Path(tmp) / "bin"
         bin_dir.mkdir()
         exe = bin_dir / ("FreeCAD.exe" if os.name == "nt" else "FreeCAD")
@@ -309,7 +314,8 @@ class TestRestartFreecadUnresponsiveGuiFallback(unittest.TestCase):
         self.func_globals = self.handler.restart_freecad.__func__.__globals__
 
     def _gui(self, tmp):
-        import os, pathlib
+        import os
+        import pathlib
         bin_dir = pathlib.Path(tmp) / "bin"
         bin_dir.mkdir()
         exe = bin_dir / ("FreeCAD.exe" if os.name == "nt" else "FreeCAD")

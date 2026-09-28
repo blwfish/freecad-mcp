@@ -16,9 +16,7 @@ Usage:
 """
 
 import FreeCAD as App
-import FreeCADGui as Gui
 from FreeCAD import Vector
-import Part
 
 
 def _num_to_col(num):
@@ -139,7 +137,7 @@ class ParametricHelpers:
         try:
             return eval(result_expr, {"__builtins__": {}}, {})
         except Exception as e:
-            raise ValueError(f"Failed to evaluate expression '{expr}': {e}")
+            raise ValueError(f"Failed to evaluate expression '{expr}': {e}") from e
 
     def get_object(self, name):
         """Get object by internal Name or Label.
