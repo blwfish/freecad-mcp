@@ -1,9 +1,9 @@
 # CAM Tool Controller Management Handler for FreeCAD MCP
 
-import FreeCAD
 import time
-from typing import Dict, Any
-from .base import BaseHandler, mm_min_to_mm_s, NO_ACTIVE_DOCUMENT_ERROR
+from typing import Any
+
+from .base import NO_ACTIVE_DOCUMENT_ERROR, BaseHandler, mm_min_to_mm_s
 
 
 class CAMToolControllersHandler(BaseHandler):
@@ -18,7 +18,7 @@ class CAMToolControllersHandler(BaseHandler):
         "update_tool_controller", "remove_tool_controller",
     })
 
-    def add_tool_controller(self, args: Dict[str, Any]) -> str:
+    def add_tool_controller(self, args: dict[str, Any]) -> str:
         """Add a tool controller to a CAM job.
 
         Args:
@@ -133,7 +133,7 @@ class CAMToolControllersHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("add_tool_controller", args, error=e, duration=time.time() - start_time)
 
-    def list_tool_controllers(self, args: Dict[str, Any]) -> str:
+    def list_tool_controllers(self, args: dict[str, Any]) -> str:
         """List all tool controllers in a CAM job.
 
         Args:
@@ -184,7 +184,7 @@ class CAMToolControllersHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("list_tool_controllers", args, error=e, duration=time.time() - start_time)
 
-    def get_tool_controller(self, args: Dict[str, Any]) -> str:
+    def get_tool_controller(self, args: dict[str, Any]) -> str:
         """Get detailed information about a specific tool controller.
 
         Args:
@@ -227,7 +227,7 @@ class CAMToolControllersHandler(BaseHandler):
                 if hasattr(controller.Tool, 'Diameter'):
                     result += f"  Tool Diameter: {controller.Tool.Diameter}\n"
             else:
-                result += f"  Tool: None\n"
+                result += "  Tool: None\n"
 
             if hasattr(controller, 'ToolNumber'):
                 result += f"  Tool Number (T): {controller.ToolNumber}\n"
@@ -251,7 +251,7 @@ class CAMToolControllersHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("get_tool_controller", args, error=e, duration=time.time() - start_time)
 
-    def update_tool_controller(self, args: Dict[str, Any]) -> str:
+    def update_tool_controller(self, args: dict[str, Any]) -> str:
         """Update parameters of an existing tool controller.
 
         Args:
@@ -331,7 +331,7 @@ class CAMToolControllersHandler(BaseHandler):
         except Exception as e:
             return self.log_and_return("update_tool_controller", args, error=e, duration=time.time() - start_time)
 
-    def remove_tool_controller(self, args: Dict[str, Any]) -> str:
+    def remove_tool_controller(self, args: dict[str, Any]) -> str:
         """Remove a tool controller from a CAM job.
 
         Args:

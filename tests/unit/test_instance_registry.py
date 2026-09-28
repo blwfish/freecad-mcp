@@ -9,6 +9,7 @@ import sys
 import tempfile
 import uuid
 from unittest.mock import patch
+
 import pytest
 
 AICOPILOT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot")

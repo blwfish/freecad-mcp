@@ -18,8 +18,8 @@ The registry is loaded from its file, never through the package, so this runs wi
 """
 
 import ast
-import os
 import importlib.util
+import os
 
 AICOPILOT_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot"))
 HANDLERS_DIR = os.path.join(AICOPILOT_DIR, "handlers")
@@ -166,7 +166,7 @@ def test_each_entry_is_gui_sensitive_exactly_when_its_constructor_takes_the_queu
         takes_queues = args is not None and "gui_task_queue" in args
         assert (attr in r._GUI_SENSITIVE) == takes_queues, \
             f"{cls}: __init__ args {args} imply gui-sensitive={takes_queues}, registry says {attr in r._GUI_SENSITIVE}"
-    assert r._GUI_SENSITIVE <= set(r._HANDLER_CLASS_NAMES), "a gui-sensitive attr that is not a registered handler"
+    assert set(r._HANDLER_CLASS_NAMES) >= r._GUI_SENSITIVE, "a gui-sensitive attr that is not a registered handler"
 
 
 def test_attribute_names_are_identifier_shaped_and_module_names_derive_from_them():

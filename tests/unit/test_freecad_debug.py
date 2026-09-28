@@ -11,8 +11,6 @@ import json
 import logging
 import os
 import sys
-import types
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,7 +19,6 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot"))
 
 import freecad_debug
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -800,7 +797,7 @@ class TestConvenienceFunctions:
 
     def test_log_operation_convenience(self, tmp_path):
         freecad_debug._debugger = None
-        d = freecad_debug.init_debugger(
+        freecad_debug.init_debugger(
             log_dir=str(tmp_path), enable_console=False, lean_logging=False
         )
         freecad_debug.log_operation("test_op", result="ok")

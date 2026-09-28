@@ -6,7 +6,6 @@ the live FreeCAD instance.
 """
 
 import json
-from typing import Optional
 
 from .test_e2e_workflows import send_command
 
@@ -116,7 +115,7 @@ result = None
         raise AssertionError(
             f"get_shape_props({doc_name!r}, {obj_name!r}): could not parse "
             f"execute_python response — {e}\nraw: {text[:400]}"
-        )
+        ) from e
     # Detect dict-shaped error responses that survived parsing.
     if isinstance(parsed, dict) and 'error' in parsed and 'volume' not in parsed:
         raise AssertionError(
@@ -126,7 +125,7 @@ result = None
     return parsed
 
 
-def get_object_count(doc_name: str, type_filter: Optional[str] = None) -> int:
+def get_object_count(doc_name: str, type_filter: str | None = None) -> int:
     """Return the number of objects in a document, optionally filtered by TypeId."""
     if type_filter:
         code = (
@@ -173,7 +172,7 @@ def assert_bbox_close(props: dict, expected: tuple, rel: float = 0.01,
                       op_label: str = "bbox"):
     """Assert bbox dimensions match expected tuple within fractional tolerance."""
     actual = tuple(props['bbox'])
-    for i, (a, e) in enumerate(zip(actual, expected)):
+    for i, (a, e) in enumerate(zip(actual, expected, strict=True)):
         if e == 0:
             assert abs(a) < rel, f"{op_label}[{i}]: expected ~0, got {a}"
         else:

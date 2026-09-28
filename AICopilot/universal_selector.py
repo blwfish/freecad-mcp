@@ -10,7 +10,7 @@
 # the socket server or any handler class.
 
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 import FreeCAD
 
@@ -29,10 +29,10 @@ class UniversalSelector:
     """
 
     def __init__(self):
-        self.pending_operations: Dict[str, Dict[str, Any]] = {}
+        self.pending_operations: dict[str, dict[str, Any]] = {}
 
     def request_selection(self, tool_name: str, selection_type: str, message: str,
-                           object_name: str = "", hints: str = "", **kwargs) -> Dict[str, Any]:
+                           object_name: str = "", hints: str = "", **kwargs) -> dict[str, Any]:
         """Register a pending selection and prompt the user in the FreeCAD GUI."""
         operation_id = f"{tool_name}_{int(time.time() * 1000)}"
 
@@ -65,7 +65,7 @@ class UniversalSelector:
             "object_name": object_name,
         }
 
-    def complete_selection(self, operation_id: str) -> Optional[Dict[str, Any]]:
+    def complete_selection(self, operation_id: str) -> dict[str, Any] | None:
         """Pop the pending operation and return the user's picks.
 
         Returns None if operation_id is unknown/expired, {"error": "..."} if

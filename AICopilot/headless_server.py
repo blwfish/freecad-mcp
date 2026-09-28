@@ -14,10 +14,10 @@ already on sys.path and `from freecad_mcp_handler import FreeCADSocketServer` wo
 """
 
 import os
-import sys
 import signal
-import time
+import sys
 import threading
+import time
 
 # ---------------------------------------------------------------------------
 # Ensure THIS script's directory is first on sys.path so we import the handler

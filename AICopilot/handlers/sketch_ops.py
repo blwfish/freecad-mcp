@@ -1,10 +1,12 @@
 # Sketch operation handlers for FreeCAD MCP
 
-import FreeCAD
 import json
 import math
-from typing import Dict, Any
-from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
+from typing import Any
+
+import FreeCAD
+
+from .base import NO_ACTIVE_DOCUMENT_ERROR, BaseHandler
 
 # Constraint types that carry a meaningful .Value (dimensional constraints).
 # Single source of truth shared by add_constraint (was previously a
@@ -24,7 +26,7 @@ class SketchOpsHandler(BaseHandler):
     # Sketch lifecycle
     # -----------------------------------------------------------------
 
-    def create_sketch(self, args: Dict[str, Any]) -> str:
+    def create_sketch(self, args: dict[str, Any]) -> str:
         """Create a new sketch on specified plane."""
         try:
             plane = args.get('plane', 'XY')
@@ -70,7 +72,7 @@ class SketchOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating sketch: {e}"
 
-    def close_sketch(self, args: Dict[str, Any]) -> str:
+    def close_sketch(self, args: dict[str, Any]) -> str:
         """Close/finalize a sketch — recompute and report constraint status.
 
         Does NOT add any constraints automatically. Constraints should be
@@ -101,7 +103,7 @@ class SketchOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error closing sketch: {e}"
 
-    def health_check(self, args: Dict[str, Any]) -> str:
+    def health_check(self, args: dict[str, Any]) -> str:
         """Run every FreeCAD-provided sketch validity check and return one
         structured, actionable report -- open/unclosed wire, invalid
         constraints, degenerate geometry, missing Vertical/Horizontal
@@ -131,7 +133,7 @@ class SketchOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error running sketch health check: {e}"
 
-    def verify_sketch(self, args: Dict[str, Any]) -> str:
+    def verify_sketch(self, args: dict[str, Any]) -> str:
         """Verify sketch validity for extrusion/pad operations."""
         try:
             sketch_name = args.get('sketch_name', '')
@@ -232,7 +234,7 @@ class SketchOpsHandler(BaseHandler):
     # Geometry: lines, circles, rectangles, arcs, polygons, slots
     # -----------------------------------------------------------------
 
-    def add_line(self, args: Dict[str, Any]) -> str:
+    def add_line(self, args: dict[str, Any]) -> str:
         """Add a line to a sketch."""
         try:
             sketch_name = args.get('sketch_name', '')
@@ -262,7 +264,7 @@ class SketchOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error adding line: {e}"
 
-    def add_circle(self, args: Dict[str, Any]) -> str:
+    def add_circle(self, args: dict[str, Any]) -> str:
         """Add a circle to a sketch."""
         try:
             sketch_name = args.get('sketch_name', '')
@@ -301,7 +303,7 @@ class SketchOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error adding circle: {e}"
 
-    def add_rectangle(self, args: Dict[str, Any]) -> str:
+    def add_rectangle(self, args: dict[str, Any]) -> str:
         """Add a rectangle to a sketch (4 constrained lines).
 
         Returns the geo_ids of the 4 lines (bottom=0, right=1, top=2, left=3
@@ -363,7 +365,7 @@ class SketchOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error adding rectangle: {e}"
 
-    def add_arc(self, args: Dict[str, Any]) -> str:
+    def add_arc(self, args: dict[str, Any]) -> str:
         """Add an arc to a sketch."""
         try:
             sketch_name = args.get('sketch_name', '')
@@ -400,7 +402,7 @@ class SketchOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error adding arc: {e}"
 
-    def add_polygon(self, args: Dict[str, Any]) -> str:
+    def add_polygon(self, args: dict[str, Any]) -> str:
         """Add a regular polygon to a sketch.
 
         Creates N line segments forming a regular polygon, with coincident
@@ -465,7 +467,7 @@ class SketchOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error adding polygon: {e}"
 
-    def add_slot(self, args: Dict[str, Any]) -> str:
+    def add_slot(self, args: dict[str, Any]) -> str:
         """Add a slot (oblong/stadium shape) to a sketch.
 
         Creates a slot from two semicircular arcs connected by two tangent lines.
@@ -549,7 +551,7 @@ class SketchOpsHandler(BaseHandler):
     # Sketch-level fillet
     # -----------------------------------------------------------------
 
-    def add_fillet(self, args: Dict[str, Any]) -> str:
+    def add_fillet(self, args: dict[str, Any]) -> str:
         """Add a fillet (rounded corner) at a sketch vertex.
 
         Replaces the sharp corner with a tangent arc of the given radius.
@@ -588,7 +590,7 @@ class SketchOpsHandler(BaseHandler):
     # Constraints
     # -----------------------------------------------------------------
 
-    def add_constraint(self, args: Dict[str, Any]) -> str:
+    def add_constraint(self, args: dict[str, Any]) -> str:
         """Add a geometric or dimensional constraint to a sketch.
 
         Constraint types and their required arguments:
@@ -639,8 +641,8 @@ class SketchOpsHandler(BaseHandler):
             p1 = args.get('pos_id1', 0)
             g2 = args.get('geo_id2', 0)
             p2 = args.get('pos_id2', 0)
-            value = args.get('value', None)
-            expression = args.get('expression', None)
+            value = args.get('value')
+            expression = args.get('expression')
 
             # Build constraint based on type. Normalize case against the canonical
             # vocabulary (single source of truth) so 'horizontal' / 'DISTANCEX'
@@ -748,11 +750,11 @@ class SketchOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error adding constraint: {e}"
 
-    def delete_constraint(self, args: Dict[str, Any]) -> str:
+    def delete_constraint(self, args: dict[str, Any]) -> str:
         """Delete a constraint by its index."""
         try:
             sketch_name = args.get('sketch_name', '')
-            index = args.get('index', None)
+            index = args.get('index')
 
             doc = self.get_document()
             if not doc:
@@ -773,7 +775,7 @@ class SketchOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error deleting constraint: {e}"
 
-    def list_constraints(self, args: Dict[str, Any]) -> str:
+    def list_constraints(self, args: dict[str, Any]) -> str:
         """List all constraints in a sketch with their types and values."""
         try:
             sketch_name = args.get('sketch_name', '')
@@ -836,7 +838,7 @@ class SketchOpsHandler(BaseHandler):
     # External geometry
     # -----------------------------------------------------------------
 
-    def add_external_geometry(self, args: Dict[str, Any]) -> str:
+    def add_external_geometry(self, args: dict[str, Any]) -> str:
         """Add external geometry reference to a sketch.
 
         References an edge from another object (e.g. a solid body face edge)

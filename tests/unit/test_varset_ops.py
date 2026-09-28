@@ -26,20 +26,20 @@ input cases required by this repo's Threshold-Boundary Testing Rule.
 import json
 import unittest
 
+import handlers.varset_ops as varset_ops_module
+from handlers.varset_ops import _PROP_DYNAMIC_BIT, VarSetOpsHandler, _property_value_for_json
+
 from tests.unit._freecad_mocks import (
-    mock_FreeCAD,
-    reset_mocks,
+    assert_error_contains,
+    assert_success_contains,
+    make_dep_edge,
     make_handler,
     make_mock_doc,
     make_part_object,
     make_varset,
-    make_dep_edge,
-    assert_error_contains,
-    assert_success_contains,
+    mock_FreeCAD,
+    reset_mocks,
 )
-
-import handlers.varset_ops as varset_ops_module
-from handlers.varset_ops import VarSetOpsHandler, _property_value_for_json, _PROP_DYNAMIC_BIT
 
 
 class TestPropertyValueForJson(unittest.TestCase):

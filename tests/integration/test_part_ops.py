@@ -6,15 +6,18 @@ All operations route through part_operations dispatcher.
 """
 
 import time
+
 import pytest
+
 from ._geom_helpers import (
-    assert_op_succeeded,
-    get_shape_props,
-    assert_volume_close,
     _result_text as _text,
 )
+from ._geom_helpers import (
+    assert_op_succeeded,
+    assert_volume_close,
+    get_shape_props,
+)
 from .test_e2e_workflows import send_command
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

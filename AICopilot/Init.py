@@ -27,6 +27,7 @@ if hasattr(signal, "SIGPIPE"):
 # Use inspect to read co_filename from the frame directly, which works
 # even when __file__ is not injected into the module namespace.
 import inspect
+
 try:
     mod_dir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 except Exception:

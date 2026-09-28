@@ -55,6 +55,23 @@ allow-direct-references = true
 # run (`python3 freecad_mcp_server.py`, not `pip install -e .`).
 package = false
 
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# sys.path.insert(...) before importing test fixtures/mocks is deliberate
+# here, not an oversight -- see e.g. tests/unit/test_mcp_protocol.py's
+# version-guard comment.
+"tests/*" = ["E402"]
+# Bare attribute access under `pytest.raises(AttributeError)` IS the test --
+# the "useless expression" is the thing asserted to raise.
+"tests/unit/test_freecad_mocks_spec.py" = ["B018"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
 markers = [

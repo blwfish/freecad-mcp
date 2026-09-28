@@ -8,14 +8,14 @@ Run with: python3 -m pytest tests/unit/test_mcp_versions.py -v
 
 import os
 import sys
+
 import pytest
 
 # Ensure AICopilot is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'AICopilot'))
 
-from mcp_versions import VersionSpec, VersionRegistry, get_registry
 import mcp_versions
-
+from mcp_versions import VersionRegistry, VersionSpec
 
 # ---------------------------------------------------------------------------
 # VersionSpec._parse_semver

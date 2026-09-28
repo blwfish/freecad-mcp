@@ -29,14 +29,13 @@ Document persistence:
     at the same path for saved documents to reload correctly.
 """
 
+import math
 import os
 import struct
-import math
 
 import FreeCAD
 import Path
-
-from handlers.base import mm_min_to_mm_s, BaseHandler
+from handlers.base import BaseHandler, mm_min_to_mm_s
 
 # Sanity cap on a binary STL's declared triangle count. The file-size
 # cross-check in _load_stl is the real backstop (this many triangles
@@ -314,7 +313,7 @@ class OCLSurfaceProxy:
             raise ImportError(
                 "opencamlib is not installed in FreeCAD's Python environment. "
                 f"Original error: {e}"
-            )
+            ) from e
 
         stl_file = getattr(obj, "StlFile", "")
         if not stl_file:

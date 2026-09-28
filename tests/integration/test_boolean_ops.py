@@ -8,8 +8,11 @@ response is a job acknowledgment.
 """
 
 import time
+
 import pytest
-from ._geom_helpers import assert_op_succeeded, _result_text as _text
+
+from ._geom_helpers import _result_text as _text
+from ._geom_helpers import assert_op_succeeded
 from .test_e2e_workflows import send_command
 
 

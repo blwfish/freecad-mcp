@@ -8,21 +8,21 @@ import asyncio
 import glob
 import json
 import os
-import re
-import sys
-import socket
 import platform
-import subprocess
+import re
 import shutil
+import socket
+import subprocess
+import sys
 import time
 import urllib.request
 import uuid
 from typing import Any
-from mcp_events import event_context, emit_event
+
 from mcp_agent_notes import render_instructions
+from mcp_events import emit_event, event_context
 
 import usage_guidance
-
 
 # =============================================================================
 # Mutable bridge state — socket target + spawned instance registry
@@ -46,7 +46,7 @@ def _read_windows_auth_token() -> str | None:
     wrote at startup. Re-read on every call rather than cached at import
     time, since restarting the FreeCAD instance rotates the token."""
     try:
-        with open(WINDOWS_AUTH_TOKEN_PATH, "r", encoding="ascii") as f:
+        with open(WINDOWS_AUTH_TOKEN_PATH, encoding="ascii") as f:
             token = f.read().strip()
             return token or None
     except OSError:
@@ -80,7 +80,7 @@ def _current_version() -> str | None:
         pyproject_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "pyproject.toml"
         )
-        with open(pyproject_path, "r", encoding="utf-8") as f:
+        with open(pyproject_path, encoding="utf-8") as f:
             for line in f:
                 m = re.match(r'^\s*version\s*=\s*"([^"]+)"', line)
                 if m:
@@ -116,7 +116,7 @@ def _log_version_check(line: str) -> None:
 
 def _read_version_cache() -> dict | None:
     try:
-        with open(VERSION_CACHE_PATH, "r", encoding="utf-8") as f:
+        with open(VERSION_CACHE_PATH, encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError):
         return None
@@ -854,11 +854,12 @@ sys.path.insert(0, _this_dir)
 sys.path.insert(0, os.path.join(_this_dir, "AICopilot"))
 
 # Import message framing for v2.1.1 protocol
-from mcp_bridge_framing import send_message, receive_message
-
 # ── Crash diagnostics (always enabled — no optional flag) ──────────────────
 import importlib.util as _ilu
 import os as _os
+
+from mcp_bridge_framing import receive_message, send_message
+
 
 def _load_crash_report():
     """Load freecad_crash_report from same dir as this script, or ~/.freecad-mcp/."""
@@ -914,10 +915,11 @@ def _diagnose_crash(error: Exception = None) -> str:
 
 # Initialize debugging infrastructure (optional - works without it)
 try:
-    from freecad_debug import init_debugger, debug_decorator
-    from freecad_health import init_monitor
     import logging
-    
+
+    from freecad_debug import debug_decorator, init_debugger
+    from freecad_health import init_monitor
+
     # Initialize with file-only logging (no console output for MCP)
     debugger = init_debugger(
         log_dir="/tmp/freecad_mcp_debug",
@@ -926,7 +928,7 @@ try:
         enable_file=True
     )
     monitor = init_monitor()
-    
+
     # Log startup to file only
     debugger.logger.info("="*80)
     debugger.logger.info("FreeCAD MCP Bridge Starting with Debug Infrastructure")
@@ -936,7 +938,7 @@ except ImportError:
     debugger = None
     monitor = None
     DEBUG_ENABLED = False
-    
+
     def debug_decorator(*args, **kwargs):
         def decorator(func):
             return func
@@ -967,7 +969,7 @@ async def main():
         import mcp.types as types
         from mcp.server import NotificationOptions, Server
         from mcp.server.models import InitializationOptions
-    except ImportError as e:
+    except ImportError:
         # MCP import failed - exit silently to avoid STDIO corruption
         sys.exit(1)
 
@@ -1128,7 +1130,7 @@ async def main():
     # vestigial `if True:` that always evaluated true).
     _smart_dispatcher_tools = [
         types.Tool(
-            name="partdesign_operations", 
+            name="partdesign_operations",
             description="⚠️ MODIFIES FreeCAD document: Smart dispatcher for parametric features. Operations like fillet/chamfer require edge selection and will permanently modify the 3D model.",
             inputSchema={
                 "type": "object",
@@ -1289,7 +1291,7 @@ async def main():
                 "properties": {
                     "operation": {
                         "type": "string",
-                        "description": "Part operation to perform", 
+                        "description": "Part operation to perform",
                         "enum": [
                             # Primitive creation (6)
                             "box", "cylinder", "sphere", "cone", "torus", "wedge",
@@ -2741,7 +2743,7 @@ async def main():
             selection_type = selection_request.get("selection_type", "elements")
             object_name = selection_request.get("object_name", "")
             operation_id = selection_request.get("operation_id", "")
-            
+
             # Create Claude Code compatible interactive response
             interactive_response = {
                 "interactive": True,
@@ -2753,12 +2755,12 @@ async def main():
                 "original_args": original_args,
                 "instructions": f"1. Go to FreeCAD and select {selection_type} on {object_name}\n2. Return here and choose an option:"
             }
-            
+
             return json.dumps(interactive_response)
-            
+
         except Exception as e:
             return json.dumps({"error": f"Selection workflow error: {e}"})
-    
+
     async def handle_list_tools() -> list[types.Tool]:
         """List available Phase 1 smart dispatcher tools"""
         return _base_tools + _smart_dispatcher_tools
@@ -2767,7 +2769,7 @@ async def main():
         name: str, arguments: dict[str, Any] | None
     ) -> list[types.TextContent]:
         """Handle tool calls with smart dispatcher routing"""
-        
+
         if name == "check_freecad_connection":
             # Trigger lazy resolution so available/socket_path reflect discovery.
             resolved, resolve_err = _ctx.resolve_target()
@@ -2789,7 +2791,7 @@ async def main():
                 type="text",
                 text=json.dumps(status)
             )]
-            
+
         elif name == "test_echo":
             message = arguments.get("message", "No message provided") if arguments else "No arguments"
             return [types.TextContent(
@@ -2814,7 +2816,7 @@ async def main():
             # Wait for old instance to die and new one to start
             await asyncio.sleep(3)
             # Poll for new instance (up to 30s)
-            for i in range(30):
+            for _i in range(30):
                 # On Windows, socket_path is "localhost:<port>", not a
                 # filesystem path -- os.path.exists() on it was always
                 # False, so the test_echo probe below never actually ran
@@ -2847,7 +2849,7 @@ async def main():
                     "restart_response": json.loads(result) if isinstance(result, str) else result,
                 })
             )]
-            
+
         elif name == "reload_modules":
             result = await send_to_freecad("reload_modules", {})
             return [types.TextContent(
@@ -2876,7 +2878,8 @@ async def main():
                     return [types.TextContent(type="text",
                         text=json.dumps({"error": "path parameter required"}))]
                 if _crash_mod is None:
-                    import zipfile, os as _os
+                    import os as _os
+                    import zipfile
                     try:
                         sz = _os.path.getsize(path)
                         with zipfile.ZipFile(path, "r") as zf:
@@ -2959,7 +2962,8 @@ async def main():
               and (arguments or {}).get("operation") == "screenshot"
               and platform.system() == "Darwin"
               and not _current_target_is_headless()):
-            import tempfile, base64 as _b64
+            import base64 as _b64
+            import tempfile
             args = arguments or {}
             req_width = args.get("width", 800)
             req_height = args.get("height", 600)
@@ -3094,7 +3098,7 @@ async def main():
                     except (json.JSONDecodeError, Exception):
                         pass
                 return [types.TextContent(type="text", text=text)]
-            
+
         # ------------------------------------------------------------------
         # Instance management handlers
         # ------------------------------------------------------------------
@@ -3495,7 +3499,7 @@ async def main():
         """Periodic health check for FreeCAD"""
         if not DEBUG_ENABLED or not monitor:
             return
-            
+
         while True:
             try:
                 status = monitor.perform_health_check()
@@ -3507,14 +3511,14 @@ async def main():
                 if debugger:
                     debugger.logger.error(f"Health check error: {e}")
                 await asyncio.sleep(30)
-    
+
     # Start health monitoring in background if enabled
     if DEBUG_ENABLED and monitor:
         health_task = asyncio.create_task(health_check_loop())
-    
+
     # Run the server
     import mcp.server.stdio
-    
+
     try:
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
             await server.run(
@@ -3536,16 +3540,16 @@ async def main():
             debugger.logger.info("="*80)
             debugger.logger.info("MCP Bridge shutting down - exporting debug info")
             debugger.logger.info("="*80)
-            
+
             try:
                 # Performance report
                 perf_report = debugger.get_performance_report()
                 debugger.logger.info(f"\n{perf_report}")
-                
+
                 # Export debug package
                 debug_pkg = debugger.export_debug_package()
                 debugger.logger.info(f"Debug package: {debug_pkg}")
-                
+
                 # Export crash report if there were crashes
                 if monitor and monitor.crash_history:
                     crash_report = monitor.export_crash_report()

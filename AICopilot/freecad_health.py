@@ -24,8 +24,9 @@ __version__ = "1.0.2"
 
 # Try to register with version system if available
 try:
-    from mcp_versions import register_component
     from datetime import datetime as _dt
+
+    from mcp_versions import register_component
     register_component("freecad_health", __version__, _dt.now().isoformat())
 except ImportError:
     # Version system not available, continue without it
@@ -42,10 +43,7 @@ from datetime import datetime
 from pathlib import Path
 
 import tmp_safety
-from typing import Dict, List, Optional, Tuple
-
 from freecad_debug import get_debugger
-
 
 # Lean logging mode - set to False for verbose health monitoring output
 LEAN_LOGGING = True
@@ -53,7 +51,7 @@ LEAN_LOGGING = True
 
 class FreeCADHealthMonitor:
     """Monitor FreeCAD health and handle crash recovery."""
-    
+
     def __init__(
         self,
         socket_path: str = "/tmp/freecad_mcp.sock",
@@ -84,29 +82,29 @@ class FreeCADHealthMonitor:
         self.max_restart_attempts = max_restart_attempts
         self.restart_cooldown = restart_cooldown
         self.lean_logging = lean_logging
-        
+
         self.debugger = get_debugger()
         self.logger = self.debugger.logger
-        
+
         # State tracking
         self.is_healthy = False
         self.last_heartbeat = None
         self.consecutive_failures = 0
         self.restart_attempts = 0
-        self.crash_history: List[Dict] = []
-        self.freecad_pid: Optional[int] = None
-        
+        self.crash_history: list[dict] = []
+        self.freecad_pid: int | None = None
+
         mode = "LEAN" if lean_logging else "VERBOSE"
         self.logger.info(f"FreeCAD Health Monitor initialized (MODE: {mode})")
-    
+
     def check_socket_exists(self) -> bool:
         """Check if the MCP socket file exists."""
         exists = self.socket_path.exists()
         if not self.lean_logging:
             self.logger.debug(f"Socket exists: {exists} ({self.socket_path})")
         return exists
-    
-    def check_socket_responsive(self, timeout: float = 2.0) -> Tuple[bool, Optional[str]]:
+
+    def check_socket_responsive(self, timeout: float = 2.0) -> tuple[bool, str | None]:
         """
         Check if the MCP socket is responsive.
         
@@ -118,11 +116,11 @@ class FreeCADHealthMonitor:
         """
         if not self.check_socket_exists():
             return False, "Socket file does not exist"
-        
+
         try:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.settimeout(timeout)
-            
+
             try:
                 sock.connect(str(self.socket_path))
                 # The handler speaks length-prefixed framing (4-byte big-endian
@@ -146,18 +144,18 @@ class FreeCADHealthMonitor:
                     self.logger.debug("Socket is responsive")
                 return True, None
 
-            except socket.timeout:
+            except TimeoutError:
                 return False, "Socket connection timeout"
             except ConnectionRefusedError:
                 return False, "Connection refused"
             finally:
                 sock.close()
-                
+
         except Exception as e:
             return False, f"Socket check failed: {e}"
 
     @staticmethod
-    def _recv_exact(sock: socket.socket, num_bytes: int) -> Optional[bytes]:
+    def _recv_exact(sock: socket.socket, num_bytes: int) -> bytes | None:
         """Read exactly num_bytes from sock, or None if it closes early."""
         buf = bytearray()
         while len(buf) < num_bytes:
@@ -167,7 +165,7 @@ class FreeCADHealthMonitor:
             buf.extend(chunk)
         return bytes(buf)
 
-    def check_freecad_process(self) -> Tuple[bool, Optional[int]]:
+    def check_freecad_process(self) -> tuple[bool, int | None]:
         """
         Check if FreeCAD process is running.
         
@@ -200,7 +198,7 @@ class FreeCADHealthMonitor:
                 text=True,
                 timeout=5
             )
-            
+
             if result.returncode == 0 and result.stdout.strip():
                 pids = [int(pid) for pid in result.stdout.strip().split('\n')]
                 if pids:
@@ -208,16 +206,16 @@ class FreeCADHealthMonitor:
                     if not self.lean_logging:
                         self.logger.debug(f"FreeCAD process found: PID {self.freecad_pid}")
                     return True, self.freecad_pid
-            
+
             if not self.lean_logging:
                 self.logger.debug("No FreeCAD process found")
             return False, None
-            
+
         except Exception as e:
             self.logger.warning(f"Failed to check FreeCAD process: {e}")
             return False, None
-    
-    def perform_health_check(self) -> Dict:
+
+    def perform_health_check(self) -> dict:
         """
         Perform comprehensive health check.
         
@@ -233,36 +231,36 @@ class FreeCADHealthMonitor:
             "is_healthy": False,
             "error": None,
         }
-        
+
         # Check socket exists
         health_status["socket_exists"] = self.check_socket_exists()
-        
+
         # Check socket responsive
         if health_status["socket_exists"]:
             responsive, error = self.check_socket_responsive()
             health_status["socket_responsive"] = responsive
             if error:
                 health_status["error"] = error
-        
+
         # Check process running
         process_running, pid = self.check_freecad_process()
         health_status["process_running"] = process_running
         health_status["freecad_pid"] = pid
-        
+
         # Overall health
         health_status["is_healthy"] = (
             health_status["socket_responsive"] and
             health_status["process_running"]
         )
-        
+
         self.is_healthy = health_status["is_healthy"]
-        
+
         if self.is_healthy:
             self.last_heartbeat = datetime.now()
             self.consecutive_failures = 0
         else:
             self.consecutive_failures += 1
-        
+
         # Lean logging: compact format
         if self.lean_logging:
             status_char = "✓" if health_status["is_healthy"] else "✗"
@@ -274,10 +272,10 @@ class FreeCADHealthMonitor:
         else:
             # Verbose logging: full JSON
             self.logger.debug(f"Health check: {json.dumps(health_status, indent=2)}")
-        
+
         return health_status
-    
-    def log_crash(self, health_status: Dict, additional_info: Optional[Dict] = None):
+
+    def log_crash(self, health_status: dict, additional_info: dict | None = None):
         """
         Log a crash event with full details.
         
@@ -292,13 +290,13 @@ class FreeCADHealthMonitor:
             "restart_attempts": self.restart_attempts,
             "additional_info": additional_info or {},
         }
-        
+
         # Capture FreeCAD state if possible (always capture on crash, regardless of lean mode)
         try:
             crash_info["freecad_state"] = self.debugger.capture_freecad_state()
         except Exception as e:
             crash_info["freecad_state"] = {"error": str(e)}
-        
+
         # Save crash log — guard the write so a disk/permission error doesn't
         # unwind the health-monitor loop and lose the crash record entirely.
         crash_file = self.crash_log_dir / f"crash_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -318,10 +316,10 @@ class FreeCADHealthMonitor:
                 json.dump(crash_info, f, indent=2, default=str)
         except Exception as e:
             self.logger.error(f"Failed to write crash log {crash_file}: {e}")
-        
+
         # Add to crash history
         self.crash_history.append(crash_info)
-        
+
         self.logger.error(f"CRASH DETECTED - Log saved to: {crash_file}")
         # Always log crash status, but compactly
         self.logger.error(
@@ -329,7 +327,7 @@ class FreeCADHealthMonitor:
             f"Process: {health_status.get('process_running', False)}, "
             f"Failures: {self.consecutive_failures}"
         )
-    
+
     def cleanup_socket(self):
         """Clean up stale socket file."""
         if self.socket_path.exists():
@@ -338,7 +336,7 @@ class FreeCADHealthMonitor:
                 self.logger.info(f"Cleaned up socket: {self.socket_path}")
             except Exception as e:
                 self.logger.warning(f"Failed to clean up socket: {e}")
-    
+
     def attempt_restart(self) -> bool:
         """
         Attempt to restart FreeCAD.
@@ -362,10 +360,10 @@ class FreeCADHealthMonitor:
                 "Manual intervention required."
             )
             return False
-        
+
         self.restart_attempts += 1
         self.logger.info(f"Attempting restart #{self.restart_attempts}...")
-        
+
         # Kill existing process if found
         is_running, pid = self.check_freecad_process()
         if is_running and pid:
@@ -379,26 +377,26 @@ class FreeCADHealthMonitor:
                     time.sleep(1)
             except Exception as e:
                 self.logger.warning(f"Failed to kill process: {e}")
-        
+
         # Clean up socket
         self.cleanup_socket()
-        
+
         # Wait for cooldown
         self.logger.info(f"Waiting {self.restart_cooldown}s before restart...")
         time.sleep(self.restart_cooldown)
-        
+
         # TODO: Add actual FreeCAD restart logic here
         # This would depend on how FreeCAD is launched with MCP
         self.logger.info("Restart logic would execute here")
         self.logger.info("You may need to manually restart FreeCAD")
-        
+
         return False  # Return True when actual restart is implemented
-    
-    def get_crash_statistics(self) -> Dict:
+
+    def get_crash_statistics(self) -> dict:
         """Get statistics about crash history."""
         if not self.crash_history:
             return {"total_crashes": 0, "message": "No crashes recorded"}
-        
+
         stats = {
             "total_crashes": len(self.crash_history),
             "first_crash": self.crash_history[0]["timestamp"],
@@ -408,10 +406,10 @@ class FreeCADHealthMonitor:
                 c["consecutive_failures"] for c in self.crash_history
             ),
         }
-        
+
         return stats
-    
-    def export_crash_report(self, output_file: Optional[str] = None) -> str:
+
+    def export_crash_report(self, output_file: str | None = None) -> str:
         """
         Export comprehensive crash report.
         
@@ -423,29 +421,29 @@ class FreeCADHealthMonitor:
         """
         if output_file is None:
             output_file = self.crash_log_dir / f"crash_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        
+
         output_file = Path(output_file)
-        
+
         report = {
             "generated_at": datetime.now().isoformat(),
             "statistics": self.get_crash_statistics(),
             "crash_history": self.crash_history,
             "current_health": self.perform_health_check(),
         }
-        
+
         # Same symlink risk as log_crash's crash_file above; output_file
         # defaults to a predictable path under crash_log_dir when the
         # caller doesn't supply one.
         tmp_safety.refuse_if_symlink(str(output_file))
         with open(output_file, 'w') as f:
             json.dump(report, f, indent=2)
-        
+
         self.logger.info(f"Crash report exported to: {output_file}")
         return str(output_file)
 
 
 # Global monitor instance
-_monitor: Optional[FreeCADHealthMonitor] = None
+_monitor: FreeCADHealthMonitor | None = None
 
 
 def get_monitor() -> FreeCADHealthMonitor:
@@ -476,7 +474,7 @@ def crash_statistics():
     return get_monitor().get_crash_statistics()
 
 
-def export_crash_report(output_file: Optional[str] = None):
+def export_crash_report(output_file: str | None = None):
     """Export crash report from the global monitor."""
     return get_monitor().export_crash_report(output_file)
 
@@ -484,11 +482,11 @@ def export_crash_report(output_file: Optional[str] = None):
 if __name__ == "__main__":
     # Demo usage
     monitor = FreeCADHealthMonitor()
-    
+
     print("Performing health check...")
     status = monitor.perform_health_check()
     print(json.dumps(status, indent=2))
-    
+
     if not status["is_healthy"]:
         print("\nFreeCAD appears to be unhealthy")
         print("Attempting recovery...")

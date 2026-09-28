@@ -4,12 +4,11 @@ Tests for AICopilot/handlers/base.py — shared handler base class.
 All FreeCAD dependencies are mocked via conftest.py.
 """
 
-import json
 import os
 import sys
-import types
+from unittest.mock import MagicMock, PropertyMock
+
 import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
 
 # Add AICopilot to path for imports
 AICOPILOT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot")
@@ -568,7 +567,7 @@ class TestSaveBeforeRiskyOp:
     def test_exception_is_swallowed(self, base_handler, mock_freecad):
         doc = MagicMock()
         doc.FileName = "/tmp/test.FCStd"
-        doc.save.side_effect = IOError("disk full")
+        doc.save.side_effect = OSError("disk full")
         mock_freecad.ActiveDocument = doc
         base_handler.save_before_risky_op()  # should not raise
 
@@ -616,10 +615,10 @@ class TestAutosaveBefore:
 
     def test_outcome_register_is_frozen_and_complete(self, base_module):
         assert isinstance(base_module.AUTOSAVE_OUTCOMES, frozenset)
-        assert base_module.AUTOSAVE_OUTCOMES == frozenset({
+        assert frozenset({
             "saved", "disabled", "no_document", "unsaved_document",
             "pref_unreadable", "failed",
-        })
+        }) == base_module.AUTOSAVE_OUTCOMES
 
     def test_default_preference_is_upstream_behaviour(self, base_module, mock_freecad):
         """With no preference set, GetBool returns the default — and the
@@ -677,7 +676,7 @@ class TestAutosaveBefore:
     def test_failed_save_is_reported_not_swallowed(self, base_module, mock_freecad):
         _set_pref(mock_freecad, True)
         doc = self._doc()
-        doc.save.side_effect = IOError("disk full")
+        doc.save.side_effect = OSError("disk full")
         assert base_module.autosave_before(doc, "unit") == "failed"
         mock_freecad.Console.PrintError.assert_called()
         assert "disk full" in mock_freecad.Console.PrintError.call_args[0][0]
@@ -1143,8 +1142,9 @@ class TestMmMinToMmSParity:
         # ocl_surface_op.py does `import Path` (FreeCAD's CAM module) at
         # module level; _freecad_mocks registers a stand-in in sys.modules
         # before that import resolves, same as test_ocl_surface_op.py does.
-        from tests.unit._freecad_mocks import mock_FreeCAD, reset_mocks  # noqa: F401
         import ocl_surface_op as ocl_surface_op_module
+
+        from tests.unit._freecad_mocks import mock_FreeCAD, reset_mocks  # noqa: F401
         assert ocl_surface_op_module.mm_min_to_mm_s.__module__ == "handlers.base"
         assert ocl_surface_op_module.mm_min_to_mm_s(1200) == 20.0
 
@@ -1157,8 +1157,8 @@ class TestCheckFeatureStateParity:
     the identical method rather than risking a second hand-written copy."""
 
     def test_partdesign_and_part_handlers_share_the_inherited_method(self):
-        from handlers.partdesign_ops import PartDesignOpsHandler
         from handlers.part_ops import PartOpsHandler
+        from handlers.partdesign_ops import PartDesignOpsHandler
         assert (
             PartDesignOpsHandler._check_feature_state
             is PartOpsHandler._check_feature_state

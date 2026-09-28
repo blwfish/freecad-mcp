@@ -4,19 +4,19 @@ Tests for mcp_bridge_framing.py — the bridge-side message framing protocol.
 No FreeCAD dependency — these test pure socket protocol logic.
 """
 
+import json
+import os
 import socket
 import struct
-import json
-import threading
-import pytest
 import sys
-import os
+import threading
+
+import pytest
 
 # Add project root to path so we can import mcp_bridge_framing
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from mcp_bridge_framing import send_message, receive_message, _recv_exact, MAX_MESSAGE_SIZE
-
+from mcp_bridge_framing import MAX_MESSAGE_SIZE, _recv_exact, receive_message, send_message
 
 # ---------------------------------------------------------------------------
 # Helpers

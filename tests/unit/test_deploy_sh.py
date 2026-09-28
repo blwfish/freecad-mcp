@@ -18,7 +18,6 @@ reimplementation of the selection logic.
 import os
 import shutil
 import subprocess
-import sys
 
 import pytest
 

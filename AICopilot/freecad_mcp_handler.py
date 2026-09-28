@@ -176,24 +176,24 @@ REQUIRED_VERSIONS = {
     "freecad_health": ">=1.0.1",
 }
 
-import FreeCAD
-import socket
-import threading
 import json
 import os
-import time
-import queue
-import uuid
 import platform
-import struct
-import sys
+import queue
 import secrets
+import socket
+import struct
 import subprocess
+import sys
+import threading
+import time
 import traceback as tb_module
-from typing import Dict, Any, Optional
+import uuid
+from typing import Any
 
-from universal_selector import UniversalSelector
+import FreeCAD
 from gui_heartbeat import GuiHeartbeat
+from universal_selector import UniversalSelector
 
 # Conditional GUI imports (not available in console mode)
 if FreeCAD.GuiUp:
@@ -317,13 +317,10 @@ def _capture_state():
 
 
 try:
-    from freecad_debug import (
-        init_debugger,
-        log_operation as _log_op_impl,
-        capture_state as _capture_state_impl,
-        get_debugger
-    )
-    from freecad_health import init_monitor, get_monitor
+    from freecad_debug import capture_state as _capture_state_impl
+    from freecad_debug import init_debugger
+    from freecad_debug import log_operation as _log_op_impl
+    from freecad_health import init_monitor
 
     _log_dir = os.path.expanduser("~/.freecad-mcp/logs")
     _crash_dir = os.path.expanduser("~/.freecad-mcp/crashes")
@@ -366,7 +363,8 @@ except Exception as e:
 _set_current_op = None
 _clear_current_op = None
 try:
-    from crash_watcher import set_current_op as _set_current_op, clear_current_op as _clear_current_op
+    from crash_watcher import clear_current_op as _clear_current_op
+    from crash_watcher import set_current_op as _set_current_op
     FreeCAD.Console.PrintMessage("Crash watcher loaded — op tracking active\n")
 except ImportError:
     pass  # graceful degradation: no op tracking
@@ -376,10 +374,10 @@ except ImportError:
 # =============================================================================
 try:
     from mcp_versions import (
-        register_component,
         declare_requirements,
-        validate_all,
         get_status,
+        register_component,
+        validate_all,
     )
     register_component("freecad_mcp_handler", __version__)
     declare_requirements("freecad_mcp_handler", REQUIRED_VERSIONS)
@@ -411,10 +409,10 @@ except ImportError as e:
 # freshly-reloaded package object _reload_handlers builds). Test fixtures
 # that stub `handlers` as MagicMocks import the same registry, so a handler
 # added here can't silently go missing from those fixtures' stub list.
-from handler_registry import _HANDLER_CLASS_NAMES, _GUI_SENSITIVE
+from handler_registry import _GUI_SENSITIVE, _HANDLER_CLASS_NAMES
 
 
-def _build_handler_class_map(handlers_module) -> Dict[str, type]:
+def _build_handler_class_map(handlers_module) -> dict[str, type]:
     """Resolve _HANDLER_CLASS_NAMES against a `handlers` module/package
     object into {attr_name: class}. Called with the module-level import
     at startup, or with the freshly-reloaded package object during
@@ -516,12 +514,12 @@ def send_message(sock: socket.socket, message_str: str) -> bool:
         length_prefix = struct.pack('>I', len(message_bytes))
         sock.sendall(length_prefix + message_bytes)
         return True
-    except (socket.error, BrokenPipeError, OSError) as e:
+    except (BrokenPipeError, OSError) as e:
         FreeCAD.Console.PrintWarning(f"Socket send error: {e}\n")
         return False
 
 
-def receive_message(sock: socket.socket, timeout: float = 30.0) -> Optional[str]:
+def receive_message(sock: socket.socket, timeout: float = 30.0) -> str | None:
     """Receive a length-prefixed message from the socket."""
     old_timeout = sock.gettimeout()
     try:
@@ -548,7 +546,7 @@ def receive_message(sock: socket.socket, timeout: float = 30.0) -> Optional[str]
 
         return message_bytes.decode('utf-8')
 
-    except socket.timeout:
+    except TimeoutError:
         FreeCAD.Console.PrintWarning("Socket receive timeout\n")
         return None
     except UnicodeDecodeError as e:
@@ -562,7 +560,7 @@ def receive_message(sock: socket.socket, timeout: float = 30.0) -> Optional[str]
         sock.settimeout(old_timeout)
 
 
-def _recv_exact(sock: socket.socket, num_bytes: int) -> Optional[bytes]:
+def _recv_exact(sock: socket.socket, num_bytes: int) -> bytes | None:
     """Receive exactly num_bytes, handling partial reads."""
     buf = bytearray()
     while len(buf) < num_bytes:
@@ -595,7 +593,7 @@ class FreeCADSocketServer:
         # Windows-only shared secret checked by _process_command; set by
         # start_server()'s Windows branch, stays None everywhere else (the
         # Unix-domain socket doesn't use this at all).
-        self._windows_auth_token: Optional[str] = None
+        self._windows_auth_token: str | None = None
 
         # GUI thread task queues (used by handlers that need Qt main thread)
         # Tasks are (request_id, callable) tuples; responses are (request_id, result).
@@ -643,7 +641,7 @@ class FreeCADSocketServer:
         # refreshed every single tick regardless of whether the task queue
         # had any work, iterating every object in ActiveDocument up to 10x/
         # second even when idle).
-        self._visibility_cache: Dict[str, bool] = {}
+        self._visibility_cache: dict[str, bool] = {}
         self._visibility_cache_tick_counter = 0
 
         # Active _handle_client invocations right now. Every tool call opens
@@ -657,7 +655,7 @@ class FreeCADSocketServer:
         self._active_connections_lock = threading.Lock()
 
         # Async job tracking: job_id -> {status, started, result, error, elapsed}
-        self._async_jobs: Dict[str, Dict] = {}
+        self._async_jobs: dict[str, dict] = {}
 
         # Interactive selection manager (fillet/chamfer/draft/shell/thickness
         # request_selection/complete_selection workflow, plus select/clear/get).
@@ -686,7 +684,7 @@ class FreeCADSocketServer:
         except Exception:
             self._fc_version = (0, 0, 0)
 
-    def _instantiate_handlers(self, handler_classes: Dict[str, type]) -> None:
+    def _instantiate_handlers(self, handler_classes: dict[str, type]) -> None:
         """(Re-)create handler instances from a {attr_name: class} mapping.
 
         Shared by __init__ (initial creation, module-level imports) and
@@ -764,7 +762,7 @@ class FreeCADSocketServer:
             # Always generate a UUID for this instance — used for discovery file
             # whether the socket path was env-supplied or auto-generated.
             try:
-                from instance_registry import generate_uuid, is_socket_alive, default_socket_path
+                from instance_registry import default_socket_path, generate_uuid, is_socket_alive
             except ImportError:
                 # Fallback shim: registry module missing (shouldn't happen in shipped
                 # builds, but keep the server functional in dev scratchpads).
@@ -1007,7 +1005,7 @@ class FreeCADSocketServer:
         if QtCore:
             QtCore.QTimer.singleShot(100, self._process_gui_tasks)
 
-    def _gui_unresponsive_error(self) -> Optional[str]:
+    def _gui_unresponsive_error(self) -> str | None:
         """Return a JSON error string if the GUI thread's heartbeat is stale,
         else None.
 
@@ -1254,7 +1252,7 @@ class FreeCADSocketServer:
         self._run_on_gui_thread_async(job_id, task_fn)
         return self._submission_status(job_id, queue_depth)
 
-    def _execute_python_async(self, args: Dict[str, Any]) -> str:
+    def _execute_python_async(self, args: dict[str, Any]) -> str:
         """Submit Python code for async GUI-safe execution; returns job_id immediately.
 
         Use poll_job(job_id) to check status and retrieve the result.
@@ -1268,7 +1266,7 @@ class FreeCADSocketServer:
             "execute_python_async", lambda: self.execute_python_ops.run_code(code)
         )
 
-    def _poll_job(self, args: Dict[str, Any]) -> str:
+    def _poll_job(self, args: dict[str, Any]) -> str:
         """Poll status and result of an async job.
 
         Returns:
@@ -1325,7 +1323,7 @@ class FreeCADSocketServer:
                 "elapsed_s": round(job.get("elapsed", elapsed), 1),
             })
 
-    def _cancel_job(self, args: Dict[str, Any]) -> str:
+    def _cancel_job(self, args: dict[str, Any]) -> str:
         """Mark a running async job as cancelled and attempt to interrupt the operation.
 
         Marks the job registry entry as error immediately so future poll_job calls
@@ -1380,7 +1378,7 @@ class FreeCADSocketServer:
             )
         })
 
-    def _list_jobs(self, args: Dict[str, Any]) -> str:
+    def _list_jobs(self, args: dict[str, Any]) -> str:
         """List all tracked async jobs and their current status."""
         now = time.time()
         jobs = {
@@ -1398,7 +1396,7 @@ class FreeCADSocketServer:
     # cancel_operation
     # -----------------------------------------------------------------
 
-    def _cancel_operation(self, args: Dict[str, Any]) -> str:
+    def _cancel_operation(self, args: dict[str, Any]) -> str:
         """Request cancellation of the current long-running FreeCAD operation.
 
         Calls FreeCADGui.cancelOperation() which sets Base::OperationCancel::requested.
@@ -1431,7 +1429,7 @@ class FreeCADSocketServer:
                         args=(client_socket,),
                         daemon=True,
                     ).start()
-                except socket.timeout:
+                except TimeoutError:
                     continue
             except Exception as e:
                 if self.running:
@@ -1592,7 +1590,7 @@ class FreeCADSocketServer:
     # Tool routing and dispatch
     # -----------------------------------------------------------------
 
-    def _execute_tool(self, tool_name: str, args: Dict[str, Any]) -> str:
+    def _execute_tool(self, tool_name: str, args: dict[str, Any]) -> str:
         """Route a tool call to the appropriate handler."""
         # ── Crash watcher: record op on disk before executing ──────────────
         # If FreeCAD crashes, this file persists so the bridge can report
@@ -1605,7 +1603,7 @@ class FreeCADSocketServer:
             if _clear_current_op is not None:
                 _clear_current_op()
 
-    def _execute_tool_inner(self, tool_name: str, args: Dict[str, Any]) -> str:
+    def _execute_tool_inner(self, tool_name: str, args: dict[str, Any]) -> str:
         """Internal dispatch (called by _execute_tool after op tracking setup)."""
 
         # These dispatch-table dict LITERALS all evaluate `self.<handler>` for
@@ -1765,7 +1763,7 @@ class FreeCADSocketServer:
 
         return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
-    def _continue_selection(self, args: Dict[str, Any]) -> str:
+    def _continue_selection(self, args: dict[str, Any]) -> str:
         """Resume an interactive selection started via selector.request_selection().
 
         The dedicated continue_selection MCP tool sends only operation_id.
@@ -1847,7 +1845,7 @@ class FreeCADSocketServer:
             }
         return self._run_on_gui_thread(task, timeout=2.0)
 
-    def _call_on_gui_thread_async(self, method, args: Dict[str, Any], label: str) -> str:
+    def _call_on_gui_thread_async(self, method, args: dict[str, Any], label: str) -> str:
         """Submit a handler method call for async GUI execution; returns job_id immediately.
 
         Use poll_job(job_id) to retrieve the result. Intended for long-running
@@ -1908,7 +1906,7 @@ class FreeCADSocketServer:
             return {"result": parsed}
         return self._run_on_gui_thread(task, timeout=timeout)
 
-    def _dispatch_to_handler(self, handler, args: Dict[str, Any], tool_name: str) -> str:
+    def _dispatch_to_handler(self, handler, args: dict[str, Any], tool_name: str) -> str:
         """Generic dispatch: look up args['operation'] against handler._ALLOWED_OPERATIONS."""
         operation = args.get("operation", "")
 
@@ -1928,7 +1926,7 @@ class FreeCADSocketServer:
 
         return self._call_on_gui_thread_async(method, args, f"{tool_name} {operation}")
 
-    def _dispatch_partdesign(self, args: Dict[str, Any]) -> str:
+    def _dispatch_partdesign(self, args: dict[str, Any]) -> str:
         """Route PartDesign operations (operation names differ from method names)."""
         operation = args.get("operation", "")
 
@@ -1973,7 +1971,7 @@ class FreeCADSocketServer:
 
         return self._call_on_gui_thread_async(operation_map[operation], args, f"PartDesign {operation}")
 
-    def _dispatch_sketch(self, args: Dict[str, Any]) -> str:
+    def _dispatch_sketch(self, args: dict[str, Any]) -> str:
         """Route Sketch operations (explicit mapping)."""
         operation = args.get("operation", "")
 
@@ -2004,7 +2002,7 @@ class FreeCADSocketServer:
 
         return self._call_on_gui_thread_async(operation_map[operation], args, f"Sketch {operation}")
 
-    def _dispatch_part_operations(self, args: Dict[str, Any]) -> str:
+    def _dispatch_part_operations(self, args: dict[str, Any]) -> str:
         """Route Part operations across multiple handlers."""
         operation = args.get("operation", "")
 
@@ -2035,7 +2033,7 @@ class FreeCADSocketServer:
 
         return self._call_on_gui_thread_async(method, args, f"Part {operation}")
 
-    def _dispatch_view_control(self, args: Dict[str, Any]) -> str:
+    def _dispatch_view_control(self, args: dict[str, Any]) -> str:
         """Route view control operations (mixes view_ops and document_ops).
 
         Operations that touch the GUI (screenshots, view changes, selection,
@@ -2162,7 +2160,8 @@ class FreeCADSocketServer:
         # hot reload upgrades -- gets its lock without a restart. Re-entrant,
         # so a nested call cannot deadlock on itself.
         with self.__dict__.setdefault("_reload_lock", threading.RLock()):
-            import importlib.util, os
+            import importlib.util
+            import os
 
             def _reload(module_name: str, module) -> object:
                 """Force-load from .py source, update sys.modules, return new module."""

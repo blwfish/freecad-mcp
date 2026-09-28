@@ -8,17 +8,16 @@ assignment (e62ebc5 fix), and document creation behavior.
 import unittest
 from unittest.mock import MagicMock
 
+from handlers.primitives import PrimitivesHandler
+
 from tests.unit._freecad_mocks import (
-    mock_FreeCAD,
-    reset_mocks,
+    assert_error_contains,
+    assert_success_contains,
     make_handler,
     make_mock_doc,
-    assert_success_contains,
-    assert_error_contains,
-    _Vec,
+    mock_FreeCAD,
+    reset_mocks,
 )
-
-from handlers.primitives import PrimitivesHandler
 
 
 class TestCreateBox(unittest.TestCase):

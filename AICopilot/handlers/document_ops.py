@@ -1,9 +1,11 @@
 # Document operation handlers for FreeCAD MCP
 
 import json
+from typing import Any
+
 import FreeCAD
-from typing import Dict, Any
-from .base import BaseHandler, NO_ACTIVE_DOCUMENT_ERROR
+
+from .base import NO_ACTIVE_DOCUMENT_ERROR, BaseHandler
 
 # Conditional GUI import (not available in console/headless mode) -- see
 # base.py's identical pattern. An unconditional import here loads
@@ -28,7 +30,7 @@ class DocumentOpsHandler(BaseHandler):
         self.gui_task_queue = gui_task_queue
         self.gui_response_queue = gui_response_queue
 
-    def create_document(self, args: Dict[str, Any]) -> str:
+    def create_document(self, args: dict[str, Any]) -> str:
         """Create a new document using GUI-safe thread queue."""
         try:
             name = args.get('document_name', args.get('name', 'Unnamed'))
@@ -60,7 +62,7 @@ class DocumentOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error in create_document: {e}"
 
-    def open_document(self, args: Dict[str, Any]) -> str:
+    def open_document(self, args: dict[str, Any]) -> str:
         """Open a document."""
         try:
             filename = args.get('filename', '')
@@ -72,7 +74,7 @@ class DocumentOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error opening document: {e}"
 
-    def save_document(self, args: Dict[str, Any]) -> str:
+    def save_document(self, args: dict[str, Any]) -> str:
         """Save the current document."""
         try:
             filename = args.get('filename', '')
@@ -92,7 +94,7 @@ class DocumentOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error saving document: {e}"
 
-    def list_objects(self, args: Dict[str, Any]) -> str:
+    def list_objects(self, args: dict[str, Any]) -> str:
         """List all objects in active document.
 
         Args:
@@ -110,7 +112,7 @@ class DocumentOpsHandler(BaseHandler):
             # must never become a negative slice bound. offset cannot be negative
             # (a negative offset would otherwise skip from the end of the list).
             limit, offset = self.paginate_bounds(args, default=100, max_limit=500)
-            type_filter = args.get('type_filter', None)
+            type_filter = args.get('type_filter')
 
             total_count = len(doc.Objects)
             # Objects matching the filter — this (not total_count) is what drives
@@ -192,7 +194,7 @@ class DocumentOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error listing objects: {e}"
 
-    def get_object_properties(self, args: Dict[str, Any]) -> str:
+    def get_object_properties(self, args: dict[str, Any]) -> str:
         """Return all FreeCAD properties for a named object.
 
         Use this when you need to inspect what properties an object exposes.
@@ -247,7 +249,7 @@ class DocumentOpsHandler(BaseHandler):
         except Exception as e:
             return json.dumps({"error": f"Error getting properties: {e}"})
 
-    def create_group(self, args: Dict[str, Any]) -> str:
+    def create_group(self, args: dict[str, Any]) -> str:
         """Create a document group for organizing objects."""
         try:
             name = args.get('name', 'Group')
@@ -277,7 +279,7 @@ class DocumentOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating group: {e}"
 
-    def make_link(self, args: Dict[str, Any]) -> str:
+    def make_link(self, args: dict[str, Any]) -> str:
         """Create an App::Link to an object (lightweight reference)."""
         try:
             object_name = args.get('object_name', '')
@@ -310,7 +312,7 @@ class DocumentOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating link: {e}"
 
-    def checkpoint(self, args: Dict[str, Any]) -> str:
+    def checkpoint(self, args: dict[str, Any]) -> str:
         """Save a snapshot of current object names for later rollback.
 
         Args:
@@ -334,7 +336,7 @@ class DocumentOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error creating checkpoint: {e}"
 
-    def rollback_to_checkpoint(self, args: Dict[str, Any]) -> str:
+    def rollback_to_checkpoint(self, args: dict[str, Any]) -> str:
         """Remove all objects added since the named checkpoint was taken.
 
         Args:
@@ -372,7 +374,7 @@ class DocumentOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error rolling back: {e}"
 
-    def insert_shape(self, args: Dict[str, Any]) -> str:
+    def insert_shape(self, args: dict[str, Any]) -> str:
         """Copy a shape from another open document into the active document.
 
         Args:
@@ -415,7 +417,6 @@ class DocumentOpsHandler(BaseHandler):
                 return NO_ACTIVE_DOCUMENT_ERROR
 
             obj_name = name or f"{source_object}_ref"
-            import Part
             feature = dst_doc.addObject("Part::Feature", obj_name)
             feature.Shape = src_obj.Shape.copy()
 
@@ -429,7 +430,7 @@ class DocumentOpsHandler(BaseHandler):
         except Exception as e:
             return f"Error inserting shape: {e}"
 
-    def make_link_array(self, args: Dict[str, Any]) -> str:
+    def make_link_array(self, args: dict[str, Any]) -> str:
         """Create a link array (array using App::Link for efficiency)."""
         try:
             object_name = args.get('object_name', '')

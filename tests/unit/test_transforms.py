@@ -8,19 +8,19 @@ helpers approach before expanding to primitives, boolean_ops, part_ops.
 
 import unittest
 
+from handlers.transforms import TransformsHandler
+
 from tests.unit._freecad_mocks import (
-    mock_FreeCAD,
-    reset_mocks,
-    make_handler,
-    make_mock_doc,
-    make_box_object,
+    _Placement,
+    _Vec,
     assert_error_contains,
     assert_success_contains,
-    _Vec,
-    _Placement,
+    make_box_object,
+    make_handler,
+    make_mock_doc,
+    mock_FreeCAD,
+    reset_mocks,
 )
-
-from handlers.transforms import TransformsHandler
 
 
 class TestMoveObject(unittest.TestCase):
@@ -155,8 +155,7 @@ class TestCopyObject(unittest.TestCase):
         # copyObject was called once, with_dependencies=True so parametric/
         # body-backed objects copy their dep chain instead of referencing the source
         doc.copyObject.assert_called_once_with(box, True)
-        # The new copy's Label is set to the requested name
-        copy = doc.copyObject.return_value
+        # The new copy's Label is set to the requested name.
         # Our make_mock_doc uses side_effect, not return_value;
         # the copy is the last addObject result
         self.assertGreaterEqual(len(doc.Objects), 2)

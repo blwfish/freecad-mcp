@@ -14,8 +14,9 @@ import os
 import sys
 import types as _types
 import urllib.error
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 BRIDGE_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "freecad_mcp_server.py")
 
@@ -166,8 +167,7 @@ class TestFetchLatestRelease:
         assert "error" in result
 
     def test_timeout(self, bridge):
-        import socket as _socket
-        with patch.object(bridge.urllib.request, "urlopen", side_effect=_socket.timeout()):
+        with patch.object(bridge.urllib.request, "urlopen", side_effect=TimeoutError()):
             result = bridge._fetch_latest_release()
         assert "error" in result
 

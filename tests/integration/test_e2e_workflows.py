@@ -16,7 +16,6 @@ import json
 import os
 import socket
 import struct
-import sys
 import tempfile
 import time
 
@@ -109,11 +108,10 @@ def _recv_exact(s, n):
 def clean_document():
     """Create a fresh document and clean up after the test."""
     doc_name = f"IntegrationTest_{int(time.time() * 1000) % 100000}"
-    result = send_command("view_control", {
+    send_command("view_control", {
         "operation": "create_document",
         "document_name": doc_name,
     })
-    # The response may be JSON-encoded or a plain string
     yield doc_name
     # Cleanup: close document without saving
     try:
@@ -158,8 +156,13 @@ class TestDocumentCreation:
             "operation": "list_objects",
         })
         parsed = json.loads(result.get("result", "{}")) if isinstance(result.get("result"), str) else result
-        # Fresh document may have 0 objects or just an Origin
         assert "error" not in str(result).lower()
+        # Fresh document may have 0 objects or just an Origin (if a Body was
+        # ever created) -- never anything else.
+        names = [obj["name"] for obj in parsed.get("objects", [])]
+        assert parsed.get("total", 0) == 0 or names == ["Origin"], (
+            f"Expected an empty document (or just Origin), got: {names}"
+        )
 
 
 class TestPrimitives:
@@ -228,13 +231,16 @@ class TestSketchPadWorkflow:
     """Test the fundamental CAD workflow: sketch → pad → solid."""
 
     def test_create_sketch(self, clean_document):
-        """Creating a sketch should succeed."""
+        """pad with no sketch_name should error cleanly, not crash or deadlock."""
         result = send_command("partdesign_operations", {
             "operation": "pad",
             "sketch_name": "",  # Will need a sketch first
         })
-        # We expect an error about missing sketch, not a crash
-        # This confirms the handler runs without deadlocking
+        # We expect an error about the missing sketch, not a crash. This
+        # confirms the handler runs without deadlocking.
+        assert "not found" in str(result).lower(), (
+            f"Expected a 'sketch not found' error, got: {result}"
+        )
 
     def test_full_sketch_to_pad(self, clean_document):
         """Full workflow: create sketch → add rectangle → pad to solid."""
@@ -303,7 +309,6 @@ class TestExport:
                 "object_name": "Box",
                 "file_path": stl_path,
             })
-            result_str = str(result)
             # Check file was created
             assert os.path.exists(stl_path), f"STL file not created: {result}"
             assert os.path.getsize(stl_path) > 0, "STL file is empty"

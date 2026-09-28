@@ -10,22 +10,21 @@ and error paths.
 import unittest
 from unittest.mock import MagicMock, patch
 
+from handlers.part_ops import PartOpsHandler
+
 from tests.unit._freecad_mocks import (
+    assert_error_contains,
+    assert_success_contains,
+    make_box_object,
+    make_cylinder_object,
+    make_handler,
+    make_mock_doc,
+    make_sketch,
+    make_sphere_object,
     mock_FreeCAD,
     mock_Part,
     reset_mocks,
-    make_handler,
-    make_mock_doc,
-    make_part_object,
-    make_box_object,
-    make_cylinder_object,
-    make_sphere_object,
-    make_sketch,
-    assert_error_contains,
-    assert_success_contains,
 )
-
-from handlers.part_ops import PartOpsHandler
 
 
 def _make_next_addobject_invalid(doc, type_id):

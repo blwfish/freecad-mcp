@@ -19,18 +19,17 @@ import json
 import os
 import sys
 import traceback
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import FreeCAD
 
 from .base import BaseHandler
 
-
 _MACRO_EXTENSIONS = (".FCMacro", ".fcmacro", ".py")
 _MAX_READ_BYTES = 256 * 1024  # 256 KB cap on read; macros are typically small
 
 
-def _safe_macro_dir() -> Optional[str]:
+def _safe_macro_dir() -> str | None:
     """Return the user's FreeCAD macro directory, or None if unavailable."""
     try:
         d = FreeCAD.getUserMacroDir(True)  # True = create if missing
@@ -44,7 +43,7 @@ def _safe_macro_dir() -> Optional[str]:
     return d
 
 
-def _resolve_macro_path(macro_dir: str, name: str) -> Optional[str]:
+def _resolve_macro_path(macro_dir: str, name: str) -> str | None:
     """Resolve a macro name to an absolute path inside macro_dir.
 
     Accepts either a bare name ("foo") or a name with extension ("foo.FCMacro").
@@ -88,7 +87,7 @@ class MacroOpsHandler(BaseHandler):
     # ------------------------------------------------------------------
     # list
     # ------------------------------------------------------------------
-    def list(self, args: Dict[str, Any]) -> str:
+    def list(self, args: dict[str, Any]) -> str:
         """List macros in the user's FreeCAD macro directory.
 
         Args (optional):
@@ -155,7 +154,7 @@ class MacroOpsHandler(BaseHandler):
         total = len(matching_names)
         page_names = matching_names[offset:offset + limit]
 
-        macros: List[Dict[str, Any]] = []
+        macros: list[dict[str, Any]] = []
         for entry in page_names:
             full = os.path.join(macro_dir, entry)
 
@@ -166,7 +165,7 @@ class MacroOpsHandler(BaseHandler):
 
             preview = ""
             try:
-                with open(full, "r", encoding="utf-8", errors="replace") as f:
+                with open(full, encoding="utf-8", errors="replace") as f:
                     head = f.read(2048)
                 preview = _first_nonblank_line(head)
             except OSError:
@@ -195,7 +194,7 @@ class MacroOpsHandler(BaseHandler):
     # ------------------------------------------------------------------
     # read
     # ------------------------------------------------------------------
-    def read(self, args: Dict[str, Any]) -> str:
+    def read(self, args: dict[str, Any]) -> str:
         """Read the contents of a macro by name.
 
         Args:
@@ -226,7 +225,7 @@ class MacroOpsHandler(BaseHandler):
                     "path": path,
                     "size": size,
                 })
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
+            with open(path, encoding="utf-8", errors="replace") as f:
                 content = f.read()
         except OSError as e:
             return json.dumps({"error": f"Could not read macro: {e}"})
@@ -241,7 +240,7 @@ class MacroOpsHandler(BaseHandler):
     # ------------------------------------------------------------------
     # run
     # ------------------------------------------------------------------
-    def run(self, args: Dict[str, Any]) -> str:
+    def run(self, args: dict[str, Any]) -> str:
         """Execute a macro by name in a FreeCAD-aware namespace.
 
         Args:
@@ -296,12 +295,12 @@ class MacroOpsHandler(BaseHandler):
                     "path": path,
                     "size": size,
                 })
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
+            with open(path, encoding="utf-8", errors="replace") as f:
                 source = f.read()
         except OSError as e:
             return json.dumps({"error": f"Could not read macro: {e}"})
 
-        namespace: Dict[str, Any] = {
+        namespace: dict[str, Any] = {
             "__name__": "__main__",
             "__file__": path,
             "FreeCAD": FreeCAD,
