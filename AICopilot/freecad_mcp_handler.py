@@ -172,7 +172,26 @@
 #                   are actually dead before reporting success, and cleans up
 #                   the stale discovery JSON immediately on confirmed stop.
 
-__version__ = "8.2.1"
+# Version: 8.2.2 - Reported live 2026-09-28: _visibility_cache_tick_counter
+#                   (added in 8.2.0's full-review pass) crashed on the next
+#                   _process_gui_tasks tick after reload_modules() hot-
+#                   swapped its new code onto a FreeCADSocketServer singleton
+#                   that had been constructed on a pre-8.2.0 build --
+#                   reload_modules() rebinds class code but never re-runs
+#                   __init__, so the running instance never got the
+#                   attribute. Worse, that AttributeError landed before the
+#                   method's self-reschedule (QTimer.singleShot), permanently
+#                   killing the recurring GUI-task loop and hanging every
+#                   future GUI-thread MCP call until FreeCAD was restarted.
+#                   Fixed with a getattr fallback for the counter itself, and
+#                   defensively for the whole class of bug: the tick body is
+#                   now wrapped in try/finally so the reschedule always fires
+#                   regardless of what a given tick raises. Only exposure is
+#                   upgrading a long-running FreeCAD session from pre-8.2.0
+#                   via hot-reload instead of a restart; a fresh launch on
+#                   8.2.0+ never hit it.
+
+__version__ = "8.2.2"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
