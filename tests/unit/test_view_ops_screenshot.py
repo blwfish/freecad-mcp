@@ -18,6 +18,8 @@ import os
 import sys
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 # ---------------------------------------------------------------------------
 # Mock FreeCAD modules at module level (before any handler imports)
 # ---------------------------------------------------------------------------
@@ -42,6 +44,15 @@ _FREECAD_PATH = "handlers.view_ops.FreeCAD"
 PNG_1x1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 )
+
+
+@pytest.fixture(autouse=True)
+def _temp_files_in_tmp_path(tmp_path, monkeypatch):
+    """On success take_screenshot hands its temp PNG to the bridge (which
+    deletes it after reading), so tests that don't read it would leak it
+    into the system temp dir -- keep those under pytest's tmp_path."""
+    import tempfile
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
 
 
 def make_handler():
@@ -79,13 +90,53 @@ class TestTakeScreenshotSuccess:
             result = json.loads(make_handler().take_screenshot({}))
         assert result["success"] is True
 
-    def test_returns_valid_base64_png(self):
+    def test_returns_path_to_png_not_inline_bytes(self):
+        """The PNG goes to a file the bridge reads -- inline base64 of any
+        real model is far over the 50 KB socket frame limit."""
         with patch(_FREECAD_PATH) as fc, patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
             fc.GuiUp = True
             plat.system.return_value = "Linux"
             gui.activeDocument.return_value = make_mock_doc(make_mock_view())
             result = json.loads(make_handler().take_screenshot({}))
-        assert base64.b64decode(result["image_data"]) == PNG_1x1
+        try:
+            assert "image_data" not in result
+            assert result["keep_file"] is False
+            assert result["bytes"] == len(PNG_1x1)
+            with open(result["image_path"], "rb") as f:
+                assert f.read() == PNG_1x1
+        finally:
+            os.unlink(result["image_path"])
+
+    def test_filename_writes_and_keeps_the_file(self, tmp_path):
+        target = tmp_path / "shot.png"
+        with patch(_FREECAD_PATH) as fc, patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            fc.GuiUp = True
+            plat.system.return_value = "Linux"
+            gui.activeDocument.return_value = make_mock_doc(make_mock_view())
+            result = json.loads(make_handler().take_screenshot({"filename": str(target)}))
+        assert result["success"] is True
+        assert result["keep_file"] is True
+        assert os.path.samefile(result["image_path"], target)
+        assert target.read_bytes() == PNG_1x1
+
+    def test_filename_in_missing_directory_is_refused(self, tmp_path):
+        target = tmp_path / "nope" / "shot.png"
+        with patch(_FREECAD_PATH) as fc, patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            fc.GuiUp = True
+            plat.system.return_value = "Linux"
+            gui.activeDocument.return_value = make_mock_doc(make_mock_view())
+            result = json.loads(make_handler().take_screenshot({"filename": str(target)}))
+        assert result["success"] is False
+        assert "Directory does not exist" in result["error"]
+
+    def test_filename_without_png_extension_is_refused(self, tmp_path):
+        with patch(_FREECAD_PATH) as fc, patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            fc.GuiUp = True
+            plat.system.return_value = "Linux"
+            gui.activeDocument.return_value = make_mock_doc(make_mock_view())
+            result = json.loads(make_handler().take_screenshot({"filename": str(tmp_path / "shot.jpg")}))
+        assert result["success"] is False
+        assert ".png" in result["error"]
 
     def test_mime_type_is_png(self):
         with patch(_FREECAD_PATH) as fc, patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
@@ -133,7 +184,20 @@ class TestTakeScreenshotSuccess:
 
         assert captured == {"w": 1920, "h": 1080}
 
-    def test_temp_file_is_cleaned_up(self):
+    def test_temp_file_is_handed_to_the_bridge_on_success(self):
+        """On success the bridge owns the temp file (it deletes it after
+        reading), so the handler must NOT delete it."""
+        with patch(_FREECAD_PATH) as fc, patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
+            fc.GuiUp = True
+            plat.system.return_value = "Linux"
+            gui.activeDocument.return_value = make_mock_doc(make_mock_view())
+            result = json.loads(make_handler().take_screenshot({}))
+        try:
+            assert os.path.exists(result["image_path"])
+        finally:
+            os.unlink(result["image_path"])
+
+    def test_temp_file_is_cleaned_up_on_failure(self):
         created = []
         mock_view = MagicMock()
 
@@ -141,16 +205,40 @@ class TestTakeScreenshotSuccess:
             created.append(path)
             with open(path, "wb") as f:
                 f.write(PNG_1x1)
+            raise RuntimeError("GPU error after partial write")
 
         mock_view.saveImage.side_effect = _save
         with patch(_FREECAD_PATH) as fc, patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat:
             fc.GuiUp = True
             plat.system.return_value = "Linux"
             gui.activeDocument.return_value = make_mock_doc(mock_view)
-            make_handler().take_screenshot({})
+            result = json.loads(make_handler().take_screenshot({}))
 
+        assert result["success"] is False
         assert created, "saveImage was never called"
         assert not os.path.exists(created[0]), "Temp file was not deleted"
+
+    def test_unused_temp_file_is_cleaned_up_when_filename_given(self, tmp_path):
+        """With `filename` the PNG goes there, so the temp file the handler
+        created up front is never used and must not be left behind."""
+        import tempfile
+        real_ntf = tempfile.NamedTemporaryFile
+        temp_names = []
+
+        def _recording_ntf(*a, **kw):
+            f = real_ntf(*a, **kw)
+            temp_names.append(f.name)
+            return f
+
+        with patch(_FREECAD_PATH) as fc, patch(_GUI_PATH) as gui, patch(_PLATFORM_PATH) as plat, \
+                patch("tempfile.NamedTemporaryFile", side_effect=_recording_ntf):
+            fc.GuiUp = True
+            plat.system.return_value = "Linux"
+            gui.activeDocument.return_value = make_mock_doc(make_mock_view())
+            make_handler().take_screenshot({"filename": str(tmp_path / "shot.png")})
+
+        assert temp_names, "NamedTemporaryFile was never called"
+        assert not os.path.exists(temp_names[0])
 
 
 # ---------------------------------------------------------------------------

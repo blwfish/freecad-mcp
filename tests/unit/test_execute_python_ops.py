@@ -155,6 +155,63 @@ class TestExecutePython(unittest.TestCase):
         second = self._run_python("persisted_var * 2")
         self.assertEqual(second["result"], "198")
 
+    # -- `result` is reported only when THIS call set it ---------------------
+    # Observed on 8.2.2: execute_python("result = 1") then
+    # execute_python("x = 2") reported "1" for the second call.
+
+    def test_stale_result_from_an_earlier_call_is_not_reported(self):
+        self.assertEqual(self._run_python("result = 1")["result"], "1")
+        self.assertEqual(self._run_python("x = 2")["result"], "Code executed successfully")
+
+    def test_result_set_to_the_same_value_again_is_reported(self):
+        """Small ints are cached, so an identity check alone would miss this."""
+        self._run_python("result = 1")
+        self.assertEqual(self._run_python("result = 1")["result"], "1")
+
+    def test_result_updated_from_previous_call_is_reported(self):
+        self._run_python("result = 1")
+        self.assertEqual(self._run_python("result += 1")["result"], "2")
+
+    def test_result_set_inside_a_block_is_reported(self):
+        self.assertEqual(self._run_python("for result in range(3):\n    pass")["result"], "2")
+
+    def test_result_set_indirectly_is_reported(self):
+        self._run_python("result = 1")
+        self.assertEqual(self._run_python("globals()['result'] = 'new'")["result"], "'new'")
+
+    def test_previous_result_is_still_readable(self):
+        self._run_python("result = 5")
+        self.assertEqual(self._run_python("result * 2")["result"], "10")
+
+    # -- __name__ is "__main__", like a script -------------------------------
+
+    def test_name_is_main(self):
+        self.assertEqual(self._run_python("__name__")["result"], "'__main__'")
+
+    def test_main_guard_runs(self):
+        result = self._run_python('if __name__ == "__main__":\n    print("guard ran")')
+        self.assertEqual(result["result"], "guard ran")
+
+    # -- the autosave outcome reaches the caller when it wrote a file ---------
+
+    def _run_code_with_autosave(self, outcome):
+        doc = MagicMock()
+        doc.FileName = "/tmp/master.FCStd"
+        mock_FreeCAD.ActiveDocument = doc
+        func_globals = self.handler.run_code.__func__.__globals__
+        with patch.dict(func_globals, {"autosave_before": MagicMock(return_value=outcome)}):
+            return self.handler.run_code("x = 1")
+
+    def test_saved_outcome_is_reported_with_path(self):
+        self.assertEqual(self._run_code_with_autosave("saved")["autosave"], "saved: /tmp/master.FCStd")
+
+    def test_failed_outcome_is_reported(self):
+        self.assertIn("failed", self._run_code_with_autosave("failed")["autosave"])
+
+    def test_quiet_outcomes_are_not_reported(self):
+        for outcome in ("unchanged", "disabled", "no_document", "unsaved_document"):
+            self.assertNotIn("autosave", self._run_code_with_autosave(outcome), outcome)
+
 
 class TestPrimaryToolAlternativeDetection(unittest.TestCase):
     """CLAUDE.md's "prefer primary tool over execute_python" rule, made
@@ -179,6 +236,28 @@ class TestPrimaryToolAlternativeDetection(unittest.TestCase):
         result = self._run_python("Part.makeBox(10, 10, 10)")
         self.assertIn("part_operations", result["result"])
         self.assertIn("box", result["result"])
+
+    def test_tip_suppressed_when_preference_is_off(self):
+        """Build code for third-party workbenches (e.g. Quetzal) calls Part
+        APIs directly as part of work no dedicated tool covers."""
+        func_globals = self.handler.run_code.__func__.__globals__
+        with patch.dict(func_globals, {"_tool_tips_enabled": lambda: False}):
+            result = self._run_python("Part.makeBox(10, 10, 10)")
+        self.assertNotIn("Tip:", result["result"])
+
+    def test_tip_preference_reads_the_addon_preference_group(self):
+        import handlers.execute_python_ops as mod
+        pref = MagicMock()
+        pref.GetBool.return_value = False
+        with patch.object(mod.FreeCAD, "ParamGet", return_value=pref) as param_get:
+            self.assertFalse(mod._tool_tips_enabled())
+        param_get.assert_called_with(mod.AICOPILOT_PREF_PATH)
+        pref.GetBool.assert_called_with("ExecutePythonToolTips", True)
+
+    def test_unreadable_tip_preference_keeps_tips_on(self):
+        import handlers.execute_python_ops as mod
+        with patch.object(mod.FreeCAD, "ParamGet", side_effect=RuntimeError("no prefs")):
+            self.assertTrue(mod._tool_tips_enabled())
 
     def test_make_cylinder_gets_a_tip(self):
         result = self._run_python("Part.makeCylinder(5, 20)")
