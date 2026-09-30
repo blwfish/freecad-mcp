@@ -208,9 +208,16 @@ class ViewOpsHandler(BaseHandler):
             return f"Error getting selection: {e}"
 
     def take_screenshot(self, args: dict[str, Any]) -> str:
-        """Take a screenshot of the FreeCAD viewport and return as base64-encoded PNG.
+        """Render the FreeCAD viewport to a PNG file and return its path.
 
         MUST run on the GUI thread (dispatch layer handles this).
+
+        The image bytes never cross the socket: any real model's PNG is far
+        over the 50 KB frame limit (MAX_MESSAGE_SIZE), so the reply carries
+        only `image_path` and the bridge (always on the same machine) reads
+        the file and returns MCP image content. With `filename` the PNG is
+        written there and kept (`keep_file: true`); otherwise it goes to a
+        temp file the bridge deletes after reading.
 
         On macOS, the actual capture happens in the bridge process
         (freecad_mcp_server.py's Darwin-specific `view_control` screenshot
@@ -224,13 +231,14 @@ class ViewOpsHandler(BaseHandler):
         which is the one case where this handler is legitimately reached
         without the bridge-side shortcut having run first).
         """
-        import base64
         import os
         import tempfile
 
         req_width = args.get("width", 800)
         req_height = args.get("height", 600)
+        filename = args.get("filename") or ""
         tmp_path = None
+        handed_off = False
 
         try:
             # On macOS this method runs on the socket thread (not GUI thread) —
@@ -282,10 +290,20 @@ class ViewOpsHandler(BaseHandler):
                     ),
                 })
 
+            if filename:
+                out_path = os.path.abspath(os.path.expanduser(filename))
+                if not out_path.lower().endswith(".png"):
+                    return json.dumps({"success": False, "error": f"Screenshot filename must end in .png: {out_path}"})
+                if not os.path.isdir(os.path.dirname(out_path)):
+                    return json.dumps({"success": False, "error": f"Directory does not exist: {os.path.dirname(out_path)}"})
+            else:
+                out_path = tmp_path
+
             # ── Fallback: FreeCAD saveImage (non-macOS only) ──────────────────────
             # Pump the event loop first so the viewport is fully initialised.
+            # FreeCAD's `PySide` shim maps to PySide2 or PySide6 (1.1 ships 6).
             try:
-                from PySide2 import QtWidgets
+                from PySide import QtWidgets
                 app = QtWidgets.QApplication.instance()
                 if app:
                     app.processEvents()
@@ -295,19 +313,22 @@ class ViewOpsHandler(BaseHandler):
             face_count = _estimate_scene_faces()
             width, height, was_clamped = _clamp_resolution(req_width, req_height, face_count)
 
-            view.saveImage(tmp_path, width, height)
-
-            with open(tmp_path, "rb") as f:
-                image_data = base64.b64encode(f.read()).decode("utf-8")
+            view.saveImage(out_path, width, height)
+            if not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
+                return json.dumps({"success": False, "error": f"saveImage produced no file at {out_path}"})
 
             result = {
                 "success": True,
-                "image_data": image_data,
+                "image_path": out_path,
+                "keep_file": bool(filename),
                 "mime_type": "image/png",
                 "width": width,
                 "height": height,
+                "bytes": os.path.getsize(out_path),
                 "method": "saveImage",
             }
+            # The bridge now owns the temp file (it deletes it after reading).
+            handed_off = True
             if was_clamped:
                 result["note"] = (
                     f"Resolution reduced from {req_width}x{req_height} to "
@@ -320,7 +341,10 @@ class ViewOpsHandler(BaseHandler):
             return json.dumps({"success": False, "error": str(e)})
 
         finally:
-            if tmp_path and os.path.exists(tmp_path):
+            # Delete the temp file unless the bridge is going to read it --
+            # which includes the kept-`filename` case, where the temp file
+            # was never used.
+            if tmp_path and (filename or not handed_off) and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
 
     def get_screenshot(self, args: dict[str, Any]) -> str:
