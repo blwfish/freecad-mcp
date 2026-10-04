@@ -746,8 +746,10 @@ class TestAutosaveBefore:
 
     def test_every_return_is_a_registered_outcome(self, base_module, mock_freecad):
         cases = []
-        _set_pref(mock_freecad, True); cases.append(base_module.autosave_before(self._doc(), "u"))
-        _set_pref(mock_freecad, False); cases.append(base_module.autosave_before(self._doc(), "u"))
+        _set_pref(mock_freecad, True)
+        cases.append(base_module.autosave_before(self._doc(), "u"))
+        _set_pref(mock_freecad, False)
+        cases.append(base_module.autosave_before(self._doc(), "u"))
         cases.append(base_module.autosave_before(None, "u"))
         cases.append(base_module.autosave_before(self._doc(""), "u"))
         for c in cases:

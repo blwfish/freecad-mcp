@@ -1,5 +1,6 @@
 # View operation handlers for FreeCAD MCP
 
+import contextlib
 import json
 import platform
 from typing import Any
@@ -41,10 +42,8 @@ def _estimate_scene_faces() -> int:
                 continue
         except Exception:
             pass
-        try:
+        with contextlib.suppress(Exception):
             total += len(obj.Shape.Faces)
-        except Exception:
-            pass
     return total
 
 
@@ -554,10 +553,8 @@ class ViewOpsHandler(BaseHandler):
                 return "No clip planes to remove"
 
             sg, clip = self._clip_planes.pop()
-            try:
+            with contextlib.suppress(Exception):
                 sg.removeChild(clip)
-            except Exception:
-                pass
 
             # Force repaint
             try:

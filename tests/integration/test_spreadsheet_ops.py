@@ -7,6 +7,7 @@ end-to-end roundtrips that the unit tests can't cover meaningfully.
 Run with: python3 -m pytest tests/integration/test_spreadsheet_ops.py -v
 """
 
+import contextlib
 import json
 import time
 
@@ -59,10 +60,8 @@ def doc_with_sheet():
                                   "document_name": doc_name})
     _ss({"operation": "create_spreadsheet", "spreadsheet_name": sheet_name})
     yield doc_name, sheet_name
-    try:
+    with contextlib.suppress(Exception):
         _exec(f"FreeCAD.closeDocument({doc_name!r})")
-    except Exception:
-        pass
 
 
 # ---------------------------------------------------------------------------

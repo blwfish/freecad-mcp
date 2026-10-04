@@ -23,7 +23,7 @@ class VersionSpec:
     def __init__(self, version_string: str):
         """
         Parse a semantic version string.
-        
+
         Args:
             version_string: Version like "1.2.3" or constraint like ">=1.1.0"
         """
@@ -96,7 +96,7 @@ class VersionRegistry:
     def register(self, component: str, version: str, loaded_at: str | None = None):
         """
         Register a component version.
-        
+
         Args:
             component: Component name (e.g., "freecad_mcp_handler", "freecad_debug")
             version: Semantic version string (e.g., "1.2.3")
@@ -109,7 +109,7 @@ class VersionRegistry:
     def declare_requirements(self, component: str, requirements: dict[str, str]):
         """
         Declare version requirements for a component's dependencies.
-        
+
         Args:
             component: Component that has requirements
             requirements: Dict of {dependency: version_constraint}
@@ -120,7 +120,7 @@ class VersionRegistry:
     def validate(self) -> tuple[bool, str | None]:
         """
         Validate all registered requirements.
-        
+
         Returns:
             Tuple of (is_valid, error_message)
         """

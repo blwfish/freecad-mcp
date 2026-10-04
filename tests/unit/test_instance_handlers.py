@@ -13,6 +13,7 @@ the tests run without FreeCAD installed.
 """
 
 import asyncio
+import contextlib
 import itertools
 import json
 import os
@@ -475,10 +476,8 @@ def _run_stop(bridge, ctx, arguments):
         }
 
     if instance_uuid:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(bridge._discovery_file_path(instance_uuid))
-        except OSError:
-            pass
 
     # Skip actual os.remove — socket file is fake in tests
     ctx.unregister(target_path)

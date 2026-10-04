@@ -104,7 +104,7 @@ class FreeCADDebugger:
     ):
         """
         Initialize the debugger.
-        
+
         Args:
             log_dir: Directory for log files
             level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
@@ -188,10 +188,10 @@ class FreeCADDebugger:
     ):
         """
         Log a FreeCAD operation with optional full details.
-        
+
         In LEAN mode: logs only essential info (operation name, success/failure)
         In VERBOSE mode: logs full details including timestamps and parameters
-        
+
         Args:
             operation: Name of the operation
             parameters: Operation parameters
@@ -525,11 +525,11 @@ class FreeCADDebugger:
     def debug_decorator(self, track_state: bool = False, track_performance: bool = False):
         """
         Decorator for automatic debug logging of functions.
-        
+
         Args:
             track_state: Whether to capture FreeCAD state before/after (disabled by default in lean mode)
             track_performance: Whether to track operation timing (disabled by default in lean mode)
-        
+
         Usage:
             @debugger.debug_decorator()
             def my_freecad_operation(param1, param2):

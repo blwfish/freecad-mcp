@@ -1,5 +1,6 @@
 # Base handler class for FreeCAD MCP operations
 
+import contextlib
 import os
 from collections.abc import Callable
 
@@ -136,10 +137,8 @@ def _report(level: str, make_message) -> None:
         message = make_message()
     except Exception:
         message = f"[MCP] autosave: a report could not be formatted ({level})\n"
-    try:
+    with contextlib.suppress(Exception):
         getattr(FreeCAD.Console, level)(message)
-    except Exception:
-        pass
 
 
 def _autosave(doc, reason: str) -> str:

@@ -5,6 +5,7 @@
 # Starts the MCP socket server automatically when FreeCAD GUI loads.
 # The service runs globally across all workbenches.
 
+import contextlib
 import os
 import sys
 
@@ -122,10 +123,8 @@ else:
             try:
                 import instance_registry
                 fc_version = None
-                try:
+                with contextlib.suppress(Exception):
                     fc_version = ".".join(str(p) for p in FreeCAD.Version()[:3])
-                except Exception:
-                    pass
                 instance_registry.write_discovery(
                     self.socket_server.instance_uuid,
                     self.socket_server.socket_path,

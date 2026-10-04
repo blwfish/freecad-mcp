@@ -1,5 +1,6 @@
 # CAM workbench operation handlers for FreeCAD MCP
 
+import contextlib
 import time
 from typing import Any
 
@@ -22,10 +23,8 @@ def _clear_expression_binding(obj, prop_name: str) -> None:
     each time; nothing tied them together, so a future property with the
     same quirk needed a 4th hand-copy to get the fix automatically.
     """
-    try:
+    with contextlib.suppress(Exception):
         obj.setExpression(prop_name, None)
-    except Exception:
-        pass
 
 
 class CAMOpsHandler(BaseHandler):

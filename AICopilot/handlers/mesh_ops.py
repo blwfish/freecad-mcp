@@ -3,6 +3,7 @@
 # Provides mesh import/export, mesh-to-solid conversion, validation,
 # simplification, and generic CAD file I/O (STL, OBJ, STEP, IGES, BREP).
 
+import contextlib
 import os
 import time
 from typing import Any
@@ -239,10 +240,9 @@ class MeshOpsHandler(BaseHandler):
             # Try to make a solid
             solid = None
             warning = ""
-            try:
+            # Not critical if this fails
+            with contextlib.suppress(Exception):
                 shape = shape.removeSplitter()
-            except Exception:
-                pass  # Not critical if this fails
 
             try:
                 solid = Part.makeSolid(shape)
@@ -382,10 +382,10 @@ class MeshOpsHandler(BaseHandler):
                         error=Exception(NO_ACTIVE_DOCUMENT_ERROR),
                         duration=time.time() - start_time)
 
-                objects_before = set(o.Name for o in doc.Objects)
+                objects_before = {o.Name for o in doc.Objects}
                 Part.insert(file_path, doc.Name)
                 doc.recompute()
-                objects_after = set(o.Name for o in doc.Objects)
+                objects_after = {o.Name for o in doc.Objects}
 
                 new_objects = objects_after - objects_before
                 if new_objects:

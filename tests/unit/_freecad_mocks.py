@@ -693,9 +693,8 @@ def _check_varset_value_type(type_, value):
     elif type_ == 'App::PropertyString':
         if not isinstance(value, str):
             raise VarSetPropError(f"value must be str for {type_}, got {type(value).__name__}")
-    elif type_ == 'App::PropertyBool':
-        if not isinstance(value, bool):
-            raise VarSetPropError(f"value must be bool for {type_}, got {type(value).__name__}")
+    elif type_ == 'App::PropertyBool' and not isinstance(value, bool):
+        raise VarSetPropError(f"value must be bool for {type_}, got {type(value).__name__}")
 
 
 class MockQuantity:

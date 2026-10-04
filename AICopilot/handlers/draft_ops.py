@@ -131,7 +131,7 @@ class DraftOpsHandler(BaseHandler):
                     f"PR #28324) — only 'z' is available here. Requested axis: '{axis}'."
                 )
 
-            kwargs = dict(number=count, angle=angle, center=center, use_link=True)
+            kwargs = {"number": count, "angle": angle, "center": center, "use_link": True}
             if supports_axis:
                 kwargs['axis'] = axis_vector
 

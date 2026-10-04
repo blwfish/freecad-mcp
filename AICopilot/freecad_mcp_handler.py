@@ -191,6 +191,27 @@
 #                   via hot-reload instead of a restart; a fresh launch on
 #                   8.2.0+ never hit it.
 
+import contextlib
+import json
+import os
+import platform
+import queue
+import secrets
+import socket
+import struct
+import subprocess
+import sys
+import threading
+import time
+import traceback as tb_module
+import uuid
+from typing import Any
+
+import FreeCAD
+from gui_heartbeat import GuiHeartbeat
+from handler_registry import _GUI_SENSITIVE, _HANDLER_CLASS_NAMES
+from universal_selector import UniversalSelector
+
 __version__ = "8.2.2"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
@@ -209,25 +230,6 @@ REQUIRED_VERSIONS = {
     "freecad_debug": ">=1.1.0",
     "freecad_health": ">=1.0.1",
 }
-
-import json
-import os
-import platform
-import queue
-import secrets
-import socket
-import struct
-import subprocess
-import sys
-import threading
-import time
-import traceback as tb_module
-import uuid
-from typing import Any
-
-import FreeCAD
-from gui_heartbeat import GuiHeartbeat
-from universal_selector import UniversalSelector
 
 # Conditional GUI imports (not available in console mode)
 if FreeCAD.GuiUp:
@@ -443,7 +445,7 @@ except ImportError as e:
 # freshly-reloaded package object _reload_handlers builds). Test fixtures
 # that stub `handlers` as MagicMocks import the same registry, so a handler
 # added here can't silently go missing from those fixtures' stub list.
-from handler_registry import _GUI_SENSITIVE, _HANDLER_CLASS_NAMES
+# (Imported at the top of this file, alongside the other imports.)
 
 
 def _build_handler_class_map(handlers_module) -> dict[str, type]:
@@ -901,10 +903,8 @@ class FreeCADSocketServer:
         """Stop the socket server."""
         self.running = False
         if self.server_socket:
-            try:
+            with contextlib.suppress(Exception):
                 self.server_socket.close()
-            except Exception:
-                pass
         if not IS_WINDOWS and hasattr(self, 'socket_path') and self.socket_path:
             try:
                 if os.path.exists(self.socket_path):
@@ -934,10 +934,8 @@ class FreeCADSocketServer:
             return
         cache = {}
         for obj in doc.Objects:
-            try:
+            with contextlib.suppress(Exception):
                 cache[obj.Name] = bool(obj.ViewObject.Visibility)
-            except Exception:
-                pass
         self._visibility_cache = cache
 
     def _process_gui_tasks(self):
@@ -1525,12 +1523,10 @@ class FreeCADSocketServer:
                     # one retry with a small guaranteed-to-fit payload,
                     # mirroring the fallback-send already used in the
                     # except branch below.
-                    try:
+                    with contextlib.suppress(Exception):
                         send_message(client_socket, json.dumps({
                             "error": "Failed to send response (oversized or socket error); result discarded."
                         }))
-                    except Exception:
-                        pass
         except Exception as e:
             FreeCAD.Console.PrintError(f"Client handler error: {e}\n")
             if DEBUG_ENABLED:
@@ -1539,17 +1535,13 @@ class FreeCADSocketServer:
                     error=e,
                     parameters={"traceback": tb_module.format_exc()},
                 )
-            try:
+            with contextlib.suppress(Exception):
                 send_message(client_socket, json.dumps({"error": f"Server error: {e}"}))
-            except Exception:
-                pass
         finally:
             with self._active_connections_lock:
                 self._active_connections -= 1
-            try:
+            with contextlib.suppress(Exception):
                 client_socket.close()
-            except Exception:
-                pass
 
     # -----------------------------------------------------------------
     # Command processing
@@ -1642,13 +1634,11 @@ class FreeCADSocketServer:
                     duration=duration,
                 )
                 if _monitor:
-                    try:
+                    with contextlib.suppress(Exception):
                         _monitor.log_crash(
                             health_status={"tool": tool_name, "error": str(e)},
                             additional_info={"traceback": tb_module.format_exc()},
                         )
-                    except Exception:
-                        pass
             return json.dumps({"error": f"Command processing error: {e}"})
 
     # -----------------------------------------------------------------

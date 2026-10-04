@@ -44,19 +44,19 @@ def _log(msg: str) -> None:
 
 def send_message(sock: socket.socket, message_str: str) -> bool:
     """Send a length-prefixed message over socket (client-side).
-    
+
     Must match the protocol used by freecad_mcp_handler (length-prefixed framing; see MAX_MESSAGE_SIZE parity test, not a version number).
-    
+
     Protocol:
         [4 bytes: message length as uint32 big-endian][message bytes]
-    
+
     Args:
         sock: Connected socket to FreeCAD server
         message_str: JSON command string to send
-        
+
     Returns:
         True if successful, False if socket error
-        
+
     Example:
         import json
         command = json.dumps({"tool": "create_box", "args": {"length": 10}})
@@ -91,16 +91,16 @@ def send_message(sock: socket.socket, message_str: str) -> bool:
 
 def receive_message(sock: socket.socket, timeout: float = 30.0) -> str | None:
     """Receive a length-prefixed message from socket (client-side).
-    
+
     Must match the protocol used by freecad_mcp_handler (length-prefixed framing; see MAX_MESSAGE_SIZE parity test, not a version number).
-    
+
     Args:
         sock: Connected socket to FreeCAD server
         timeout: Maximum time to wait for complete message (seconds)
-        
+
     Returns:
         Decoded message string, or None if error/timeout
-        
+
     Example:
         response_str = receive_message(sock)
         if response_str:
@@ -155,14 +155,14 @@ def receive_message(sock: socket.socket, timeout: float = 30.0) -> str | None:
 
 def _recv_exact(sock: socket.socket, num_bytes: int) -> bytes | None:
     """Receive exactly num_bytes from socket, handling partial reads.
-    
+
     This is critical because recv() may return less than requested bytes,
     especially for large messages or slow networks.
-    
+
     Args:
         sock: Socket to receive from
         num_bytes: Exact number of bytes to read
-        
+
     Returns:
         Complete byte buffer of exactly num_bytes, or None if connection closed
     """

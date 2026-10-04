@@ -12,6 +12,7 @@ Skip with:
     python3 -m pytest tests/ --ignore=tests/integration
 """
 
+import contextlib
 import json
 import os
 import socket
@@ -114,12 +115,11 @@ def clean_document():
     })
     yield doc_name
     # Cleanup: close document without saving
-    try:
+    # Best-effort cleanup
+    with contextlib.suppress(Exception):
         send_command("execute_python_sync", {
             "code": f"FreeCAD.closeDocument('{doc_name}')"
         })
-    except Exception:
-        pass  # Best-effort cleanup
 
 
 # ---------------------------------------------------------------------------

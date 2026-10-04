@@ -11,6 +11,7 @@ readable summaries rather than JSON), so tests assert on substrings.
 Run with: python3 -m pytest tests/integration/test_spatial_ops.py -v
 """
 
+import contextlib
 import time
 
 import pytest
@@ -56,10 +57,8 @@ b.Placement.Base = FreeCAD.Vector(5, 5, 5)
 d.recompute()
 """)
     yield doc
-    try:
+    with contextlib.suppress(Exception):
         _exec(f"FreeCAD.closeDocument({doc!r})")
-    except Exception:
-        pass
 
 
 @pytest.fixture
@@ -78,10 +77,8 @@ b.Placement.Base = FreeCAD.Vector(20, 0, 0)  # 10mm gap on +X face
 d.recompute()
 """)
     yield doc
-    try:
+    with contextlib.suppress(Exception):
         _exec(f"FreeCAD.closeDocument({doc!r})")
-    except Exception:
-        pass
 
 
 @pytest.fixture
@@ -100,10 +97,8 @@ outer.Length = 20; outer.Width = 20; outer.Height = 20
 d.recompute()
 """)
     yield doc
-    try:
+    with contextlib.suppress(Exception):
         _exec(f"FreeCAD.closeDocument({doc!r})")
-    except Exception:
-        pass
 
 
 # ---------------------------------------------------------------------------

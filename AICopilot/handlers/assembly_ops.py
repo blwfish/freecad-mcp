@@ -11,6 +11,7 @@
 # measurement_operations.list_faces) — no GUI click-selection needed for
 # joints either, unlike fillet/chamfer.
 
+import contextlib
 from typing import Any
 
 import FreeCAD
@@ -193,10 +194,8 @@ class AssemblyOpsHandler(BaseHandler):
                 # Same orphan-object shape as add_component/create_joint --
                 # clean up rather than leave a half-configured LCS behind
                 # (finding #18).
-                try:
+                with contextlib.suppress(Exception):
                     doc.removeObject(lcs.Name)
-                except Exception:
-                    pass
                 raise
 
             self.recompute(doc)
@@ -279,10 +278,8 @@ class AssemblyOpsHandler(BaseHandler):
                 return err
 
             is_sub_assembly = False
-            try:
+            with contextlib.suppress(Exception):
                 is_sub_assembly = bool(src_obj.isDerivedFrom("Assembly::AssemblyObject"))
-            except Exception:
-                pass
             link_type = "Assembly::AssemblyLink" if is_sub_assembly else "App::Link"
 
             link_name = getattr(src_obj, 'Label', None) or object_name
@@ -300,10 +297,8 @@ class AssemblyOpsHandler(BaseHandler):
                 # Assembly::AssemblyLink sitting in the assembly's Group
                 # (full-review 2026-07-24 finding #06).
                 if link is not None:
-                    try:
+                    with contextlib.suppress(Exception):
                         doc.removeObject(link.Name)
-                    except Exception:
-                        pass
                 raise
 
             self.recompute(doc)
@@ -630,10 +625,8 @@ class AssemblyOpsHandler(BaseHandler):
                 # orphan-object shape as Phase 1's add_component bug. Clean
                 # up rather than leave a half-built joint behind.
                 if joint is not None:
-                    try:
+                    with contextlib.suppress(Exception):
                         doc.removeObject(joint.Name)
-                    except Exception:
-                        pass
                 raise
 
             self.recompute(doc)
@@ -705,10 +698,8 @@ class AssemblyOpsHandler(BaseHandler):
                 JointObject.GroundedJoint(ground, obj)
             except Exception:
                 if ground is not None:
-                    try:
+                    with contextlib.suppress(Exception):
                         doc.removeObject(ground.Name)
-                    except Exception:
-                        pass
                 raise
 
             self.recompute(doc)

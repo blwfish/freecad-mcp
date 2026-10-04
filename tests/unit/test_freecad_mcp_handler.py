@@ -28,6 +28,8 @@ sys.path.insert(0, AICOPILOT_DIR)
 # Grab the real module now, before the mock_handlers fixture (below) replaces
 # sys.modules["freecad_health"] with an import-blocking stub for the duration
 # of each test that uses it.
+import contextlib
+
 import freecad_health
 from handler_registry import _HANDLER_CLASS_NAMES
 from handlers.partdesign_ops import PartDesignOpsHandler
@@ -1293,14 +1295,16 @@ class TestCallOnGuiThreadAsync:
     # to observe the result.
 
     def test_handler_error_string_becomes_error_not_success(self, server):
-        method = lambda args: "Error fusing objects: something broke"
+        def method(args):
+            return "Error fusing objects: something broke"
         submitted = json.loads(server._call_on_gui_thread_async(method, {}, "fuse_objects"))
         job = server._async_jobs[submitted["job_id"]]
         assert job["status"] == "done"
         assert job["result"] == {"error": "Error fusing objects: something broke", "error_id": None}
 
     def test_handler_success_string_stays_success(self, server):
-        method = lambda args: "Created fusion: Fusion from 2 objects"
+        def method(args):
+            return "Created fusion: Fusion from 2 objects"
         submitted = json.loads(server._call_on_gui_thread_async(method, {}, "fuse_objects"))
         job = server._async_jobs[submitted["job_id"]]
         assert job["status"] == "done"
@@ -1318,14 +1322,16 @@ class TestCallOnGuiThreadAsync:
         reads (freecad_mcp_server.py's _generic_dispatch_tools branch checks
         poll_resp["status"], not any field inside "result"), so this is the
         exact seam the audit flagged as untested."""
-        method = lambda args: "Error fusing objects: boom"
+        def method(args):
+            return "Error fusing objects: boom"
         submitted = json.loads(server._call_on_gui_thread_async(method, {}, "fuse_objects"))
         polled = json.loads(server._poll_job({"job_id": submitted["job_id"]}))
         assert polled["status"] == "error"
         assert polled["error"] == "Error fusing objects: boom"
 
     def test_success_string_makes_poll_job_report_done_status(self, server):
-        method = lambda args: "Created fusion: Fusion from 2 objects"
+        def method(args):
+            return "Created fusion: Fusion from 2 objects"
         submitted = json.loads(server._call_on_gui_thread_async(method, {}, "fuse_objects"))
         polled = json.loads(server._poll_job({"job_id": submitted["job_id"]}))
         assert polled["status"] == "done"
@@ -1335,7 +1341,8 @@ class TestCallOnGuiThreadAsync:
         """A handler returning a dict (e.g. a JSON-shaped handler that
         returns a parsed structure rather than a json.dumps string) must
         not be treated as an error string -- only str results are checked."""
-        method = lambda args: {"error": "nested, not the top-level convention"}
+        def method(args):
+            return {"error": "nested, not the top-level convention"}
         submitted = json.loads(server._call_on_gui_thread_async(method, {}, "some_op"))
         job = server._async_jobs[submitted["job_id"]]
         assert job["result"]["success"] is True
@@ -2086,7 +2093,8 @@ class TestInstantiateHandlersOwnsTheSet:
     GUI-sensitive fact from the registry, never from its own copy."""
 
     def test_a_rebuild_removes_handlers_the_registry_no_longer_names(self, server, ss_module):
-        make = lambda *a: ("instance", a[0] is server)
+        def make(*a):
+            return ("instance", a[0] is server)
         server._instantiate_handlers({"alpha": make, "beta": make})
         assert hasattr(server, "alpha") and hasattr(server, "beta")
         # beta removed, alpha RENAMED to gamma: both old attributes must go, the record must follow.
@@ -2965,10 +2973,8 @@ class TestAsyncSubmissionVisibility:
         finally:
             ss_mod.QtCore = None
             # Drain so this test doesn't leak state into others via a shared queue.
-            try:
+            with contextlib.suppress(queue.Empty):
                 server._gui_task_queue.get_nowait()
-            except queue.Empty:
-                pass
 
     def test_active_connections_reflected_in_submission_response(self, server):
         server._active_connections = 3

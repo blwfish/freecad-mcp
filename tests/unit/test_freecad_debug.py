@@ -26,13 +26,13 @@ import freecad_debug
 
 def make_debugger(tmp_path, **kwargs):
     """Create a FreeCADDebugger pointing at a temp log dir."""
-    defaults = dict(
-        log_dir=str(tmp_path),
-        level=logging.DEBUG,
-        enable_console=False,   # suppress stdout in tests
-        enable_file=True,
-        lean_logging=False,
-    )
+    defaults = {
+        "log_dir": str(tmp_path),
+        "level": logging.DEBUG,
+        "enable_console": False,   # suppress stdout in tests
+        "enable_file": True,
+        "lean_logging": False,
+    }
     defaults.update(kwargs)
     return freecad_debug.FreeCADDebugger(**defaults)
 

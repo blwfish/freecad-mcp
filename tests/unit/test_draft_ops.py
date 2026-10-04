@@ -235,10 +235,10 @@ class TestPolarArray(unittest.TestCase):
         mock_FreeCAD.ActiveDocument = doc
 
         def old_make_polar_array(base_object, number=5, angle=360, center=None, use_link=True):
-            old_make_polar_array.calls.append(dict(
-                base_object=base_object, number=number, angle=angle,
-                center=center, use_link=use_link,
-            ))
+            old_make_polar_array.calls.append({
+                'base_object': base_object, 'number': number, 'angle': angle,
+                'center': center, 'use_link': use_link,
+            })
             return MagicMock(Name="P")
         old_make_polar_array.calls = []
         mock_Draft.make_polar_array = old_make_polar_array

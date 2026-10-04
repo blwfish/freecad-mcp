@@ -6,6 +6,7 @@ simulated by a small threaded socket server that speaks the same length-
 prefixed framing protocol and returns a canned `get_instance_info` reply.
 """
 
+import contextlib
 import json
 import os
 import socket
@@ -128,15 +129,11 @@ class FakeAICopilot:
     def stop(self):
         self._stop.set()
         if self._srv:
-            try:
+            with contextlib.suppress(OSError):
                 self._srv.close()
-            except OSError:
-                pass
         if os.path.exists(self.sock_path):
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(self.sock_path)
-            except OSError:
-                pass
 
 
 @pytest.fixture

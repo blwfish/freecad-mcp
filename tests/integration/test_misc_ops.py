@@ -32,6 +32,7 @@ Only build_sketch's pure-validation error path (layout not a dict, checked
 before FC-tools is ever imported) is CI-safe and left unmarked.
 """
 
+import contextlib
 import json
 import time
 
@@ -49,12 +50,10 @@ def clean_document():
         "document_name": doc_name,
     })
     yield doc_name
-    try:
+    with contextlib.suppress(Exception):
         send_command("execute_python_sync", {
             "code": f"FreeCAD.closeDocument('{doc_name}')"
         })
-    except Exception:
-        pass
 
 
 def _parsed(result) -> dict:

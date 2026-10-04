@@ -75,9 +75,11 @@ def _build_server() -> tuple[Server, dict]:
         yield AsyncMock(), AsyncMock()
 
     async def _setup():
-        with patch.object(Server, "run", noop_run):
-            with patch.object(mcp.server.stdio, "stdio_server", fake_stdio):
-                await freecad_mcp_server.main()
+        with (
+            patch.object(Server, "run", noop_run),
+            patch.object(mcp.server.stdio, "stdio_server", fake_stdio),
+        ):
+            await freecad_mcp_server.main()
 
     asyncio.run(_setup())
     return captured["server"], captured.get("init_options")
