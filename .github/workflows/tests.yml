@@ -28,14 +28,35 @@ jobs:
       - name: Run unit tests
         run: uv run python -m pytest tests/unit/ -v
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dev deps (from lockfile)
+        run: uv sync --frozen --group dev
+
+      # Enforces the [tool.ruff] config in pyproject.toml. ruff is pinned via
+      # uv.lock, so a new ruff release can't suddenly fail CI -- bump it
+      # deliberately (and fix whatever its new rules flag) in its own commit.
+      - name: ruff check
+        run: uv run ruff check .
+
   all-tests-pass:
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [test, lint]
     if: always()
     steps:
       - name: All matrix jobs passed
         run: |
           if [[ "${{ needs.test.result }}" != "success" ]]; then
             echo "One or more test matrix jobs failed"
+            exit 1
+          fi
+          if [[ "${{ needs.lint.result }}" != "success" ]]; then
+            echo "Lint (ruff check) failed"
             exit 1
           fi

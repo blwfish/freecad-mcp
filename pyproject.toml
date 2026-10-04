@@ -36,7 +36,12 @@ Repository = "https://github.com/blwfish/freecad-mcp"
 Issues = "https://github.com/blwfish/freecad-mcp/issues"
 
 [dependency-groups]
-dev = ["pytest>=9.1.1", "pip-audit>=2.10.1", "pytest-cov>=7.1.0"]
+dev = [
+    "pytest>=9.1.1",
+    "pip-audit>=2.10.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.9",
+]
 
 [tool.hatch.metadata]
 # Required for the mcp-agent-notes PEP 508 direct reference above --
