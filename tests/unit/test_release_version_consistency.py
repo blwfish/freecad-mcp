@@ -41,6 +41,15 @@ def _read_handler_version():
     return m.group(1)
 
 
+def _read_uv_lock_project_version():
+    path = os.path.join(REPO_ROOT, "uv.lock")
+    with open(path) as f:
+        content = f.read()
+    m = re.search(r'^name = "freecad-mcp"\nversion = "([^"]+)"', content, re.MULTILINE)
+    assert m, "could not find the freecad-mcp package entry in uv.lock"
+    return m.group(1)
+
+
 def _read_pyproject_mcp_floor():
     path = os.path.join(REPO_ROOT, "pyproject.toml")
     with open(path) as f:
@@ -82,6 +91,18 @@ class TestReleaseVersionConsistency:
             f"Version mismatch: pyproject.toml={pyproject_v!r}, "
             f"server.json={server_json_v!r}, "
             f"freecad_mcp_handler.py __version__={handler_v!r}"
+        )
+
+    def test_uv_lock_version_matches_pyproject(self):
+        """A release bump that skips `uv lock` leaves uv.lock one version
+        behind, and the next `uv run` silently rewrites it -- dirtying
+        whatever worktree ran it. (CI's `uv sync --frozen` tolerates the
+        stale entry, so nothing else catches it.)"""
+        pyproject_v = _read_pyproject_version()
+        lock_v = _read_uv_lock_project_version()
+        assert pyproject_v == lock_v, (
+            f"uv.lock records freecad-mcp {lock_v!r} but pyproject.toml is "
+            f"{pyproject_v!r} -- run `uv lock` as part of the version bump"
         )
 
 
