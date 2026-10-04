@@ -509,9 +509,10 @@ class TestSchemaDefaultMaterialization(unittest.TestCase):
         tool = next(t for t in _list_tools() if t.name == 'part_operations')
         return tool.input_schema['properties']
 
-    def test_schema_key_set_matches_bridge_schema(self):
-        from handlers.primitives import _PART_OPERATIONS_SCHEMA_KEYS
-        self.assertEqual(_PART_OPERATIONS_SCHEMA_KEYS, frozenset(self._schema_properties()))
+    def test_schema_defaults_match_bridge_schema(self):
+        from handlers.primitives import _PART_OPERATIONS_SCHEMA_DEFAULTS
+        bridge = {k: v['default'] for k, v in self._schema_properties().items() if 'default' in v}
+        self.assertEqual(_PART_OPERATIONS_SCHEMA_DEFAULTS, bridge)
 
     def test_every_primitive_tolerates_all_schema_defaults(self):
         defaults = {k: v['default'] for k, v in self._schema_properties().items() if 'default' in v}
@@ -529,6 +530,33 @@ class TestSchemaDefaultMaterialization(unittest.TestCase):
         self.assertIn("lenght", result)
         # only the typo is named -- none of the schema keys leak into the error
         self.assertNotIn("radius", result)
+
+    def test_sibling_key_with_non_default_value_rejected(self):
+        """box(size=20) must not silently fall through to the default 10mm box."""
+        for method, own, key, value in [
+            ('create_box', {'length': 20, 'width': 20, 'height': 10}, 'size', 20),
+            ('create_box', {'length': 20, 'width': 20, 'height': 10}, 'radius', 7),
+            ('create_cylinder', {'radius': 5, 'height': 10}, 'length', 30),
+            ('create_sphere', {'radius': 5}, 'width', 12),
+        ]:
+            with self.subTest(method=method, key=key):
+                result = getattr(self.handler, method)({**own, key: value})
+                self.assertIn("unknown argument", result)
+                self.assertIn(key, result)
+
+    def test_sibling_key_without_schema_default_rejected(self):
+        # `string`/`tools`/`base` are schema keys but carry no default, so a
+        # default-materializing client never sends them -- present means a mistake.
+        result = self.handler.create_box({'length': 10, 'width': 10, 'height': 10, 'string': 'x'})
+        self.assertIn("unknown argument", result)
+        self.assertIn("string", result)
+
+    def test_sibling_key_at_exact_default_tolerated_boundary(self):
+        # at the default: tolerated; one step off it: rejected (== is the contract)
+        ok = self.handler.create_box({'length': 10, 'width': 10, 'height': 10, 'radius': 5})
+        self.assertNotIn("unknown argument", ok)
+        bad = self.handler.create_box({'length': 10, 'width': 10, 'height': 10, 'radius': 5.0001})
+        self.assertIn("unknown argument", bad)
 
 
 if __name__ == '__main__':

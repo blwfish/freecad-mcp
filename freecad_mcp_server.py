@@ -7,10 +7,9 @@ Smart dispatchers aligned with FreeCAD workbench structure for optimal Claude Co
 import asyncio
 import contextlib
 import glob
-import importlib.util as _ilu
+import importlib.util
 import json
 import os
-import os as _os
 import platform
 import re
 import shutil
@@ -444,28 +443,37 @@ def _real_process_alive(instance_uuid: str | None) -> bool:
     return _pid_alive(record_pid)
 
 
+def _instance_liveness(proc, instance_uuid: str | None) -> tuple[bool, bool]:
+    """(wrapper_alive, real_process_alive) for a spawned instance.
+
+    proc.poll() also reaps the wrapper child if it has exited.
+    """
+    wrapper_alive = proc is not None and proc.poll() is None
+    return wrapper_alive, _real_process_alive(instance_uuid)
+
+
 def _wait_for_instance_exit(proc, instance_uuid: str | None, timeout: float,
-                            poll_interval: float = 0.05) -> bool:
+                            poll_interval: float = 0.05) -> tuple[bool, bool]:
     """Poll until BOTH the tracked wrapper (proc) and the real FreeCAD process
     (via its discovery record) have exited, or `timeout` seconds elapse.
 
-    Returns True once both are gone. Waiting on proc alone isn't enough: on a
-    Linux AppImage the wrapper exits first while the real freecadcmd is still
+    Returns the last (wrapper_alive, real_process_alive) observation:
+    (False, False) means both are gone. Waiting on proc alone isn't enough: on
+    a Linux AppImage the wrapper exits first while the real freecadcmd is still
     unwinding (~0.6s later), so a verdict taken the moment proc exits reports
-    a clean stop as a failure (issue #99). proc.poll() also reaps the child.
+    a clean stop as a failure (issue #99).
     """
     deadline = time.monotonic() + timeout
     while True:
-        wrapper_gone = proc is None or proc.poll() is not None
-        if wrapper_gone and not _real_process_alive(instance_uuid):
-            return True
-        if time.monotonic() >= deadline:
-            return False
+        liveness = _instance_liveness(proc, instance_uuid)
+        if not any(liveness) or time.monotonic() >= deadline:
+            return liveness
         time.sleep(poll_interval)
 
 
 def _terminate_process_group(proc, *, instance_uuid: str | None = None,
-                             term_timeout: float = 5.0, kill_timeout: float = 3.0) -> None:
+                             term_timeout: float = 5.0, kill_timeout: float = 3.0
+                             ) -> tuple[bool, bool]:
     """Terminate proc's whole process group (POSIX) rather than just proc.
 
     spawn_freecad_instance always launches with start_new_session=True, so
@@ -480,12 +488,13 @@ def _terminate_process_group(proc, *, instance_uuid: str | None = None,
     After SIGTERM this waits for the wrapper AND the real FreeCAD process
     (located via instance_uuid's discovery record) to exit, escalating to
     SIGKILL on the group only if either survives term_timeout -- so on
-    return the caller's liveness verdict isn't racing the teardown (#99).
+    return the liveness verdict isn't racing the teardown (#99).
 
-    Best-effort throughout: a group that's already gone, or one this
-    process lacks permission to signal, is not an error here -- the
-    caller (stop_freecad_instance) verifies actual liveness afterward via
-    _real_process_alive rather than trusting this function's completion.
+    Returns the final (wrapper_alive, real_process_alive); callers report
+    failure from it rather than assuming the signals worked. Best-effort
+    throughout: a group that's already gone, or one this process lacks
+    permission to signal, is not an error here -- it just shows up in the
+    returned liveness.
     """
     if sys.platform == "win32":
         # start_new_session has no effect on Windows and process groups
@@ -498,27 +507,28 @@ def _terminate_process_group(proc, *, instance_uuid: str | None = None,
                 proc.kill()
         except OSError:
             pass
-        return
+        return _instance_liveness(proc, instance_uuid)
 
     try:
         pgid = os.getpgid(proc.pid)
     except ProcessLookupError:
-        return
+        return _instance_liveness(proc, instance_uuid)
 
     try:
         os.killpg(pgid, signal.SIGTERM)
     except (ProcessLookupError, PermissionError):
-        return
+        return _instance_liveness(proc, instance_uuid)
 
-    if _wait_for_instance_exit(proc, instance_uuid, term_timeout):
-        return
+    liveness = _wait_for_instance_exit(proc, instance_uuid, term_timeout)
+    if not any(liveness):
+        return liveness
 
     try:
         os.killpg(pgid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
-        return
+        return _instance_liveness(proc, instance_uuid)
 
-    _wait_for_instance_exit(proc, instance_uuid, kill_timeout)
+    return _wait_for_instance_exit(proc, instance_uuid, kill_timeout)
 
 
 # =============================================================================
@@ -976,12 +986,12 @@ from mcp_bridge_framing import receive_message, send_message  # noqa: E402
 def _load_crash_report():
     """Load freecad_crash_report from same dir as this script, or ~/.freecad-mcp/."""
     for candidate in [
-        _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "freecad_crash_report.py"),
-        _os.path.expanduser("~/.freecad-mcp/freecad_crash_report.py"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "freecad_crash_report.py"),
+        os.path.expanduser("~/.freecad-mcp/freecad_crash_report.py"),
     ]:
-        if _os.path.isfile(candidate):
-            spec = _ilu.spec_from_file_location("freecad_crash_report", candidate)
-            mod  = _ilu.module_from_spec(spec)
+        if os.path.isfile(candidate):
+            spec = importlib.util.spec_from_file_location("freecad_crash_report", candidate)
+            mod  = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
             return mod
     return None
@@ -3582,20 +3592,24 @@ async def main():
             proc = info.get("proc")
             instance_uuid = info.get("uuid")
 
+            # Run off the event loop: the wait polls (sleeps) for up to
+            # term_timeout + kill_timeout, which would otherwise stall every
+            # other tool call and ping on this bridge.
             if proc:
-                _terminate_process_group(proc, instance_uuid=instance_uuid)
+                wrapper_alive, real_process_alive = await asyncio.to_thread(
+                    _terminate_process_group, proc, instance_uuid=instance_uuid
+                )
+            else:
+                wrapper_alive, real_process_alive = _instance_liveness(None, instance_uuid)
 
-            # Don't trust the terminate call's completion -- the tracked
-            # pid (proc) is the AppImage/wrapper launcher on Linux, not the
-            # real freecadcmd process; verify both independently (issue
-            # #90). If either is still alive, leave the instance registered
+            # Don't trust that the signals worked -- the tracked pid (proc)
+            # is the AppImage/wrapper launcher on Linux, not the real
+            # freecadcmd process, so the liveness returned above covers both
+            # independently (issue #90). If either is still alive, leave the instance registered
             # (so a retry, or manual intervention, still has something to
             # act on) and the socket/discovery files in place (so
             # list_freecad_instances keeps reporting the leak instead of
             # hiding it) rather than reporting false success.
-            wrapper_alive = proc is not None and proc.poll() is None
-            real_process_alive = _real_process_alive(instance_uuid)
-
             if wrapper_alive or real_process_alive:
                 return [types.TextContent(
                     type="text",
