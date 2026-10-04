@@ -212,7 +212,26 @@ from gui_heartbeat import GuiHeartbeat
 from handler_registry import _GUI_SENSITIVE, _HANDLER_CLASS_NAMES
 from universal_selector import UniversalSelector
 
-__version__ = "8.2.2"
+# Version: 8.2.3 - Two externally-reported bugs (#98, #99), plus lint/CI:
+#                   (#98) part_operations' primitives (box/cylinder/sphere/
+#                   cone/torus/wedge) rejected every call from an MCP client
+#                   that materializes JSON-Schema defaults (Claude Code does),
+#                   because sibling operations' default-valued params were
+#                   indistinguishable from typos. A sibling-operation key is
+#                   now tolerated only when equal to its schema default; a
+#                   non-default value or a key outside the schema still
+#                   errors. (#99) stop_freecad_instance reported failure for
+#                   a stop that succeeded ~0.6s later on a Linux AppImage,
+#                   because the liveness verdict ran the instant the wrapper
+#                   exited, before the real freecadcmd finished unwinding; it
+#                   now waits for both (escalating to SIGKILL on the group
+#                   only if either outlives the grace period), runs off the
+#                   event loop, and takes its verdict from the returned
+#                   liveness. Also: health_check_loop failure is now surfaced
+#                   instead of discarded, ruff is a required CI gate, and a
+#                   test guards uv.lock against lagging the release version.
+
+__version__ = "8.2.3"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
