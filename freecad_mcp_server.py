@@ -1043,6 +1043,37 @@ except ImportError:
         return decorator
 
 
+# Strong references to fire-and-forget background tasks. The event loop only
+# holds a WEAK reference to a task, so a task nobody else references can be
+# garbage-collected mid-run; keeping it here makes its lifetime explicit
+# rather than an accident of some enclosing frame staying alive.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _on_background_task_done(task: asyncio.Task) -> None:
+    """Done-callback for tasks registered in ``_background_tasks``.
+
+    A background loop that is meant to run for the server's whole lifetime
+    (the health monitor) must never finish on its own. If it does -- an
+    uncaught exception, an unexpected cancellation, or a plain return -- log
+    it at ERROR instead of letting monitoring silently stop. A normal
+    shutdown removes this callback before cancelling, so it never fires then.
+    """
+    _background_tasks.discard(task)
+    if task.cancelled():
+        outcome = "was cancelled unexpectedly"
+    elif task.exception() is not None:
+        exc = task.exception()
+        outcome = f"died with {type(exc).__name__}: {exc}"
+    else:
+        outcome = "returned unexpectedly (its loop should never exit)"
+    message = f"Background task {task.get_name()!r} {outcome}"
+    if debugger:
+        debugger.logger.error(message)
+    else:
+        print(message, file=sys.stderr)
+
+
 # Sent verbatim in the `initialize` handshake's InitializeResult.instructions
 # field -- the one channel that reaches EVERY MCP client regardless of which
 # assistant or editor is on the other end, unlike this repo's own CLAUDE.md
@@ -3644,7 +3675,9 @@ async def main():
 
     # Start health monitoring in background if enabled
     if DEBUG_ENABLED and monitor:
-        health_task = asyncio.create_task(health_check_loop())
+        health_task = asyncio.create_task(health_check_loop(), name="health_check_loop")
+        _background_tasks.add(health_task)
+        health_task.add_done_callback(_on_background_task_done)
 
     # Run the server
     import mcp.server.stdio
@@ -3665,6 +3698,13 @@ async def main():
                 ),
             )
     finally:
+        # Stop the health task as an EXPECTED exit: drop the done-callback
+        # first so this deliberate cancel isn't logged as a failure.
+        if DEBUG_ENABLED and monitor:
+            health_task.remove_done_callback(_on_background_task_done)
+            health_task.cancel()
+            _background_tasks.discard(health_task)
+
         # Export debug info on shutdown if debugging enabled
         if DEBUG_ENABLED and debugger:
             debugger.logger.info("="*80)
