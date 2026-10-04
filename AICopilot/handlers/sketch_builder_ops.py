@@ -18,6 +18,7 @@ path, with no override):
   4. /Volumes/Files/claude/FC-tools (hardcoded fallback for dev machine)
 """
 
+import contextlib
 import json
 import os
 import sys
@@ -116,10 +117,9 @@ def _read_spreadsheet_params(doc, spreadsheet_name: str) -> dict[str, float]:
         alias = cell.get('alias', '')
         if not alias:
             continue
-        try:
+        # skip non-numeric cells
+        with contextlib.suppress(Exception):
             params[alias] = float(ss.get(alias))
-        except Exception:
-            pass  # skip non-numeric cells
     return params
 
 

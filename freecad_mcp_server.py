@@ -5,9 +5,12 @@ Smart dispatchers aligned with FreeCAD workbench structure for optimal Claude Co
 """
 
 import asyncio
+import contextlib
 import glob
+import importlib.util as _ilu
 import json
 import os
+import os as _os
 import platform
 import re
 import shutil
@@ -358,10 +361,8 @@ def _scan_discovery(prune_stale: bool = True) -> list[dict]:
             # Corrupt or unreadable — drop it.
             _emit_discovery_warning(f"_scan_discovery: dropping {name}: unreadable/corrupt JSON: {e}.")
             if prune_stale:
-                try:
+                with contextlib.suppress(OSError):
                     os.unlink(path)
-                except OSError:
-                    pass
             continue
         if not isinstance(data, dict):
             # Valid JSON but not an object (list/number/null) — not a
@@ -398,14 +399,10 @@ def _scan_discovery(prune_stale: bool = True) -> list[dict]:
             # (AICopilot side); without this the socket file leaks into
             # /tmp permanently, since nothing else will ever revisit it —
             # every future instance picks a fresh random UUID path.
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(path)
-            except OSError:
-                pass
-            try:
+            with contextlib.suppress(OSError):
                 os.remove(sock_path)
-            except OSError:
-                pass
     return live
 
 
@@ -471,10 +468,8 @@ def _terminate_process_group(proc, *, term_timeout: float = 5.0, kill_timeout: f
             proc.terminate()
             proc.wait(timeout=term_timeout)
         except subprocess.TimeoutExpired:
-            try:
+            with contextlib.suppress(OSError):
                 proc.kill()
-            except OSError:
-                pass
         except OSError:
             pass
         return
@@ -500,10 +495,8 @@ def _terminate_process_group(proc, *, term_timeout: float = 5.0, kill_timeout: f
     except (ProcessLookupError, PermissionError):
         return
 
-    try:
+    with contextlib.suppress(subprocess.TimeoutExpired):
         proc.wait(timeout=kill_timeout)
-    except subprocess.TimeoutExpired:
-        pass
 
 
 # =============================================================================
@@ -951,12 +944,11 @@ sys.path.insert(0, _this_dir)
 # same as before.
 sys.path.insert(0, os.path.join(_this_dir, "AICopilot"))
 
-# Import message framing for v2.1.1 protocol
-# ── Crash diagnostics (always enabled — no optional flag) ──────────────────
-import importlib.util as _ilu
-import os as _os
+# Import message framing for v2.1.1 protocol. Must stay below the
+# sys.path.insert() calls above: mcp_bridge_framing lives next to this file.
+from mcp_bridge_framing import receive_message, send_message  # noqa: E402
 
-from mcp_bridge_framing import receive_message, send_message
+# ── Crash diagnostics (always enabled — no optional flag) ──────────────────
 
 
 def _load_crash_report():
@@ -2801,10 +2793,8 @@ async def main():
             # success paths, after connect() had already returned. This
             # runs on every exit (return or exception), including that one.
             if sock is not None:
-                try:
+                with contextlib.suppress(OSError):
                     sock.close()
-                except OSError:
-                    pass
 
     async def poll_job_until_done(job_id: str, context: str = "Operation") -> dict:
         """Poll a FreeCAD async job with progressive backoff.
@@ -3411,7 +3401,9 @@ async def main():
             # actual evidence behind instead of a bare timeout message.
             launch_log_path = f"{sock_path}.launch.log"
             try:
-                launch_log = open(launch_log_path, "wb")
+                # Not a `with`: the fd must outlive this block (handed to
+                # Popen below) and is closed explicitly right after.
+                launch_log = open(launch_log_path, "wb")  # noqa: SIM115
             except OSError:
                 launch_log = subprocess.DEVNULL
 
@@ -3600,20 +3592,16 @@ async def main():
 
             # Clean up socket file if it still exists
             if os.path.exists(target_path):
-                try:
+                with contextlib.suppress(OSError):
                     os.remove(target_path)
-                except OSError:
-                    pass
 
             # Clean up the discovery record now, rather than waiting for a
             # future _scan_discovery(prune_stale=True) call to notice --
             # otherwise list_freecad_instances/check_freecad_connection
             # keep reporting an instance that's already confirmed gone.
             if instance_uuid:
-                try:
+                with contextlib.suppress(OSError):
                     os.unlink(_discovery_file_path(instance_uuid))
-                except OSError:
-                    pass
 
             _ctx.unregister(target_path)
 

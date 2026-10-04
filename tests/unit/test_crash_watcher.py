@@ -22,6 +22,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot"))
 
+import contextlib
+
 import crash_watcher
 
 
@@ -35,10 +37,8 @@ def reset_module_state():
     crash_watcher._write_failures = 0
     crash_watcher._last_write_failed = False
     for path in (crash_watcher.LAST_OP_FILE, crash_watcher.LAST_OP_FILE + ".tmp"):
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.unlink(path)
-        except FileNotFoundError:
-            pass
 
 
 class TestSetCurrentOpSuccess:

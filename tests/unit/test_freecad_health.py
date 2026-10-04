@@ -27,14 +27,14 @@ import freecad_health
 
 def make_monitor(tmp_path, **kwargs):
     """Create a FreeCADHealthMonitor with temp dirs."""
-    defaults = dict(
-        socket_path=str(tmp_path / "test.sock"),
-        crash_log_dir=str(tmp_path / "crashes"),
-        heartbeat_interval=1.0,
-        max_restart_attempts=3,
-        restart_cooldown=0.0,
-        lean_logging=True,
-    )
+    defaults = {
+        "socket_path": str(tmp_path / "test.sock"),
+        "crash_log_dir": str(tmp_path / "crashes"),
+        "heartbeat_interval": 1.0,
+        "max_restart_attempts": 3,
+        "restart_cooldown": 0.0,
+        "lean_logging": True,
+    }
     defaults.update(kwargs)
     return freecad_health.FreeCADHealthMonitor(**defaults)
 
@@ -529,9 +529,8 @@ class TestAttemptRestart:
         with patch.object(m, "check_freecad_process", side_effect=[
             (True, 123),   # initial check
             (False, None), # after SIGTERM
-        ]):
-            with patch.object(m, "cleanup_socket"):
-                result = m.attempt_restart()
+        ]), patch.object(m, "cleanup_socket"):
+            result = m.attempt_restart()
 
         mock_kill.assert_called_once_with(123, __import__("signal").SIGTERM)
         assert m.restart_attempts == 1
@@ -546,9 +545,8 @@ class TestAttemptRestart:
         with patch.object(m, "check_freecad_process", side_effect=[
             (True, 456),  # initial check
             (True, 456),  # still running after SIGTERM
-        ]):
-            with patch.object(m, "cleanup_socket"):
-                m.attempt_restart()
+        ]), patch.object(m, "cleanup_socket"):
+            m.attempt_restart()
 
         import signal
         assert mock_kill.call_args_list == [

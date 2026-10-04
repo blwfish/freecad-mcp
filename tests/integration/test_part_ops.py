@@ -5,6 +5,7 @@ loft, sweep, compound, check_geometry.
 All operations route through part_operations dispatcher.
 """
 
+import contextlib
 import time
 
 import pytest
@@ -32,12 +33,10 @@ def clean_document():
         "document_name": doc_name,
     })
     yield doc_name
-    try:
+    with contextlib.suppress(Exception):
         send_command("execute_python_sync", {
             "code": f"FreeCAD.closeDocument('{doc_name}')"
         })
-    except Exception:
-        pass
 
 
 @pytest.fixture

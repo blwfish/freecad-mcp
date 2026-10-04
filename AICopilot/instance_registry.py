@@ -17,6 +17,7 @@ must agree on:
 
 __version__ = "1.1.0"
 
+import contextlib
 import glob
 import json
 import os
@@ -108,10 +109,8 @@ def write_discovery(
     # pre-existed with looser permissions from an older version of this
     # code, os.replace still adopts the SOURCE's mode on POSIX, so this
     # stays defensive rather than load-bearing.
-    try:
+    with contextlib.suppress(OSError):
         os.chmod(path, 0o600)
-    except OSError:
-        pass
     return path
 
 
@@ -240,10 +239,8 @@ def scan_discovery(prune_stale: bool = True) -> list[dict]:
             # into why.
             _log_dropped_record(path, f"unreadable/corrupt JSON: {e}")
             if prune_stale:
-                try:
+                with contextlib.suppress(OSError):
                     os.unlink(path)
-                except OSError:
-                    pass
             continue
         if not isinstance(data, dict):
             # Valid JSON but not an object (list/number/null) — not a
@@ -295,14 +292,10 @@ def scan_discovery(prune_stale: bool = True) -> list[dict]:
             # socket file itself. The socket file matters too: nothing
             # else will ever revisit it, since every future instance
             # picks a fresh random UUID path.
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(path)
-            except OSError:
-                pass
-            try:
+            with contextlib.suppress(OSError):
                 os.remove(sock_path)
-            except OSError:
-                pass
     return live
 
 

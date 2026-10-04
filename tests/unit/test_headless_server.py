@@ -24,6 +24,7 @@ to get silently name-mangled when written from inside a class method
 elsewhere in this codebase.
 """
 
+import contextlib
 import importlib.util
 import os
 import signal
@@ -110,10 +111,9 @@ def hs(monkeypatch):
     spec = importlib.util.spec_from_file_location("headless_server", HEADLESS_SERVER_PATH)
     mod = importlib.util.module_from_spec(spec)
     sys.modules["headless_server"] = mod
-    try:
+    # expected: the priming main() call above hit its fast-fail path
+    with contextlib.suppress(SystemExit):
         spec.loader.exec_module(mod)
-    except SystemExit:
-        pass  # expected: the priming main() call above hit its fast-fail path
 
     yield mod
 

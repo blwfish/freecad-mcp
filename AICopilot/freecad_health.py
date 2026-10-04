@@ -63,7 +63,7 @@ class FreeCADHealthMonitor:
     ):
         """
         Initialize the health monitor.
-        
+
         Args:
             socket_path: Path to the MCP socket
             heartbeat_interval: Interval between health checks (seconds)
@@ -107,10 +107,10 @@ class FreeCADHealthMonitor:
     def check_socket_responsive(self, timeout: float = 2.0) -> tuple[bool, str | None]:
         """
         Check if the MCP socket is responsive.
-        
+
         Args:
             timeout: Socket connection timeout in seconds
-        
+
         Returns:
             Tuple of (is_responsive, error_message)
         """
@@ -168,7 +168,7 @@ class FreeCADHealthMonitor:
     def check_freecad_process(self) -> tuple[bool, int | None]:
         """
         Check if FreeCAD process is running.
-        
+
         Returns:
             Tuple of (is_running, pid)
         """
@@ -218,7 +218,7 @@ class FreeCADHealthMonitor:
     def perform_health_check(self) -> dict:
         """
         Perform comprehensive health check.
-        
+
         Returns:
             Dictionary containing health status
         """
@@ -278,7 +278,7 @@ class FreeCADHealthMonitor:
     def log_crash(self, health_status: dict, additional_info: dict | None = None):
         """
         Log a crash event with full details.
-        
+
         Args:
             health_status: Current health status
             additional_info: Additional crash information
@@ -412,10 +412,10 @@ class FreeCADHealthMonitor:
     def export_crash_report(self, output_file: str | None = None) -> str:
         """
         Export comprehensive crash report.
-        
+
         Args:
             output_file: Output file path (optional)
-        
+
         Returns:
             Path to the crash report
         """

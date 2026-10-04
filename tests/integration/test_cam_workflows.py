@@ -10,6 +10,7 @@ Run with:
 Requires FreeCAD 1.2+ (CAM workbench with new tool API).
 """
 
+import contextlib
 import json
 import os
 import tempfile
@@ -95,12 +96,10 @@ pad.Shape.isValid()
 
     yield doc_name
 
-    try:
+    with contextlib.suppress(Exception):
         send_command("execute_python_sync", {
             "code": f"FreeCAD.closeDocument('{doc_name}')"
         })
-    except Exception:
-        pass
 
 
 # ---------------------------------------------------------------------------

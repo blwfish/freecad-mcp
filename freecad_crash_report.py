@@ -45,6 +45,7 @@ once the recovery loop is broken.
 
 __version__ = "1.1.0"
 
+import contextlib
 import glob
 import json
 import os
@@ -378,10 +379,8 @@ def _fc_process_info() -> dict:
             if procs:
                 info["running"]   = True
                 info["processes"] = procs
-                try:
+                with contextlib.suppress(ValueError):
                     info["pid"] = int(procs[0].split()[0])
-                except ValueError:
-                    pass
     except Exception:
         pass
     return info

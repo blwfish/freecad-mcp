@@ -5,6 +5,7 @@
 # objects bind to via expressions. See SPEC-varset-operations.md for the
 # FreeCAD source citations backing the design choices below.
 
+import contextlib
 import json
 import re
 from typing import Any
@@ -296,10 +297,8 @@ class VarSetOpsHandler(BaseHandler):
             if unit_string is not None:
                 result["unit_string"] = unit_string
             if type_id == 'App::PropertyEnumeration':
-                try:
+                with contextlib.suppress(Exception):
                     result["options"] = list(varset.getEnumerationsOfProperty(name) or [])
-                except Exception:
-                    pass
 
             return json.dumps(result)
 
@@ -398,10 +397,8 @@ class VarSetOpsHandler(BaseHandler):
                 if unit_string is not None:
                     entry["unit_string"] = unit_string
                 if type_id == 'App::PropertyEnumeration':
-                    try:
+                    with contextlib.suppress(Exception):
                         entry["options"] = list(varset.getEnumerationsOfProperty(name) or [])
-                    except Exception:
-                        pass
                 properties.append(entry)
 
             return json.dumps({

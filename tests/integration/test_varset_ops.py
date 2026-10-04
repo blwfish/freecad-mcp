@@ -16,6 +16,7 @@ completely unverified against a live process.
 Run with: python3 -m pytest tests/integration/test_varset_ops.py -v
 """
 
+import contextlib
 import json
 import time
 
@@ -55,10 +56,8 @@ def doc_with_varset():
                                   "document_name": doc_name})
     _vs({"operation": "create_varset", "varset_name": varset_name})
     yield doc_name, varset_name
-    try:
+    with contextlib.suppress(Exception):
         _exec(f"FreeCAD.closeDocument({doc_name!r})")
-    except Exception:
-        pass
 
 
 # ---------------------------------------------------------------------------

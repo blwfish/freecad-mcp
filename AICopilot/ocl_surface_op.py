@@ -137,10 +137,14 @@ def _load_stl(stl_file, ocl):
 
             for i in range(3):
                 x, y = v[i * 3], v[i * 3 + 1]
-                if x < x_min: x_min = x
-                if x > x_max: x_max = x
-                if y < y_min: y_min = y
-                if y > y_max: y_max = y
+                if x < x_min:
+                    x_min = x
+                if x > x_max:
+                    x_max = x
+                if y < y_min:
+                    y_min = y
+                if y > y_max:
+                    y_max = y
 
     return stl_surf, x_min, x_max, y_min, y_max
 

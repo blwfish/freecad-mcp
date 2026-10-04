@@ -123,34 +123,40 @@ class WindowDoorHelpers:
 
         # Find all Cut operations that use this wall
         for obj in self.doc.Objects:
-            if obj.TypeId == "Part::Cut":
-                # Check if this cut uses our wall as the base
-                if hasattr(obj, 'Base') and obj.Base:
-                    if obj.Base == wall or (hasattr(obj.Base, 'Label') and obj.Base.Label == wall.Label):
-                        # Found a cut on this wall
-                        if hasattr(obj, 'Tool') and obj.Tool:
-                            tool = obj.Tool
-                            bbox = tool.Shape.BoundBox if hasattr(tool, 'Shape') else None
+            if (
+                obj.TypeId == "Part::Cut"
+                and hasattr(obj, 'Base')
+                and obj.Base
+                and (
+                    obj.Base == wall
+                    or (hasattr(obj.Base, 'Label') and obj.Base.Label == wall.Label)
+                )
+                and hasattr(obj, 'Tool')
+                and obj.Tool
+            ):
+                # Found a cut on this wall that has a tool
+                tool = obj.Tool
+                bbox = tool.Shape.BoundBox if hasattr(tool, 'Shape') else None
 
-                            if bbox:
-                                hole = {
-                                    'cut_obj': obj,
-                                    'cut_name': obj.Name,
-                                    'cut_label': obj.Label,
-                                    'tool': tool,
-                                    'tool_name': tool.Name,
-                                    'tool_label': tool.Label,
-                                    'bbox': bbox,
-                                    'width': bbox.XLength,
-                                    'height': bbox.YLength,
-                                    'depth': bbox.ZLength,
-                                    'position': Vector(
-                                        bbox.XMin + bbox.XLength / 2,
-                                        bbox.YMin + bbox.YLength / 2,
-                                        bbox.ZMin + bbox.ZLength / 2,
-                                    ),
-                                }
-                                holes.append(hole)
+                if bbox:
+                    hole = {
+                        'cut_obj': obj,
+                        'cut_name': obj.Name,
+                        'cut_label': obj.Label,
+                        'tool': tool,
+                        'tool_name': tool.Name,
+                        'tool_label': tool.Label,
+                        'bbox': bbox,
+                        'width': bbox.XLength,
+                        'height': bbox.YLength,
+                        'depth': bbox.ZLength,
+                        'position': Vector(
+                            bbox.XMin + bbox.XLength / 2,
+                            bbox.YMin + bbox.YLength / 2,
+                            bbox.ZMin + bbox.ZLength / 2,
+                        ),
+                    }
+                    holes.append(hole)
 
         return holes
 
@@ -209,13 +215,12 @@ class WindowDoorHelpers:
                 print(f"  Warning: could not read '{alias}' from spreadsheet: {e}")
 
         # If we didn't find all params, try the master's bounding box as fallback
-        if 'width' not in dims or 'height' not in dims:
-            if hasattr(master, 'Shape'):
-                bbox = master.Shape.BoundBox
-                if 'width' not in dims:
-                    dims['width'] = bbox.XLength
-                if 'height' not in dims:
-                    dims['height'] = bbox.YLength
+        if ('width' not in dims or 'height' not in dims) and hasattr(master, 'Shape'):
+            bbox = master.Shape.BoundBox
+            if 'width' not in dims:
+                dims['width'] = bbox.XLength
+            if 'height' not in dims:
+                dims['height'] = bbox.YLength
 
         return dims
 

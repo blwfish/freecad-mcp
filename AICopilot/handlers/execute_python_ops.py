@@ -18,6 +18,8 @@ if FreeCAD.GuiUp:
 else:
     FreeCADGui = None
 
+import contextlib
+
 from .base import BaseHandler, autosave_before
 
 # CLAUDE.md's "prefer primary tool over execute_python" rule, made
@@ -156,10 +158,8 @@ class ExecutePythonOpsHandler(BaseHandler):
         except OSError:
             pass
         state["thread"].join(timeout=1.0)
-        try:
+        with contextlib.suppress(OSError):
             os.close(state["read_fd"])
-        except OSError:
-            pass
         with state["lock"]:
             return bytes(state["buf"]).decode("utf-8", errors="replace").strip()
 

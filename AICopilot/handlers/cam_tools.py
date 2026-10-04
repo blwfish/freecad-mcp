@@ -362,9 +362,9 @@ class CAMToolsHandler(BaseHandler):
             # Check if tool is in use by any tool controllers
             in_use = []
             for obj in doc.Objects:
-                if hasattr(obj, 'SpindleSpeed'):  # FC 1.2: tool controllers are Path::FeaturePython
-                    if hasattr(obj, 'Tool') and obj.Tool == tool:
-                        in_use.append(obj.Label)
+                # FC 1.2: tool controllers are Path::FeaturePython
+                if hasattr(obj, 'SpindleSpeed') and hasattr(obj, 'Tool') and obj.Tool == tool:
+                    in_use.append(obj.Label)
 
             if in_use:
                 error = Exception(f"Cannot delete tool '{tool_name}' - it is used by tool controller(s): {', '.join(in_use)}")

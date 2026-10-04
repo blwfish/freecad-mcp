@@ -27,14 +27,8 @@ _DOT_THRESHOLD = 0.0
 
 def _dot(v1, v2) -> float:
     """Dot product of two 3-vectors (iterables or objects with .x/.y/.z)."""
-    if hasattr(v1, 'x'):
-        a = (v1.x, v1.y, v1.z)
-    else:
-        a = tuple(v1)
-    if hasattr(v2, 'x'):
-        b = (v2.x, v2.y, v2.z)
-    else:
-        b = tuple(v2)
+    a = (v1.x, v1.y, v1.z) if hasattr(v1, 'x') else tuple(v1)
+    b = (v2.x, v2.y, v2.z) if hasattr(v2, 'x') else tuple(v2)
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
 
@@ -46,10 +40,7 @@ def _magnitude(v) -> float:
 
 def _normalize(v):
     """Return unit vector as (x, y, z) tuple."""
-    if hasattr(v, 'x'):
-        coords = (v.x, v.y, v.z)
-    else:
-        coords = tuple(float(x) for x in v)
+    coords = (v.x, v.y, v.z) if hasattr(v, 'x') else tuple(float(x) for x in v)
     mag = math.sqrt(sum(x * x for x in coords))
     if mag < 1e-12:
         return (0.0, 0.0, 0.0)

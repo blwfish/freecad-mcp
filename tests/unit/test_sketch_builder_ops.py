@@ -571,9 +571,9 @@ class TestEnsureImportable(unittest.TestCase):
 
     def test_raises_clear_error_when_nothing_resolves(self):
         mock_FreeCAD.ParamGet = MagicMock(side_effect=RuntimeError("no prefs"))
-        with patch('os.path.isdir', return_value=False):
-            with self.assertRaises(ImportError) as ctx:
-                _ensure_sketch_builder_importable()
+        with patch('os.path.isdir', return_value=False), \
+                self.assertRaises(ImportError) as ctx:
+            _ensure_sketch_builder_importable()
         self.assertIn('FREECAD_SKETCH_BUILDER_PATH', str(ctx.exception))
 
     def test_idempotent(self):

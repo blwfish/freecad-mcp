@@ -24,6 +24,7 @@ off (the production default), which is what every test below exercises.
 Run with: python3 -m pytest tests/integration/test_capture_state_performance.py -v
 """
 
+import contextlib
 import os
 import shutil
 import time
@@ -86,12 +87,11 @@ def equipment_hut_document(tmp_path):
 
     yield doc_name
 
-    try:
+    # Best-effort cleanup
+    with contextlib.suppress(Exception):
         send_command("execute_python_sync", {
             "code": f"FreeCAD.closeDocument('{doc_name}')"
         })
-    except Exception:
-        pass  # Best-effort cleanup
 
 
 @pytest.mark.real_document

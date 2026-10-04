@@ -11,6 +11,7 @@ These tests do roundtrips through real Mesh/Part modules:
 Run with: python3 -m pytest tests/integration/test_mesh_ops.py -v
 """
 
+import contextlib
 import os
 import tempfile
 import time
@@ -50,10 +51,8 @@ b.Length = 20; b.Width = 15; b.Height = 10
 d.recompute()
 """)
     yield doc
-    try:
+    with contextlib.suppress(Exception):
         _exec(f"FreeCAD.closeDocument({doc!r})")
-    except Exception:
-        pass
 
 
 @pytest.fixture

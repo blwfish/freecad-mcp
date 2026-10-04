@@ -13,6 +13,7 @@ FreeCAD's Init.py runs before this script, so the AICopilot module directory is
 already on sys.path and `from freecad_mcp_handler import FreeCADSocketServer` works.
 """
 
+import contextlib
 import os
 import signal
 import sys
@@ -124,10 +125,8 @@ def main():
     try:
         import instance_registry
         fc_version = None
-        try:
+        with contextlib.suppress(Exception):
             fc_version = ".".join(str(p) for p in FreeCAD.Version()[:3])
-        except Exception:
-            pass
         instance_registry.write_discovery(
             server.instance_uuid,
             server.socket_path,

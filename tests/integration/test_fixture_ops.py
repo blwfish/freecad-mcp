@@ -11,6 +11,7 @@ teardown so tests never collide with or leave behind real fixtures like
 fixtures/shingle_complex_roof/.
 """
 
+import contextlib
 import json
 import os
 import shutil
@@ -45,12 +46,10 @@ def clean_document():
         "document_name": doc_name,
     })
     yield doc_name
-    try:
+    with contextlib.suppress(Exception):
         send_command("execute_python_sync", {
             "code": f"FreeCAD.closeDocument('{doc_name}')"
         })
-    except Exception:
-        pass
 
 
 @pytest.fixture

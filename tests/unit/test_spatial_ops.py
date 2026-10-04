@@ -109,10 +109,15 @@ def make_box(name="Box", xmin=0, ymin=0, zmin=0, xlen=10, ylen=10, zlen=10):
 
     shape = MagicMock()
     bb = MagicMock()
-    bb.XMin = float(xmin); bb.XMax = float(xmin + xlen)
-    bb.YMin = float(ymin); bb.YMax = float(ymin + ylen)
-    bb.ZMin = float(zmin); bb.ZMax = float(zmin + zlen)
-    bb.XLength = float(xlen); bb.YLength = float(ylen); bb.ZLength = float(zlen)
+    bb.XMin = float(xmin)
+    bb.XMax = float(xmin + xlen)
+    bb.YMin = float(ymin)
+    bb.YMax = float(ymin + ylen)
+    bb.ZMin = float(zmin)
+    bb.ZMax = float(zmin + zlen)
+    bb.XLength = float(xlen)
+    bb.YLength = float(ylen)
+    bb.ZLength = float(zlen)
     bb.intersect = MagicMock(return_value=False)  # default: no BB overlap
     shape.BoundBox = bb
     shape.Volume = float(xlen * ylen * zlen)

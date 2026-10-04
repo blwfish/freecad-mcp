@@ -10,6 +10,7 @@ GUI click-selection needed. Two plain Part::Box components are sufficient
 fixtures for every test in this file.
 """
 
+import contextlib
 import re
 import time
 
@@ -28,12 +29,10 @@ def clean_document():
         "document_name": doc_name,
     })
     yield doc_name
-    try:
+    with contextlib.suppress(Exception):
         send_command("execute_python_sync", {
             "code": f"FreeCAD.closeDocument('{doc_name}')"
         })
-    except Exception:
-        pass
 
 
 def _add_component(object_name: str, assembly_name: str = "Assy") -> str:
