@@ -482,5 +482,54 @@ class TestUnknownArgKeys(unittest.TestCase):
         self.assertNotIn("unknown argument", result)
 
 
+class TestSchemaDefaultMaterialization(unittest.TestCase):
+    """Issue #98: clients that materialize JSON-Schema defaults send every
+    sibling operation's params on each call. Those keys are in the dispatcher
+    schema, so they must be tolerated; keys outside the schema stay typos."""
+
+    # Per-primitive call args, deliberately excluding the keys the primitive
+    # itself doesn't own.
+    CALLS = {
+        'create_box': {'length': 20, 'width': 20, 'height': 10},
+        'create_cylinder': {'radius': 5, 'height': 10},
+        'create_sphere': {'radius': 5},
+        'create_cone': {'radius1': 5, 'radius2': 0, 'height': 10},
+        'create_torus': {'radius1': 10, 'radius2': 3},
+        'create_wedge': {'xmin': 0},
+    }
+
+    def setUp(self):
+        reset_mocks()
+        mock_FreeCAD.ActiveDocument = make_mock_doc()
+        self.handler = make_handler(PrimitivesHandler)
+
+    @staticmethod
+    def _schema_properties():
+        from tests.unit.test_mcp_protocol import _list_tools
+        tool = next(t for t in _list_tools() if t.name == 'part_operations')
+        return tool.input_schema['properties']
+
+    def test_schema_key_set_matches_bridge_schema(self):
+        from handlers.primitives import _PART_OPERATIONS_SCHEMA_KEYS
+        self.assertEqual(_PART_OPERATIONS_SCHEMA_KEYS, frozenset(self._schema_properties()))
+
+    def test_every_primitive_tolerates_all_schema_defaults(self):
+        defaults = {k: v['default'] for k, v in self._schema_properties().items() if 'default' in v}
+        self.assertTrue(defaults, "schema carries no defaults -- test no longer exercises #98")
+        for method, own in self.CALLS.items():
+            with self.subTest(method=method):
+                args = {**defaults, **own, 'operation': method[len('create_'):]}
+                result = getattr(self.handler, method)(args)
+                self.assertNotIn("unknown argument", result)
+
+    def test_typo_still_rejected_alongside_schema_defaults(self):
+        defaults = {k: v['default'] for k, v in self._schema_properties().items() if 'default' in v}
+        result = self.handler.create_box({**defaults, 'lenght': 50, 'width': 10, 'height': 10})
+        self.assertIn("unknown argument", result)
+        self.assertIn("lenght", result)
+        # only the typo is named -- none of the schema keys leak into the error
+        self.assertNotIn("radius", result)
+
+
 if __name__ == '__main__':
     unittest.main()

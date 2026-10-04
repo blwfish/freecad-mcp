@@ -24,9 +24,26 @@ from .base import NO_ACTIVE_DOCUMENT_ERROR, BaseHandler
 
 _INJECTED_KEYS = frozenset({"operation", "_continue_selection", "_operation_id"})
 
+# Every property in the bridge's flat `part_operations` input schema
+# (freecad_mcp_server.py). The schema is shared by all 23 operations and gives
+# operation-specific params a `default`, so an MCP client that materializes
+# defaults (Claude Code does) sends all of them on every call -- a `box` call
+# arrives carrying `radius`, `spacing_x`, `tracking`, ... (issue #98). Those
+# are sibling-operation keys, not typos, so they're tolerated (and ignored);
+# only keys absent from the schema entirely ('lenght') are rejected.
+# Mirrors the bridge schema by hand because the handler runs inside FreeCAD
+# and can't import the bridge; tests/unit/test_primitives.py asserts parity.
+_PART_OPERATIONS_SCHEMA_KEYS = frozenset({
+    'angle', 'axis', 'base', 'count', 'font_file', 'height', 'length', 'name',
+    'object_name', 'objects', 'operation', 'path_sketch', 'profile_sketch',
+    'radius', 'radius1', 'radius2', 'scale_factor', 'size', 'sketches',
+    'spacing_x', 'spacing_y', 'spacing_z', 'string', 'tools', 'tracking',
+    'width', 'x', 'y', 'z',
+})
+
 
 def _check_unknown_keys(primitive: str, args: dict, allowed: frozenset) -> str | None:
-    unknown = set(args) - allowed - _INJECTED_KEYS
+    unknown = set(args) - allowed - _PART_OPERATIONS_SCHEMA_KEYS - _INJECTED_KEYS
     if unknown:
         return f"Error creating {primitive}: unknown argument(s) {sorted(unknown)} — check for typos"
     return None
