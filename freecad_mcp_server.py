@@ -444,7 +444,28 @@ def _real_process_alive(instance_uuid: str | None) -> bool:
     return _pid_alive(record_pid)
 
 
-def _terminate_process_group(proc, *, term_timeout: float = 5.0, kill_timeout: float = 3.0) -> None:
+def _wait_for_instance_exit(proc, instance_uuid: str | None, timeout: float,
+                            poll_interval: float = 0.05) -> bool:
+    """Poll until BOTH the tracked wrapper (proc) and the real FreeCAD process
+    (via its discovery record) have exited, or `timeout` seconds elapse.
+
+    Returns True once both are gone. Waiting on proc alone isn't enough: on a
+    Linux AppImage the wrapper exits first while the real freecadcmd is still
+    unwinding (~0.6s later), so a verdict taken the moment proc exits reports
+    a clean stop as a failure (issue #99). proc.poll() also reaps the child.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        wrapper_gone = proc is None or proc.poll() is not None
+        if wrapper_gone and not _real_process_alive(instance_uuid):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(poll_interval)
+
+
+def _terminate_process_group(proc, *, instance_uuid: str | None = None,
+                             term_timeout: float = 5.0, kill_timeout: float = 3.0) -> None:
     """Terminate proc's whole process group (POSIX) rather than just proc.
 
     spawn_freecad_instance always launches with start_new_session=True, so
@@ -455,6 +476,11 @@ def _terminate_process_group(proc, *, term_timeout: float = 5.0, kill_timeout: f
     the real FreeCAD process (and its FUSE mount helper) running as
     orphans. Signalling the whole group reaches every descendant that
     hasn't detached into its own session.
+
+    After SIGTERM this waits for the wrapper AND the real FreeCAD process
+    (located via instance_uuid's discovery record) to exit, escalating to
+    SIGKILL on the group only if either survives term_timeout -- so on
+    return the caller's liveness verdict isn't racing the teardown (#99).
 
     Best-effort throughout: a group that's already gone, or one this
     process lacks permission to signal, is not an error here -- the
@@ -484,19 +510,15 @@ def _terminate_process_group(proc, *, term_timeout: float = 5.0, kill_timeout: f
     except (ProcessLookupError, PermissionError):
         return
 
-    try:
-        proc.wait(timeout=term_timeout)
+    if _wait_for_instance_exit(proc, instance_uuid, term_timeout):
         return
-    except subprocess.TimeoutExpired:
-        pass
 
     try:
         os.killpg(pgid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
         return
 
-    with contextlib.suppress(subprocess.TimeoutExpired):
-        proc.wait(timeout=kill_timeout)
+    _wait_for_instance_exit(proc, instance_uuid, kill_timeout)
 
 
 # =============================================================================
@@ -3561,7 +3583,7 @@ async def main():
             instance_uuid = info.get("uuid")
 
             if proc:
-                _terminate_process_group(proc)
+                _terminate_process_group(proc, instance_uuid=instance_uuid)
 
             # Don't trust the terminate call's completion -- the tracked
             # pid (proc) is the AppImage/wrapper launcher on Linux, not the
