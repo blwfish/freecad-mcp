@@ -14,7 +14,6 @@ the tests run without FreeCAD installed.
 
 import asyncio
 import contextlib
-import functools
 import itertools
 import json
 import os
@@ -464,10 +463,11 @@ def _run_stop(bridge, ctx, arguments):
     instance_uuid = info.get("uuid")
 
     if proc is not None:
-        bridge._terminate_process_group(proc, instance_uuid=instance_uuid)
-
-    wrapper_alive = proc is not None and proc.poll() is None
-    real_process_alive = bridge._real_process_alive(instance_uuid)
+        wrapper_alive, real_process_alive = bridge._terminate_process_group(
+            proc, instance_uuid=instance_uuid
+        )
+    else:
+        wrapper_alive, real_process_alive = bridge._instance_liveness(None, instance_uuid)
 
     if wrapper_alive or real_process_alive:
         return {
@@ -505,13 +505,18 @@ class TestStopInstance:
         monkeypatch.setattr(bridge.os, "killpg", MagicMock())
 
     @pytest.fixture(autouse=True)
-    def _short_grace_periods(self, bridge, monkeypatch):
+    def grace(self, bridge, monkeypatch):
         """The still-alive-after-kill tests would otherwise wait out the real
-        5s+3s grace periods; shrink them without changing what's asserted."""
+        5s+3s grace periods; shrink them without changing what's asserted.
+        Returns the mutable timeouts so a test needing a longer window can
+        raise it (e.g. grace["term_timeout"] = 2.0)."""
+        timeouts = {"term_timeout": 0.05, "kill_timeout": 0.05}
+        real_terminate = bridge._terminate_process_group
         monkeypatch.setattr(
             bridge, "_terminate_process_group",
-            functools.partial(bridge._terminate_process_group, term_timeout=0.05, kill_timeout=0.05),
+            lambda proc, **kw: real_terminate(proc, **{**timeouts, **kw}),
         )
+        return timeouts
 
     def test_stop_success(self, bridge):
         ctx = _fresh_ctx(bridge)
@@ -591,7 +596,7 @@ class TestStopInstance:
         bridge.os.killpg.assert_any_call(999999, bridge.signal.SIGTERM)
         bridge.os.killpg.assert_any_call(999999, bridge.signal.SIGKILL)
 
-    def test_stop_succeeds_when_real_process_exits_shortly_after_wrapper(self, bridge, monkeypatch):
+    def test_stop_succeeds_when_real_process_exits_shortly_after_wrapper(self, bridge, monkeypatch, grace):
         """Issue #99: AppImage wrapper is gone the instant SIGTERM lands but
         the real freecadcmd needs a moment to unwind. stop must wait and
         report success -- not an immediate 'did not fully stop' -- and must
@@ -611,11 +616,7 @@ class TestStopInstance:
             return next(alive, False)
 
         monkeypatch.setattr(bridge, "_real_process_alive", unwinding)
-        # term_timeout comfortably above the 3 simulated polls
-        monkeypatch.setattr(
-            bridge, "_terminate_process_group",
-            functools.partial(bridge._terminate_process_group.func, term_timeout=2.0, kill_timeout=0.05),
-        )
+        grace["term_timeout"] = 2.0  # comfortably above the 3 simulated polls
 
         ctx = _fresh_ctx(bridge)
         proc = MagicMock()
@@ -739,6 +740,34 @@ class TestTerminateProcessGroup:
         monkeypatch.setattr(bridge.os, "killpg", fake_killpg)
         bridge._terminate_process_group(proc, instance_uuid="u", term_timeout=0.05, kill_timeout=1.0)
         assert calls == [(555, bridge.signal.SIGTERM), (555, bridge.signal.SIGKILL)]
+
+    def test_returns_final_liveness_both_gone(self, bridge, monkeypatch):
+        proc = MagicMock()
+        proc.pid = 11
+        proc.poll.return_value = 0
+        monkeypatch.setattr(bridge.os, "getpgid", lambda pid: 666)
+        monkeypatch.setattr(bridge.os, "killpg", MagicMock())
+        assert bridge._terminate_process_group(proc, term_timeout=0.05) == (False, False)
+
+    def test_returns_survivors_when_sigkill_does_not_land(self, bridge, monkeypatch):
+        proc = MagicMock()
+        proc.pid = 12
+        proc.poll.return_value = None  # wrapper immortal
+        monkeypatch.setattr(bridge, "_real_process_alive", lambda uuid: True)
+        monkeypatch.setattr(bridge.os, "getpgid", lambda pid: 777)
+        monkeypatch.setattr(bridge.os, "killpg", MagicMock())
+        result = bridge._terminate_process_group(
+            proc, instance_uuid="u", term_timeout=0.05, kill_timeout=0.05
+        )
+        assert result == (True, True)
+
+    def test_permission_denied_reports_liveness_not_success(self, bridge, monkeypatch):
+        proc = MagicMock()
+        proc.pid = 13
+        proc.poll.return_value = None
+        monkeypatch.setattr(bridge.os, "getpgid", lambda pid: 888)
+        monkeypatch.setattr(bridge.os, "killpg", MagicMock(side_effect=PermissionError))
+        assert bridge._terminate_process_group(proc) == (True, False)
 
     def test_group_already_gone_does_not_raise(self, bridge, monkeypatch):
         """getpgid raising ProcessLookupError means the whole group is

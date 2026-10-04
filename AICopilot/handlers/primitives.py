@@ -24,26 +24,37 @@ from .base import NO_ACTIVE_DOCUMENT_ERROR, BaseHandler
 
 _INJECTED_KEYS = frozenset({"operation", "_continue_selection", "_operation_id"})
 
-# Every property in the bridge's flat `part_operations` input schema
+# Schema default of every `part_operations` param that carries one
 # (freecad_mcp_server.py). The schema is shared by all 23 operations and gives
 # operation-specific params a `default`, so an MCP client that materializes
 # defaults (Claude Code does) sends all of them on every call -- a `box` call
-# arrives carrying `radius`, `spacing_x`, `tracking`, ... (issue #98). Those
-# are sibling-operation keys, not typos, so they're tolerated (and ignored);
-# only keys absent from the schema entirely ('lenght') are rejected.
+# arrives carrying `radius=5`, `spacing_x=10`, `tracking=0`, ... (issue #98).
+# A sibling-operation key is tolerated ONLY when its value equals that default
+# (i.e. it is materialization noise); a non-default value ('size=20' on a box),
+# a sibling key with no schema default, or a key absent from the schema
+# ('lenght') is still rejected, so a genuine mistake can't fall through to the
+# handler's own silent 10mm default.
 # Mirrors the bridge schema by hand because the handler runs inside FreeCAD
-# and can't import the bridge; tests/unit/test_primitives.py asserts parity.
-_PART_OPERATIONS_SCHEMA_KEYS = frozenset({
-    'angle', 'axis', 'base', 'count', 'font_file', 'height', 'length', 'name',
-    'object_name', 'objects', 'operation', 'path_sketch', 'profile_sketch',
-    'radius', 'radius1', 'radius2', 'scale_factor', 'size', 'sketches',
-    'spacing_x', 'spacing_y', 'spacing_z', 'string', 'tools', 'tracking',
-    'width', 'x', 'y', 'z',
-})
+# and can't import the bridge (the two deploy separately);
+# tests/unit/test_primitives.py asserts parity, defaults included.
+_PART_OPERATIONS_SCHEMA_DEFAULTS = {
+    'length': 10, 'width': 10, 'height': 10,
+    'radius': 5, 'radius1': 10, 'radius2': 3,
+    'x': 0, 'y': 0, 'z': 0,
+    'axis': 'z', 'angle': 90, 'scale_factor': 1.5, 'count': 3,
+    'spacing_x': 10, 'spacing_y': 0, 'spacing_z': 0,
+    'size': 10, 'tracking': 0,
+}
 
 
 def _check_unknown_keys(primitive: str, args: dict, allowed: frozenset) -> str | None:
-    unknown = set(args) - allowed - _PART_OPERATIONS_SCHEMA_KEYS - _INJECTED_KEYS
+    unknown = {
+        key for key, value in args.items()
+        if key not in allowed
+        and key not in _INJECTED_KEYS
+        and not (key in _PART_OPERATIONS_SCHEMA_DEFAULTS
+                 and value == _PART_OPERATIONS_SCHEMA_DEFAULTS[key])
+    }
     if unknown:
         return f"Error creating {primitive}: unknown argument(s) {sorted(unknown)} — check for typos"
     return None
