@@ -14,6 +14,7 @@ the tests run without FreeCAD installed.
 
 import asyncio
 import contextlib
+import functools
 import itertools
 import json
 import os
@@ -463,7 +464,7 @@ def _run_stop(bridge, ctx, arguments):
     instance_uuid = info.get("uuid")
 
     if proc is not None:
-        bridge._terminate_process_group(proc)
+        bridge._terminate_process_group(proc, instance_uuid=instance_uuid)
 
     wrapper_alive = proc is not None and proc.poll() is None
     real_process_alive = bridge._real_process_alive(instance_uuid)
@@ -502,6 +503,15 @@ class TestStopInstance:
         system pid if passed to the unmocked syscalls."""
         monkeypatch.setattr(bridge.os, "getpgid", lambda pid: 999999)
         monkeypatch.setattr(bridge.os, "killpg", MagicMock())
+
+    @pytest.fixture(autouse=True)
+    def _short_grace_periods(self, bridge, monkeypatch):
+        """The still-alive-after-kill tests would otherwise wait out the real
+        5s+3s grace periods; shrink them without changing what's asserted."""
+        monkeypatch.setattr(
+            bridge, "_terminate_process_group",
+            functools.partial(bridge._terminate_process_group, term_timeout=0.05, kill_timeout=0.05),
+        )
 
     def test_stop_success(self, bridge):
         ctx = _fresh_ctx(bridge)
@@ -563,18 +573,60 @@ class TestStopInstance:
         assert "error" in result
 
     def test_stop_timeout_kills_proc(self, bridge):
-        """proc.wait() times out after SIGTERM on the group; must escalate
-        to SIGKILL rather than giving up."""
+        """Wrapper ignores SIGTERM on the group; must escalate to SIGKILL
+        rather than giving up."""
         ctx = _fresh_ctx(bridge)
         proc = MagicMock()
-        proc.wait.side_effect = [subprocess.TimeoutExpired(cmd="fake", timeout=5), None]
-        proc.poll.return_value = 0  # wrapper reaped after group signal
+        proc.poll.return_value = None  # wrapper alive until SIGKILL lands
+
+        def fake_killpg(pgid, sig):
+            if sig == bridge.signal.SIGKILL:
+                proc.poll.return_value = -9
+
+        bridge.os.killpg.side_effect = fake_killpg
         ctx.register("/tmp/slow.sock", 6, proc, "slow")
         result = _run_stop(bridge, ctx, {"socket_path": "/tmp/slow.sock"})
         assert "error" not in result
         assert bridge.os.killpg.call_count == 2
         bridge.os.killpg.assert_any_call(999999, bridge.signal.SIGTERM)
         bridge.os.killpg.assert_any_call(999999, bridge.signal.SIGKILL)
+
+    def test_stop_succeeds_when_real_process_exits_shortly_after_wrapper(self, bridge, monkeypatch):
+        """Issue #99: AppImage wrapper is gone the instant SIGTERM lands but
+        the real freecadcmd needs a moment to unwind. stop must wait and
+        report success -- not an immediate 'did not fully stop' -- and must
+        not SIGKILL a process that was exiting on its own."""
+        os.makedirs(bridge.DISCOVERY_DIR, exist_ok=True)
+        instance_uuid = "slow-unwind-uuid"
+        discovery_file = bridge._discovery_file_path(instance_uuid)
+        with open(discovery_file, "w") as f:
+            json.dump({"pid": os.getpid()}, f)
+
+        alive = iter([True, True, True])  # then False forever via the default below
+        real = bridge._real_process_alive
+
+        def unwinding(uuid):
+            if uuid != instance_uuid:
+                return real(uuid)
+            return next(alive, False)
+
+        monkeypatch.setattr(bridge, "_real_process_alive", unwinding)
+        # term_timeout comfortably above the 3 simulated polls
+        monkeypatch.setattr(
+            bridge, "_terminate_process_group",
+            functools.partial(bridge._terminate_process_group.func, term_timeout=2.0, kill_timeout=0.05),
+        )
+
+        ctx = _fresh_ctx(bridge)
+        proc = MagicMock()
+        proc.poll.return_value = 0  # wrapper already exited
+        ctx.register("/tmp/unwind.sock", 9, proc, "unwind", instance_uuid=instance_uuid)
+
+        result = _run_stop(bridge, ctx, {"socket_path": "/tmp/unwind.sock"})
+
+        assert "error" not in result, result
+        bridge.os.killpg.assert_called_once_with(999999, bridge.signal.SIGTERM)
+        assert "/tmp/unwind.sock" not in [i["socket_path"] for i in ctx.list_all()]
 
     def test_stop_reports_error_and_keeps_registration_when_wrapper_survives(self, bridge):
         """If the tracked wrapper process is still alive after the kill
@@ -649,12 +701,44 @@ class TestTerminateProcessGroup:
     def test_escalates_to_sigkill_after_term_timeout(self, bridge, monkeypatch):
         proc = MagicMock()
         proc.pid = 5
-        proc.wait.side_effect = [subprocess.TimeoutExpired(cmd="x", timeout=5), None]
+        proc.poll.return_value = None  # wrapper ignores SIGTERM
         calls = []
         monkeypatch.setattr(bridge.os, "getpgid", lambda pid: 111)
         monkeypatch.setattr(bridge.os, "killpg", lambda pgid, sig: calls.append((pgid, sig)))
-        bridge._terminate_process_group(proc)
+        bridge._terminate_process_group(proc, term_timeout=0.05, kill_timeout=0.05)
         assert calls == [(111, bridge.signal.SIGTERM), (111, bridge.signal.SIGKILL)]
+
+    def test_waits_for_real_process_after_wrapper_exits_without_sigkill(self, bridge, monkeypatch):
+        """Issue #99: wrapper exits immediately, real freecadcmd lingers a
+        few polls -- must wait for it, and NOT escalate to SIGKILL."""
+        proc = MagicMock()
+        proc.pid = 9
+        proc.poll.return_value = 0
+        alive = iter([True, True, True, False])
+        monkeypatch.setattr(bridge, "_real_process_alive", lambda uuid: next(alive))
+        calls = []
+        monkeypatch.setattr(bridge.os, "getpgid", lambda pid: 444)
+        monkeypatch.setattr(bridge.os, "killpg", lambda pgid, sig: calls.append((pgid, sig)))
+        bridge._terminate_process_group(proc, instance_uuid="u", term_timeout=2.0)
+        assert calls == [(444, bridge.signal.SIGTERM)]
+
+    def test_sigkill_when_real_process_outlives_term_timeout(self, bridge, monkeypatch):
+        proc = MagicMock()
+        proc.pid = 10
+        proc.poll.return_value = 0  # wrapper gone, real process wedged
+        state = {"killed": False}
+        monkeypatch.setattr(bridge, "_real_process_alive", lambda uuid: not state["killed"])
+        calls = []
+
+        def fake_killpg(pgid, sig):
+            calls.append((pgid, sig))
+            if sig == bridge.signal.SIGKILL:
+                state["killed"] = True
+
+        monkeypatch.setattr(bridge.os, "getpgid", lambda pid: 555)
+        monkeypatch.setattr(bridge.os, "killpg", fake_killpg)
+        bridge._terminate_process_group(proc, instance_uuid="u", term_timeout=0.05, kill_timeout=1.0)
+        assert calls == [(555, bridge.signal.SIGTERM), (555, bridge.signal.SIGKILL)]
 
     def test_group_already_gone_does_not_raise(self, bridge, monkeypatch):
         """getpgid raising ProcessLookupError means the whole group is
