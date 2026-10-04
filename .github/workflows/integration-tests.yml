@@ -120,3 +120,59 @@ jobs:
       - name: Run real-document regression tests
         run: python -m pytest tests/integration/ -v -rs --timeout=120 -m real_document
         timeout-minutes: 5
+
+  instance-lifecycle:
+    # Drives the bridge's REAL spawn_freecad_instance / stop_freecad_instance
+    # against the AppImage (tests/integration/test_instance_lifecycle.py): #90
+    # (orphaned real process) and #99 (a clean stop reported as failure) both
+    # live in the bridge, not the handler, and nothing else in this workflow
+    # goes through that code -- the integration conftest spawns FreeCAD with
+    # its own Popen and stops it with its own terminate/kill. The job above
+    # installs only pytest, and the bridge imports `mcp`, so this one installs
+    # the project from the lockfile (same as the unit-test job) and runs just
+    # that file.
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - slot: "1.1-stable"
+            tag: "1.1.1"
+            appimage: "FreeCAD_1.1.1-Linux-x86_64-py311.AppImage"
+          - slot: "dev-weekly"
+            tag: "weekly-2026.09.09"
+            appimage: ""
+
+    name: "Instance lifecycle (${{ matrix.slot }})"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install package + dev deps (from lockfile)
+        run: uv sync --frozen --group dev
+
+      - name: Set up FreeCAD AppImage
+        uses: ./.github/actions/setup-freecad-appimage
+        with:
+          tag: ${{ matrix.tag }}
+          appimage: ${{ matrix.appimage }}
+          use-cache: 'true'
+
+      - name: Run instance lifecycle tests
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run python -m pytest tests/integration/test_instance_lifecycle.py -v -rs 2>&1 | tee pytest-output.log
+          exit_code=$?
+          # Same guard as the integration job: a module-level skip (no mcp,
+          # no FreeCADCmd) still exits 0, and "ran nothing" must not read as green.
+          if [ "$exit_code" -eq 0 ] && ! grep -qE '[0-9]+ passed' pytest-output.log; then
+            echo "::error::Instance lifecycle tests exited 0 but reported no passing tests (skipped?) -- the AppImage or bridge dependencies are not wired up."
+            exit 1
+          fi
+          exit $exit_code
+        timeout-minutes: 5
