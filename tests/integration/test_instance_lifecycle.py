@@ -26,6 +26,7 @@ import json
 import os
 import signal
 import stat
+import subprocess
 import time
 
 import pytest
@@ -60,14 +61,36 @@ def _pid_exists(pid: int) -> bool:
     return True
 
 
-def _group_exists(pgid: int) -> bool:
-    try:
-        os.killpg(pgid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+def _live_group_members(pgid: int) -> list[str]:
+    """`ps` lines for processes still alive in process group `pgid`.
+
+    killpg(pgid, 0) isn't usable for "is the group gone?": a zombie -- exited,
+    just not yet reaped by its parent -- still counts as a member, and the real
+    FreeCAD process is reparented to init when its wrapper dies, so there is a
+    brief window where it is dead but unreaped. Zombies are therefore excluded
+    (state Z); anything left is a process that is genuinely still running.
+    Portable `ps -ax` form (works on Linux and macOS), filtered here by pgid.
+    """
+    out = subprocess.run(
+        ["ps", "-axo", "pid=,ppid=,pgid=,stat=,command="],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    members = []
+    for line in out.splitlines():
+        fields = line.split(None, 4)
+        if len(fields) == 5 and int(fields[2]) == pgid and not fields[3].startswith("Z"):
+            members.append(line.strip())
+    return members
+
+
+def _wait_group_gone(pgid: int, grace: float = 3.0) -> list[str]:
+    """Live members of `pgid` after allowing `grace` seconds for init to reap."""
+    deadline = time.monotonic() + grace
+    while True:
+        members = _live_group_members(pgid)
+        if not members or time.monotonic() >= deadline:
+            return members
+        time.sleep(0.1)
 
 
 def _discovery_record(instance_uuid: str) -> dict:
@@ -86,7 +109,7 @@ def _spawn_stop_and_check(label: str, **spawn_args) -> dict:
     stopped = False
     try:
         assert _pid_exists(real_pid), "real FreeCAD process should be running before stop"
-        assert _group_exists(pgid)
+        assert _live_group_members(pgid), "spawned process group should have live members before stop"
 
         started = time.monotonic()
         result = _call("stop_freecad_instance", socket_path=sock)
@@ -100,8 +123,14 @@ def _spawn_stop_and_check(label: str, **spawn_args) -> dict:
 
         # #90: nothing left behind. The group check is the strongest one -- every
         # process spawn_freecad_instance started (wrapper, AppRun, real binary, FUSE
-        # helper) lives in the group it created with start_new_session=True.
-        assert not _group_exists(pgid), f"process group {pgid} still has live members after stop"
+        # helper) lives in the group it created with start_new_session=True. The
+        # real-pid check follows it but must not be skipped: it's the discovery
+        # record's pid, i.e. the process the bridge itself judges "alive".
+        leftovers = _wait_group_gone(pgid)
+        assert not leftovers, (
+            f"process group {pgid} still has live members after a successful stop:\n"
+            + "\n".join(leftovers)
+        )
         assert not _pid_exists(real_pid), f"real FreeCAD pid {real_pid} survived stop"
         assert not os.path.exists(sock), "socket file left behind"
         assert not os.path.exists(bridge._discovery_file_path(instance_uuid)), "discovery record left behind"
