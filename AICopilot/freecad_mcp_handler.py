@@ -1392,11 +1392,17 @@ class FreeCADSocketServer:
                     "elapsed_s": round(job.get("elapsed", elapsed), 1),
                 })
             result_val = task_result.get("result", "done") if isinstance(task_result, dict) else str(task_result)
-            return json.dumps({
+            done = {
                 "status": "done",
                 "result": result_val,
                 "elapsed_s": round(job.get("elapsed", elapsed), 1),
-            })
+            }
+            # execute_python's pre-run autosave outcome, when it wrote (or
+            # tried to write) a file -- the caller must be told, not just
+            # the Report View.
+            if isinstance(task_result, dict) and task_result.get("autosave"):
+                done["autosave"] = task_result["autosave"]
+            return json.dumps(done)
         else:
             return json.dumps({
                 "status": "error",

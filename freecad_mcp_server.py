@@ -3157,7 +3157,10 @@ async def main():
             status = poll_resp.get("status")
             if status == "done":
                 _complete_op()
-                return [types.TextContent(type="text", text=json.dumps({"result": poll_resp.get("result"), "elapsed": poll_resp.get("elapsed_s")}))]
+                done_payload = {"result": poll_resp.get("result"), "elapsed": poll_resp.get("elapsed_s")}
+                if poll_resp.get("autosave"):
+                    done_payload["autosave"] = poll_resp["autosave"]
+                return [types.TextContent(type="text", text=json.dumps(done_payload))]
             elif status == "timeout":
                 return [types.TextContent(type="text", text=json.dumps({"error": poll_resp["error"], "job_id": job_id}))]
             else:

@@ -867,6 +867,21 @@ class TestPollJob:
         assert result["result"] == "42"
         # Job should be removed after retrieval
         assert "done1" not in server._async_jobs
+        assert "autosave" not in result
+
+    def test_done_job_passes_autosave_outcome_through(self, server):
+        """execute_python's pre-run autosave must reach the caller, not only
+        the Report View (observed on 8.2.2: a file was rewritten silently)."""
+        server._async_jobs["as1"] = {
+            "status": "done",
+            "started": time.time() - 1,
+            "result": {"success": True, "result": "ok", "autosave": "saved: C:/x.FCStd"},
+            "elapsed": 0.2,
+            "tool": "execute_python_async",
+        }
+        result = json.loads(server._poll_job({"job_id": "as1"}))
+        assert result["autosave"] == "saved: C:/x.FCStd"
+        assert result["result"] == "ok"
 
     def test_done_job_with_error_in_result(self, server):
         """If the task result contains an error dict, poll should return error status."""
