@@ -155,6 +155,34 @@ class TestExecutePython(unittest.TestCase):
         second = self._run_python("persisted_var * 2")
         self.assertEqual(second["result"], "198")
 
+    # -- `result` is reported only when THIS call set it ---------------------
+    # Observed on 8.2.2: execute_python("result = 1") then
+    # execute_python("x = 2") reported "1" for the second call.
+
+    def test_stale_result_from_an_earlier_call_is_not_reported(self):
+        self.assertEqual(self._run_python("result = 1")["result"], "1")
+        self.assertEqual(self._run_python("x = 2")["result"], "Code executed successfully")
+
+    def test_result_set_to_the_same_value_again_is_reported(self):
+        """Small ints are cached, so an identity check alone would miss this."""
+        self._run_python("result = 1")
+        self.assertEqual(self._run_python("result = 1")["result"], "1")
+
+    def test_result_updated_from_previous_call_is_reported(self):
+        self._run_python("result = 1")
+        self.assertEqual(self._run_python("result += 1")["result"], "2")
+
+    def test_result_set_inside_a_block_is_reported(self):
+        self.assertEqual(self._run_python("for result in range(3):\n    pass")["result"], "2")
+
+    def test_result_set_indirectly_is_reported(self):
+        self._run_python("result = 1")
+        self.assertEqual(self._run_python("globals()['result'] = 'new'")["result"], "'new'")
+
+    def test_previous_result_is_still_readable(self):
+        self._run_python("result = 5")
+        self.assertEqual(self._run_python("result * 2")["result"], "10")
+
 
 class TestPrimaryToolAlternativeDetection(unittest.TestCase):
     """CLAUDE.md's "prefer primary tool over execute_python" rule, made
