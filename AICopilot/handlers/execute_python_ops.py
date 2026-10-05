@@ -55,6 +55,11 @@ def _tool_tips_enabled() -> bool:
     except Exception:
         return True
 
+# Autosave outcomes worth telling the caller about: something was written,
+# or a write was attempted/refused. The quiet ones (unchanged, disabled,
+# no_document, unsaved_document) are the normal case and would be noise.
+_REPORTED_AUTOSAVE_OUTCOMES = frozenset({'saved', 'failed', 'pref_unreadable'})
+
 # CLAUDE.md's "prefer primary tool over execute_python" rule, made
 # observable instead of just documented -- same result-level, same-task
 # escalation pattern proven for check_solid -> find_root_cause and
@@ -233,7 +238,14 @@ class ExecutePythonOpsHandler(BaseHandler):
         # has one home in handlers.base.autosave_before; this is a member.
         # If the code triggers a crash (e.g., .check() on huge compounds,
         # boolean ops on 1000+ solids), the saved file survives.
-        autosave_before(FreeCAD.ActiveDocument, "execute_python")
+        doc = FreeCAD.ActiveDocument
+        autosave_outcome = autosave_before(doc, "execute_python")
+        autosave_note = None
+        if autosave_outcome in _REPORTED_AUTOSAVE_OUTCOMES:
+            try:
+                autosave_note = f"{autosave_outcome}: {doc.FileName}"
+            except Exception:
+                autosave_note = autosave_outcome
 
         result_value = None
         prev_result = namespace.get("result", _MISSING)
@@ -294,9 +306,10 @@ class ExecutePythonOpsHandler(BaseHandler):
                 f"keep execute_python for genuine one-offs."
             )
 
-        if parts:
-            return {"success": True, "result": "\n".join(parts)}
-        return {"success": True, "result": "Code executed successfully"}
+        response = {"success": True, "result": "\n".join(parts) if parts else "Code executed successfully"}
+        if autosave_note:
+            response["autosave"] = autosave_note
+        return response
 
     def execute(self, args: dict[str, Any]) -> str:
         """Execute Python code in FreeCAD context with expression value capture (GUI-safe).

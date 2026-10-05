@@ -192,6 +192,26 @@ class TestExecutePython(unittest.TestCase):
         result = self._run_python('if __name__ == "__main__":\n    print("guard ran")')
         self.assertEqual(result["result"], "guard ran")
 
+    # -- the autosave outcome reaches the caller when it wrote a file ---------
+
+    def _run_code_with_autosave(self, outcome):
+        doc = MagicMock()
+        doc.FileName = "/tmp/master.FCStd"
+        mock_FreeCAD.ActiveDocument = doc
+        func_globals = self.handler.run_code.__func__.__globals__
+        with patch.dict(func_globals, {"autosave_before": MagicMock(return_value=outcome)}):
+            return self.handler.run_code("x = 1")
+
+    def test_saved_outcome_is_reported_with_path(self):
+        self.assertEqual(self._run_code_with_autosave("saved")["autosave"], "saved: /tmp/master.FCStd")
+
+    def test_failed_outcome_is_reported(self):
+        self.assertIn("failed", self._run_code_with_autosave("failed")["autosave"])
+
+    def test_quiet_outcomes_are_not_reported(self):
+        for outcome in ("unchanged", "disabled", "no_document", "unsaved_document"):
+            self.assertNotIn("autosave", self._run_code_with_autosave(outcome), outcome)
+
 
 class TestPrimaryToolAlternativeDetection(unittest.TestCase):
     """CLAUDE.md's "prefer primary tool over execute_python" rule, made
