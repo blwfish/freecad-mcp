@@ -200,6 +200,9 @@ class ExecutePythonOpsHandler(BaseHandler):
         self._python_namespace["FreeCADGui"] = FreeCADGui
         self._python_namespace["App"] = FreeCAD
         self._python_namespace["Gui"] = FreeCADGui
+        # Without this, exec() resolves __name__ through builtins ("builtins"),
+        # so a pasted macro's `if __name__ == "__main__":` guard silently skips.
+        self._python_namespace["__name__"] = "__main__"
         try:
             import Part
             self._python_namespace["Part"] = Part

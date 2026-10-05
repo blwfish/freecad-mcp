@@ -183,6 +183,15 @@ class TestExecutePython(unittest.TestCase):
         self._run_python("result = 5")
         self.assertEqual(self._run_python("result * 2")["result"], "10")
 
+    # -- __name__ is "__main__", like a script -------------------------------
+
+    def test_name_is_main(self):
+        self.assertEqual(self._run_python("__name__")["result"], "'__main__'")
+
+    def test_main_guard_runs(self):
+        result = self._run_python('if __name__ == "__main__":\n    print("guard ran")')
+        self.assertEqual(result["result"], "guard ran")
+
 
 class TestPrimaryToolAlternativeDetection(unittest.TestCase):
     """CLAUDE.md's "prefer primary tool over execute_python" rule, made
