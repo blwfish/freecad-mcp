@@ -17,6 +17,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 import uuid
@@ -1017,6 +1018,79 @@ def _complete_op() -> None:
     if _op_log is not None:
         _op_log.complete()
 
+
+# Where the FreeCAD side writes temp screenshots -- the one directory this
+# bridge deletes from after reading one. Must equal
+# AICopilot/handlers/view_ops.py's SCREENSHOT_TMP_DIRNAME (parity test in
+# tests/unit/test_bridge_image_reply.py).
+SCREENSHOT_TMP_DIRNAME = "freecad_mcp_screenshots"
+
+
+def _is_in_screenshot_tmp_dir(path: str) -> bool:
+    """True only for a file inside the screenshot temp directory. Anything
+    else a reply names (a caller's `filename`, or a path from a confused or
+    hostile peer) is never deleted."""
+    try:
+        base = os.path.normcase(os.path.realpath(
+            os.path.join(tempfile.gettempdir(), SCREENSHOT_TMP_DIRNAME)))
+        target = os.path.normcase(os.path.realpath(path))
+        return target != base and os.path.commonpath([base, target]) == base
+    except (ValueError, OSError, TypeError):
+        # ValueError: different drives on Windows, or mixed abs/rel paths.
+        return False
+
+
+def _build_image_reply(result, types_mod) -> list | None:
+    """Turn a FreeCAD screenshot result into MCP content, or None if `result`
+    is not a screenshot result.
+
+    The one place image replies are built, for both the async-job path
+    (where the handler's JSON string arrives under poll_resp["result"]) and
+    the direct path. Accepts:
+      - image_path: the PNG FreeCAD wrote (the bridge always runs on the same
+        machine). Read here, so the bytes never cross the 50 KB socket frame
+        limit. Deleted after reading only if keep_file is false AND it is
+        inside the screenshot temp directory.
+      - image_data: inline base64, from older addon installs.
+      - success: false: returned as an error, not as a "done" success.
+    """
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    if not isinstance(result, dict):
+        return None
+    if result.get("success") is False and "error" in result:
+        return [types_mod.TextContent(type="text", text=json.dumps({"error": result["error"]}))]
+
+    mime = result.get("mime_type", "image/png")
+    image_path = result.get("image_path")
+    if image_path:
+        import base64 as _b64
+        keep = bool(result.get("keep_file"))
+        try:
+            with open(image_path, "rb") as f:
+                data = _b64.b64encode(f.read()).decode("utf-8")
+        except OSError as e:
+            return [types_mod.TextContent(type="text", text=json.dumps({
+                "error": f"Could not read screenshot file {image_path}: {e}"}))]
+        finally:
+            if not keep and _is_in_screenshot_tmp_dir(image_path):
+                with contextlib.suppress(OSError):
+                    os.unlink(image_path)
+        meta = {k: result[k] for k in ("width", "height", "note") if k in result}
+        if keep:
+            meta["saved_to"] = image_path
+        return [
+            types_mod.TextContent(type="text", text=json.dumps(meta)),
+            types_mod.ImageContent(type="image", data=data, mimeType=mime),
+        ]
+    if result.get("image_data"):
+        return [types_mod.ImageContent(type="image", data=result["image_data"], mimeType=mime)]
+    return None
+
+
 # Progressive poll backoff: fast first polls catch quick ops, then settle at 1 s.
 _POLL_BACKOFF_SECS = [0.05, 0.1, 0.25, 0.5, 1.0]
 _POLL_TIMEOUT_SECS = 120  # 2-minute ceiling; return job_id so caller can cancel
@@ -1552,7 +1626,7 @@ async def main():
                                  "default": "isometric"},
                     # Document parameters
                     "document_name": {"type": "string", "description": "Document name", "default": "Unnamed"},
-                    "filename": {"type": "string", "description": "File path to save"},
+                    "filename": {"type": "string", "description": "save_document: file path to save to. screenshot: also keep the PNG at this path (must end in .png)"},
                     # Object parameters
                     "object_name": {"type": "string", "description": "Object name for operations (recompute: omit to recompute the whole document instead of one object)"},
                     "force": {"type": "boolean", "description": "recompute: touch() the object first so it recomputes even if not already marked dirty (default true, only meaningful with object_name)", "default": True},
@@ -3202,6 +3276,13 @@ async def main():
                         status = poll_resp.get("status")
                         if status == "done":
                             _complete_op()
+                            # Screenshots come back through this path as the
+                            # handler's JSON string; return a real image block
+                            # (or its error), not base64 inside text.
+                            if name == "view_control" and args.get("operation") == "screenshot":
+                                image_reply = _build_image_reply(poll_resp.get("result"), types)
+                                if image_reply is not None:
+                                    return image_reply
                             payload: dict = {
                                 "result": poll_resp.get("result"),
                                 "elapsed": poll_resp.get("elapsed_s"),
@@ -3225,15 +3306,11 @@ async def main():
                     emit_event("warn", "response_parse_failed",
                                f"Could not parse FreeCAD response as JSON: {str(_e)[:200]}")
 
-                # Return image content when the response contains base64 image data
+                # Return image content when the response is a screenshot result
                 try:
                     result = json.loads(response)
-                    if isinstance(result, dict) and result.get("image_data"):
-                        return [types.ImageContent(
-                            type="image",
-                            data=result["image_data"],
-                            mimeType=result.get("mime_type", "image/png"),
-                        )]
+                    if isinstance(result, dict) and (result.get("image_data") or result.get("image_path")):
+                        return _build_image_reply(result, types)
                 except (json.JSONDecodeError, Exception) as _e:
                     emit_event("warn", "image_extract_failed",
                                f"Could not extract image data from FreeCAD response: {str(_e)[:200]}")
