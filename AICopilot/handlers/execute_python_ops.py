@@ -22,6 +22,26 @@ import contextlib
 
 from .base import BaseHandler, autosave_before
 
+_MISSING = object()
+
+
+def _assigns_name(tree: ast.AST, name: str) -> bool:
+    """True if the code binds `name` at any level (assignment, augmented or
+    annotated assignment, for/with/except target, walrus, import alias) or
+    declares it global. Used so run_code reports the `result` variable only
+    when THIS call set it -- the namespace persists, so a `result` left over
+    from an earlier call must not be reported as this call's output."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Store):
+            return True
+        if isinstance(node, ast.Global) and name in node.names:
+            return True
+        if isinstance(node, ast.alias) and (node.asname or node.name) == name:
+            return True
+        if isinstance(node, ast.ExceptHandler) and node.name == name:
+            return True
+    return False
+
 # CLAUDE.md's "prefer primary tool over execute_python" rule, made
 # observable instead of just documented -- same result-level, same-task
 # escalation pattern proven for check_solid -> find_root_cause and
@@ -200,6 +220,7 @@ class ExecutePythonOpsHandler(BaseHandler):
         autosave_before(FreeCAD.ActiveDocument, "execute_python")
 
         result_value = None
+        prev_result = namespace.get("result", _MISSING)
         old_stdout = sys.stdout
         sys.stdout = captured = io.StringIO()
         console_stderr_state = self._capture_console_stderr_start()
@@ -218,8 +239,15 @@ class ExecutePythonOpsHandler(BaseHandler):
                     result_value = eval(compile(expr_ast, "<string>", "eval"), namespace)
                 else:
                     exec(code, namespace)
-                    if "result" in namespace:
-                        result_value = namespace["result"]
+                    # Report `result` only if this call set it (the namespace
+                    # persists). The AST check catches `result = 1` repeated
+                    # (same cached object); the identity check catches
+                    # indirect sets (exec, globals()[...]).
+                    current = namespace.get("result", _MISSING)
+                    if current is not _MISSING and (
+                        _assigns_name(tree, "result") or current is not prev_result
+                    ):
+                        result_value = current
             except SyntaxError as e:
                 return {"error": f"SyntaxError: {e}", "error_id": self.server.diagnostics_ops.store_traceback(tb_module.format_exc())}
         except Exception as e:
