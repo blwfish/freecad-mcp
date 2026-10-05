@@ -616,9 +616,77 @@ class TestAutosaveBefore:
     def test_outcome_register_is_frozen_and_complete(self, base_module):
         assert isinstance(base_module.AUTOSAVE_OUTCOMES, frozenset)
         assert frozenset({
-            "saved", "disabled", "no_document", "unsaved_document",
+            "saved", "unchanged", "disabled", "no_document", "unsaved_document",
             "pref_unreadable", "failed",
         }) == base_module.AUTOSAVE_OUTCOMES
+
+    # -- a document with no unsaved changes is not rewritten -----------------
+    # Observed on 8.2.2: re-opening a saved .FCStd and making it active, then
+    # sending any execute_python call, rewrote the file (new mtime, +6 bytes,
+    # a git diff) though nothing in it had changed.
+
+    def _gui(self, monkeypatch, base_module, mock_freecad, modified):
+        gui = MagicMock()
+        gui.getDocument.return_value.Modified = modified
+        monkeypatch.setattr(mock_freecad, "GuiUp", True, raising=False)
+        monkeypatch.setattr(base_module, "FreeCADGui", gui)
+        return gui
+
+    def test_unmodified_gui_document_is_not_rewritten(self, base_module, mock_freecad, monkeypatch):
+        _set_pref(mock_freecad, True)
+        gui = self._gui(monkeypatch, base_module, mock_freecad, modified=False)
+        doc = self._doc()
+        assert base_module.autosave_before(doc, "unit") == "unchanged"
+        doc.save.assert_not_called()
+        gui.getDocument.assert_called_with("TestDoc")
+
+    def test_modified_gui_document_is_saved(self, base_module, mock_freecad, monkeypatch):
+        _set_pref(mock_freecad, True)
+        self._gui(monkeypatch, base_module, mock_freecad, modified=True)
+        doc = self._doc()
+        assert base_module.autosave_before(doc, "unit") == "saved"
+        doc.save.assert_called_once()
+
+    def test_save_clears_the_gui_modified_flag(self, base_module, mock_freecad, monkeypatch):
+        """App's doc.save() leaves the Gui flag set (measured live on 1.1);
+        without clearing it, every later call would rewrite the file."""
+        _set_pref(mock_freecad, True)
+        gui = self._gui(monkeypatch, base_module, mock_freecad, modified=True)
+        assert base_module.autosave_before(self._doc(), "unit") == "saved"
+        assert gui.getDocument.return_value.Modified is False
+
+    def test_failed_save_leaves_the_gui_modified_flag(self, base_module, mock_freecad, monkeypatch):
+        _set_pref(mock_freecad, True)
+        gui = self._gui(monkeypatch, base_module, mock_freecad, modified=True)
+        doc = self._doc()
+        doc.save.side_effect = OSError("disk full")
+        assert base_module.autosave_before(doc, "unit") == "failed"
+        assert gui.getDocument.return_value.Modified is True
+
+    def test_unreadable_modified_flag_falls_back_to_saving(self, base_module, mock_freecad, monkeypatch):
+        """Doubt about the flag must not cost the crash-safety save."""
+        _set_pref(mock_freecad, True)
+        gui = self._gui(monkeypatch, base_module, mock_freecad, modified=False)
+        gui.getDocument.side_effect = RuntimeError("stale")
+        doc = self._doc()
+        assert base_module.autosave_before(doc, "unit") == "saved"
+        doc.save.assert_called_once()
+
+    def test_headless_always_saves(self, base_module, mock_freecad, monkeypatch):
+        """Headless has no Modified flag, and isTouched() goes False after any
+        recompute even with unsaved edits -- so it cannot prove the file is
+        current. Keep saving."""
+        _set_pref(mock_freecad, True)
+        monkeypatch.setattr(mock_freecad, "GuiUp", False, raising=False)
+        doc = self._doc()
+        doc.isTouched.return_value = False
+        assert base_module.autosave_before(doc, "unit") == "saved"
+        doc.save.assert_called_once()
+
+    def test_disabled_is_checked_before_the_modified_flag(self, base_module, mock_freecad, monkeypatch):
+        _set_pref(mock_freecad, False)
+        self._gui(monkeypatch, base_module, mock_freecad, modified=False)
+        assert base_module.autosave_before(self._doc(), "unit") == "disabled"
 
     def test_default_preference_is_upstream_behaviour(self, base_module, mock_freecad):
         """With no preference set, GetBool returns the default — and the
