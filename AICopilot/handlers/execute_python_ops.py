@@ -20,7 +20,13 @@ else:
 
 import contextlib
 
-from .base import BaseHandler, autosave_before
+from .base import AICOPILOT_PREF_PATH, BaseHandler, autosave_before
+
+# Operator preference: set False to drop the "a dedicated tool already covers
+# this" tip. Build code for third-party workbenches (e.g. Quetzal's pCmd
+# makers) calls Part APIs directly as part of work no dedicated tool covers,
+# and the tip is then noise.
+TOOL_TIPS_PREF_KEY = 'ExecutePythonToolTips'
 
 _MISSING = object()
 
@@ -41,6 +47,13 @@ def _assigns_name(tree: ast.AST, name: str) -> bool:
         if isinstance(node, ast.ExceptHandler) and node.name == name:
             return True
     return False
+
+
+def _tool_tips_enabled() -> bool:
+    try:
+        return bool(FreeCAD.ParamGet(AICOPILOT_PREF_PATH).GetBool(TOOL_TIPS_PREF_KEY, True))
+    except Exception:
+        return True
 
 # CLAUDE.md's "prefer primary tool over execute_python" rule, made
 # observable instead of just documented -- same result-level, same-task
@@ -270,7 +283,7 @@ class ExecutePythonOpsHandler(BaseHandler):
 
         # Only on success -- an already-failed call doesn't need a second
         # thing to think about alongside its error.
-        matches = _detect_primary_tool_alternatives(tree)
+        matches = _detect_primary_tool_alternatives(tree) if _tool_tips_enabled() else []
         if matches:
             methods = ", ".join(m for m, _ in matches)
             tools = ", ".join(sorted({tool for _, tool in matches}))
