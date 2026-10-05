@@ -217,6 +217,28 @@ class TestPrimaryToolAlternativeDetection(unittest.TestCase):
         self.assertIn("part_operations", result["result"])
         self.assertIn("box", result["result"])
 
+    def test_tip_suppressed_when_preference_is_off(self):
+        """Build code for third-party workbenches (e.g. Quetzal) calls Part
+        APIs directly as part of work no dedicated tool covers."""
+        func_globals = self.handler.run_code.__func__.__globals__
+        with patch.dict(func_globals, {"_tool_tips_enabled": lambda: False}):
+            result = self._run_python("Part.makeBox(10, 10, 10)")
+        self.assertNotIn("Tip:", result["result"])
+
+    def test_tip_preference_reads_the_addon_preference_group(self):
+        import handlers.execute_python_ops as mod
+        pref = MagicMock()
+        pref.GetBool.return_value = False
+        with patch.object(mod.FreeCAD, "ParamGet", return_value=pref) as param_get:
+            self.assertFalse(mod._tool_tips_enabled())
+        param_get.assert_called_with(mod.AICOPILOT_PREF_PATH)
+        pref.GetBool.assert_called_with("ExecutePythonToolTips", True)
+
+    def test_unreadable_tip_preference_keeps_tips_on(self):
+        import handlers.execute_python_ops as mod
+        with patch.object(mod.FreeCAD, "ParamGet", side_effect=RuntimeError("no prefs")):
+            self.assertTrue(mod._tool_tips_enabled())
+
     def test_make_cylinder_gets_a_tip(self):
         result = self._run_python("Part.makeCylinder(5, 20)")
         self.assertIn("part_operations", result["result"])
