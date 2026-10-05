@@ -5,7 +5,7 @@ from typing import Any
 
 import FreeCAD
 
-from .base import NO_ACTIVE_DOCUMENT_ERROR, BaseHandler
+from .base import NO_ACTIVE_DOCUMENT_ERROR, BaseHandler, mark_saved_in_gui
 
 # Conditional GUI import (not available in console/headless mode) -- see
 # base.py's identical pattern. An unconditional import here loads
@@ -87,9 +87,11 @@ class DocumentOpsHandler(BaseHandler):
                 if path_err:
                     return f"Error: {path_err}"
                 doc.saveAs(filename)
+                mark_saved_in_gui(doc)
                 return f"Document saved as: {filename}"
             else:
                 doc.save()
+                mark_saved_in_gui(doc)
                 return f"Document saved: {doc.Name}"
         except Exception as e:
             return f"Error saving document: {e}"
