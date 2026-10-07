@@ -192,6 +192,13 @@ class SketchOpsHandler(BaseHandler):
                     if diagnosis:
                         results.append(f"\nOpen wire diagnosis:\n{diagnosis}")
 
+                # A stray vertex rides along with the wire (e.g. a Defining
+                # external point): pad/pocket are fine, but Part -> Sweep
+                # will not list the sketch as a profile.
+                iso_diag = self._diagnose_isolated_vertices(sketch)
+                if iso_diag:
+                    results.append(f"\nIsolated vertices:\n{iso_diag}")
+
                 # Check if can make face
                 if wire_count > 0 and closed_wires > 0:
                     try:
