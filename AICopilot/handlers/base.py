@@ -655,6 +655,27 @@ class BaseHandler:
         except Exception as exc:
             issues.append(f"  (OpenVertices unavailable: {exc})")
 
+        # FreeCAD's OpenVertices flags every vertex whose ancestor-edge count
+        # is not 2 -- which includes an isolated Vertex child of the Shape
+        # (zero ancestor edges), e.g. an external-geometry point flagged
+        # Defining.  That is not a dangling edge endpoint; drop one open
+        # vertex per isolated vertex (the shape's own diagnosis, see
+        # _diagnose_isolated_vertices, reports those correctly) so the wire
+        # is not mislabelled as unclosed at the nearest geometry's endpoint.
+        # Confirmed live 2026-10-07: a closed gutter-profile wire plus one
+        # Defining external vertex reported "open endpoint at geo_id=0".
+        iso = self._sketch_isolated_vertices(sketch)
+        if iso and open_verts:
+            tol = 1e-4
+            remaining = []
+            for v in open_verts:
+                hit = next((q for q in iso if abs(q[0] - v.x) < tol and abs(q[1] - v.y) < tol), None)
+                if hit is not None:
+                    iso.remove(hit)
+                else:
+                    remaining.append(v)
+            open_verts = remaining
+
         if open_verts:
             pos_names = {1: "start", 2: "end", 3: "center"}
             issues.append(f"{len(open_verts)} open endpoint(s) found:")
@@ -714,6 +735,121 @@ class BaseHandler:
             pass
 
         return "\n".join(issues)
+
+    def _sketch_isolated_vertices(self, sketch) -> list:
+        """Return the isolated ``Vertex`` children of a sketch's Shape as
+        sketch-local ``(x, y)`` tuples.
+
+        Only for a *mixed* shape -- vertices alongside at least one
+        edge/wire child.  A points-only sketch returns ``[]``: nothing to
+        diagnose there, and callers treat a non-empty result as "a stray
+        point rides along with the profile".  Never raises; ``[]`` on any
+        failure (sketch without a usable Shape, mock objects, ...).
+        """
+        try:
+            shape = sketch.Shape
+            if not shape:
+                return []
+            children = list(shape.childShapes())
+            verts = [c for c in children if c.ShapeType == 'Vertex']
+            if not verts or len(verts) == len(children):
+                return []
+            to_local = self._sketch_to_local(sketch)
+            out = []
+            for v in verts:
+                p = to_local(v.Point)
+                out.append((p.x, p.y))
+            return out
+        except Exception:
+            return []
+
+    @staticmethod
+    def _sketch_to_local(sketch):
+        """Return a function mapping a global point into the sketch's own
+        frame (identity if the Placement is unavailable)."""
+        try:
+            inv = sketch.Placement.inverse()
+            return inv.multVec
+        except Exception:
+            return lambda p: p
+
+    def _diagnose_isolated_vertices(self, sketch) -> str:
+        """Explain isolated vertices riding along in a sketch's Shape.
+
+        Why it matters: Part -> Sweep (``SweepWidget::findShapes``) only
+        lists an object as a profile/path when its shape is a single
+        face/wire/edge/vertex, or a compound of one child or of edges only.
+        A sketch whose Shape is ``Compound[Wire, Vertex]`` is silently left
+        out of that list even though pad/pocket work fine and every
+        validity check says VALID.  The usual culprit is an external
+        geometry *point* whose "Defining" flag is on -- ``buildShape``
+        exports Defining external points into the Shape -- or a
+        non-construction Point.  Found live 2026-10-07 on a gutter profile.
+
+        Returns an empty string when there is nothing to report.
+        """
+        points = self._sketch_isolated_vertices(sketch)
+        if not points:
+            return ""
+
+        to_local = self._sketch_to_local(sketch)
+        tol = 1e-4
+
+        def near(a, b):
+            return abs(a[0] - b[0]) < tol and abs(a[1] - b[1]) < tol
+
+        # Candidate origins, matched by sketch-local XY.
+        point_geos = []
+        try:
+            for i, g in enumerate(list(sketch.Geometry)):
+                if hasattr(g, 'X') and hasattr(g, 'Y') and not hasattr(g, 'StartPoint') \
+                        and not sketch.getConstruction(i):
+                    point_geos.append((i, (g.X, g.Y)))
+        except Exception:
+            pass
+        ext_points = []
+        try:
+            for ref_obj, subs in (sketch.ExternalGeometry or []):
+                for sub in subs:
+                    if str(sub).startswith('Vertex'):
+                        q = to_local(ref_obj.Shape.getElement(sub).Point)
+                        ext_points.append((ref_obj, str(sub), (q.x, q.y)))
+        except Exception:
+            pass
+
+        lines = [f"Shape has {len(points)} isolated vertex(es) (belonging to no edge) "
+                 "alongside its wire(s):"]
+        fixes = []
+        for pt in points:
+            origins = []
+            for gid, gp in point_geos:
+                if near(pt, gp):
+                    origins.append(f"non-construction point geometry geo_id={gid}")
+                    fixes.append(
+                        f"  Mark geo_id={gid} as construction: execute_python(code=\""
+                        f"FreeCAD.ActiveDocument.{sketch.Name}.toggleConstruction({gid}); "
+                        "FreeCAD.ActiveDocument.recompute()\")")
+            for ref_obj, sub, ep in ext_points:
+                if near(pt, ep):
+                    label = getattr(ref_obj, 'Label', '')
+                    origins.append(
+                        f"external geometry {ref_obj.Name}.{sub}"
+                        + (f" ('{label}')" if label and label != ref_obj.Name else "")
+                        + " with the Defining flag on")
+                    fixes.append(
+                        f"  Turn the Defining flag off for external geometry "
+                        f"{ref_obj.Name}.{sub} (it then stays available to constrain "
+                        "against but is no longer exported into the Shape).")
+            if not origins:
+                origins.append("origin not identified (no matching point geometry "
+                               "or external reference)")
+            lines.append(f"  • at ({pt[0]:.4f}, {pt[1]:.4f}): " + "; ".join(origins))
+        lines.append(
+            "  Part -> Sweep only lists a sketch whose Shape is a single wire (or only "
+            "edges), so this sketch is not offered as a sweep profile/path, even though "
+            "pad/pocket still work.")
+        lines.extend(dict.fromkeys(fixes))
+        return "\n".join(lines)
 
     def _find_upstream_sketches(self, obj, _visited=None, _sketches=None, _depth=0):
         """Walk obj.OutList recursively, collecting every Sketcher::SketchObject
@@ -796,6 +932,16 @@ class BaseHandler:
             lines.append(open_diag)
         else:
             lines.append("\nOpen wire / unclosed profile: none found")
+
+        # --- Isolated vertices exported with the profile (not in the native
+        # Validate Sketch dialog; breaks Part -> Sweep's candidate list) ---
+        iso_diag = self._diagnose_isolated_vertices(sketch)
+        if iso_diag:
+            problems_found = True
+            lines.append("\nIsolated vertices in Shape:")
+            lines.append("  " + iso_diag)
+        else:
+            lines.append("\nIsolated vertices in Shape: none found")
 
         # --- Invalid constraints ---
         try:
