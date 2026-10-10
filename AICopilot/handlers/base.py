@@ -116,7 +116,8 @@ def occt_confusion_tolerance() -> float:
 
 AUTOSAVE_OUTCOMES = frozenset({
     'saved',             # the document was written to its FileName
-    'disabled',          # preference is off — nothing written
+    'unchanged',         # no unsaved changes — the file already holds this state, nothing written
+    'disabled',         # preference is off — nothing written
     'no_document',       # nothing active to save
     'unsaved_document',  # active document has no FileName — never invent a path
     'pref_unreadable',   # the preference store could not be read — nothing written
@@ -141,6 +142,38 @@ def _report(level: str, make_message) -> None:
         getattr(FreeCAD.Console, level)(message)
 
 
+def _has_no_unsaved_changes(doc) -> bool:
+    """True only when the document is KNOWN to match its file: the Gui
+    document's Modified flag (the title-bar asterisk, cleared by save).
+    Headless there is no such flag — App's isTouched() goes False after any
+    recompute even with unsaved edits, and UndoCount stays > 0 after a save —
+    so headless answers False. Any doubt (flag unreadable, not a real bool)
+    answers False too, so the caller falls back to saving: crash-safety wins
+    over a skipped write."""
+    try:
+        if not (FreeCAD.GuiUp and FreeCADGui is not None):
+            return False
+        gui_doc = FreeCADGui.getDocument(doc.Name)
+        return gui_doc is not None and gui_doc.Modified is False
+    except Exception:
+        return False
+
+
+def mark_saved_in_gui(doc) -> None:
+    """Clear the Gui document's Modified flag after an App-level save.
+
+    App's doc.save()/saveAs() write the file but leave the Gui flag set
+    (measured live on FreeCAD 1.1), so without this the title bar keeps its
+    asterisk and _has_no_unsaved_changes() never sees the document as clean
+    again -- every later execute_python would rewrite the file. Never
+    raises: the save already happened; this is bookkeeping."""
+    with contextlib.suppress(Exception):
+        if FreeCAD.GuiUp and FreeCADGui is not None:
+            gui_doc = FreeCADGui.getDocument(doc.Name)
+            if gui_doc is not None:
+                gui_doc.Modified = False
+
+
 def _autosave(doc, reason: str) -> str:
     if doc is None:
         return 'no_document'
@@ -157,11 +190,15 @@ def _autosave(doc, reason: str) -> str:
     if not enabled:
         _report('PrintLog', lambda: f"[MCP] autosave[{reason}]: disabled; not saving {path}\n")
         return 'disabled'
+    if _has_no_unsaved_changes(doc):
+        _report('PrintLog', lambda: f"[MCP] autosave[{reason}]: no unsaved changes; not rewriting {path}\n")
+        return 'unchanged'
     try:
         doc.save()
     except Exception as e:
         _report('PrintError', lambda e=e: f"[MCP] autosave[{reason}]: save FAILED for {path}: {e}\n")
         return 'failed'
+    mark_saved_in_gui(doc)
     _report('PrintMessage', lambda: f"[MCP] autosave[{reason}]: saved {path}\n")
     return 'saved'
 
