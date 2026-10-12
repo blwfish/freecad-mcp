@@ -1,5 +1,5 @@
 # MCP Protocol (bridge dependency)
-mcp==2.2.0
+mcp==2.3.0
 mcp-events>=0.1.0
 # Not yet published to PyPI -- pinned to a commit, not a version. Same pin
 # as kicad-mcp and jmri-mcp use.
