@@ -20,7 +20,7 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "mcp>=2.2.0",
+    "mcp>=2.3.0",
     "mcp-events>=0.1.0",
     # Not yet published to PyPI -- pinned to a commit, not a version, as a
     # PEP 508 direct reference (not a [tool.uv.sources] override) so plain
