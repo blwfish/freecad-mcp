@@ -53,11 +53,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Single source of truth: the "dev-weekly" slot's tag in
-          # integration-tests.yml's matrix. Grep the two-line block rather
-          # than a generic "weekly-" search so this doesn't accidentally
-          # pick up a comment or an unrelated tag elsewhere in the file.
-          CURRENT_DEV_WEEKLY=$(grep -A1 'slot: "dev-weekly"' .github/workflows/integration-tests.yml | grep -oE 'weekly-[0-9]{4}\.[0-9]{2}\.[0-9]{2}')
+          # The "dev-weekly" slot's tag in integration-tests.yml's matrices.
+          # Grep the two-line block rather than a generic "weekly-" search so
+          # this doesn't accidentally pick up a comment or an unrelated tag
+          # elsewhere in the file. More than one job carries a dev-weekly
+          # slot (test matrix + instance-lifecycle), so collect the distinct
+          # tags and require exactly one: if the slots drift apart that is a
+          # real inconsistency to surface, not something to resolve by
+          # silently taking the first match.
+          CURRENT_TAGS=$(grep -A1 'slot: "dev-weekly"' .github/workflows/integration-tests.yml | grep -oE 'weekly-[0-9]{4}\.[0-9]{2}\.[0-9]{2}' | sort -u)
+          if [ "$(printf '%s\n' "$CURRENT_TAGS" | grep -c .)" -ne 1 ]; then
+            echo "::error::Expected exactly one distinct dev-weekly pin across integration-tests.yml slots, found: $(echo $CURRENT_TAGS)"
+            exit 1
+          fi
+          CURRENT_DEV_WEEKLY="$CURRENT_TAGS"
 
           # Latest weekly- tag by actual publish date (not release-list
           # order, and not just --limit 1 -- stable releases interleave
