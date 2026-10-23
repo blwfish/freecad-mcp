@@ -806,13 +806,13 @@ def _find_freecadcmd() -> str | None:
     return None
 
 
-def _load_regression_runner(module_dir: str):
-    """Load AICopilot/regression_runner.py (and its regression_analysis
-    dependency) by file path. Deliberately not cached and not via sys.path:
-    a redeploy of AICopilot is picked up on the next call, and the bridge's
-    import path stays untouched."""
+def _load_aicopilot_modules(module_dir: str, names: tuple):
+    """Load AICopilot modules by file path, in dependency order, and return the
+    last one. Deliberately not cached and not via sys.path: a redeploy of
+    AICopilot is picked up on the next call, and the bridge's import path stays
+    untouched. Modules import each other by bare name, so each is registered in
+    sys.modules as it loads."""
     import importlib.util
-    names = ("regression_analysis", "regression_runner")
     previous = {n: sys.modules.get(n) for n in names}
     try:
         for mod_name in names:
@@ -822,7 +822,7 @@ def _load_regression_runner(module_dir: str):
             mod = importlib.util.module_from_spec(spec)
             sys.modules[mod_name] = mod  # regression_runner does `import regression_analysis`
             spec.loader.exec_module(mod)
-        return sys.modules["regression_runner"]
+        return sys.modules[names[-1]]
     except BaseException:
         # A load that fails midway must not leave a half-initialised module
         # (or a replaced good one) behind in sys.modules.
@@ -832,6 +832,42 @@ def _load_regression_runner(module_dir: str):
             else:
                 sys.modules[n] = old
         raise
+
+
+def _load_regression_runner(module_dir: str):
+    """AICopilot/regression_runner.py and its regression_analysis dependency."""
+    return _load_aicopilot_modules(module_dir, ("regression_analysis", "regression_runner"))
+
+
+def _load_lint_runner(module_dir: str):
+    """AICopilot/lint_runner.py; it builds on regression_runner, so load that first."""
+    return _load_aicopilot_modules(module_dir, ("regression_analysis", "regression_runner",
+                                                "lint_analysis", "lint_runner"))
+
+
+def _run_model_lint(args: dict) -> dict:
+    """Blocking implementation of the model_lint tool (call via asyncio.to_thread)."""
+    file_path = args.get("file_path")
+    if not isinstance(file_path, str) or not file_path:
+        return {"error": "file_path is required", "error_kind": "invalid_argument"}
+    headless = _find_headless_script()
+    if not headless:
+        return {"error": ("Cannot find the AICopilot module directory. Set FREECAD_MCP_MODULE_DIR, "
+                          "or deploy AICopilot to ~/.freecad-mcp/AICopilot/."),
+                "error_kind": "module_dir_not_found"}
+    module_dir = os.path.dirname(headless)
+    binary = args.get("freecad_binary") or _find_freecadcmd()
+    if not binary:
+        return {"error": ("Cannot find a FreeCADCmd binary. Set FREECAD_MCP_FREECAD_BIN or pass "
+                          "freecad_binary=..."),
+                "error_kind": "binary_not_found"}
+    try:
+        runner = _load_lint_runner(module_dir)
+    except (ImportError, OSError, SyntaxError) as e:
+        return {"error": f"cannot load lint_runner from {module_dir}: {e}",
+                "error_kind": "module_load_failed"}
+    kwargs = {k: args[k] for k in ("bop_check", "timeout_s") if k in args}
+    return runner.run_lint(file_path, binary, module_dir, **kwargs)
 
 
 def _run_regression_check(args: dict) -> dict:
@@ -1336,6 +1372,39 @@ async def main():
                 destructiveHint=False,
                 idempotentHint=True,
             ),
+        ),
+        types.Tool(
+            name="model_lint",
+            description=(
+                "Static lint of a saved .FCStd for latent problems, with no recompute: reads what the "
+                "file stored. Rules: lost_support (a sketch in Flat-face mode whose support list is "
+                "empty), unresolved_reference ('?' sub-names), legacy_flag_conflict (Midplane=true with "
+                "SideType other than Symmetric: flips to Symmetric on the next load), orphan_empty_sketch, "
+                "junk_shell (zero-size extra shells inside a solid), internal_void (a real cavity), "
+                "sliver_face, zero_length_edge, inflated_tolerance, micro_step (parallel planes a few "
+                "microns apart on touching faces: a sliver generator), and optionally bop_self_intersect. "
+                "Findings are typed with a severity (error / warning / info); geometry findings are "
+                "reported at the FIRST feature that shows them and listed as inherited downstream. "
+                "Runs in a separate headless FreeCAD on a temp copy: never touches the open document or "
+                "the file on disk and needs no running FreeCAD instance. Takes about 2 s on a 240-object "
+                "model. Complements regression_check, which asks whether the model still recomputes as saved."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "Path to the .FCStd file (home dir, /tmp or /Volumes)."},
+                    "bop_check": {
+                        "type": "boolean", "default": False,
+                        "description": "Also run OCCT's BOP argument analyzer on shapes with solids "
+                                       "(reports bop_self_intersect). Slow on large shapes.",
+                    },
+                    "freecad_binary": {"type": "string", "description": "FreeCADCmd binary to use instead of the auto-detected one."},
+                    "timeout_s": {"type": "number", "minimum": 10, "maximum": 1800, "default": 300,
+                                  "description": "Timeout for the whole run."},
+                },
+                "required": ["file_path"],
+            },
+            annotations=types.ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True),
         ),
         types.Tool(
             name="regression_check",
@@ -3159,6 +3228,11 @@ async def main():
                     problem=args.get("problem"),
                 )
             )]
+
+        elif name == "model_lint":
+            # Bridge-only, like regression_check: headless FreeCAD on a temp copy.
+            result = await asyncio.to_thread(_run_model_lint, arguments or {})
+            return [types.TextContent(type="text", text=json.dumps(result))]
 
         elif name == "regression_check":
             # Bridge-only: runs headless FreeCAD on a temp copy of a file, so it

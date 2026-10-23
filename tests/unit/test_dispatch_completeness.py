@@ -42,6 +42,7 @@ BRIDGE_ONLY_TOOLS = frozenset({
     "test_echo",
     "get_usage_guidance",
     "regression_check",
+    "model_lint",
     "manage_connection",
     "spawn_freecad_instance",
     "list_freecad_instances",

@@ -631,3 +631,118 @@ class TestRegressionCheckTool:
             for n, mod in saved.items():
                 if mod is not None:
                     sys.modules[n] = mod
+
+
+# ---------------------------------------------------------------------------
+# model_lint (bridge-only tool)
+# ---------------------------------------------------------------------------
+
+class TestModelLintTool:
+    """model_lint lints a saved .FCStd in a separate headless FreeCAD on a temp
+    copy. The rules are tested in test_lint_analysis.py and the process
+    handling in test_lint_runner.py; these cover the MCP surface and bridge glue."""
+
+    @staticmethod
+    def _result(args):
+        return json.loads(_call_tool("model_lint", args)[0].text)
+
+    def test_tool_is_registered_with_a_required_file_path(self):
+        tool = next(t for t in _list_tools() if t.name == "model_lint")
+        assert tool.input_schema["required"] == ["file_path"]
+        assert set(tool.input_schema["properties"]) == {"file_path", "bop_check", "freecad_binary", "timeout_s"}
+
+    def test_schema_bounds_match_the_runner(self):
+        module_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot"))
+        runner = freecad_mcp_server._load_regression_runner(module_dir)
+        props = next(t for t in _list_tools() if t.name == "model_lint").input_schema["properties"]
+        assert props["timeout_s"]["minimum"] == runner.MIN_TIMEOUT_S and props["timeout_s"]["maximum"] == runner.MAX_TIMEOUT_S
+        assert props["timeout_s"]["default"] == runner.DEFAULT_TIMEOUT_S and props["bop_check"]["default"] is False
+
+    def test_tool_is_declared_read_only_and_idempotent(self):
+        a = next(t for t in _list_tools() if t.name == "model_lint").annotations
+        assert a.read_only_hint is True and a.destructive_hint is False and a.idempotent_hint is True
+
+    def test_missing_and_non_string_file_path_are_typed_errors(self):
+        assert self._result({})["error_kind"] == "invalid_argument"
+        assert self._result({"file_path": 5})["error_kind"] == "invalid_argument"
+
+    def test_path_outside_the_allowlist_is_rejected_before_anything_runs(self):
+        with patch.object(freecad_mcp_server, "_find_freecadcmd", return_value=sys.executable):
+            r = self._result({"file_path": "/etc/passwd"})
+        assert r["error_kind"] == "invalid_argument" and "outside allowed" in r["error"]
+
+    def test_module_dir_and_binary_not_found_are_typed(self):
+        with patch.object(freecad_mcp_server, "_find_headless_script", return_value=None):
+            assert self._result({"file_path": "/tmp/x.FCStd"})["error_kind"] == "module_dir_not_found"
+        with patch.object(freecad_mcp_server, "_find_freecadcmd", return_value=None):
+            assert self._result({"file_path": "/tmp/x.FCStd"})["error_kind"] == "binary_not_found"
+
+    def test_runner_that_cannot_load_is_typed(self):
+        with (patch.object(freecad_mcp_server, "_find_freecadcmd", return_value=sys.executable),
+              patch.object(freecad_mcp_server, "_load_lint_runner", side_effect=ImportError("boom"))):
+            r = self._result({"file_path": "/tmp/x.FCStd"})
+        assert r["error_kind"] == "module_load_failed" and "boom" in r["error"]
+
+    def test_only_known_arguments_are_forwarded(self):
+        seen = {}
+
+        class FakeRunner:
+            @staticmethod
+            def run_lint(file_path, binary, module_dir, **kw):
+                seen.update(file_path=file_path, binary=binary, kw=kw)
+                return {"ok": True}
+
+        with (patch.object(freecad_mcp_server, "_find_freecadcmd", return_value="/fake/FreeCADCmd"),
+              patch.object(freecad_mcp_server, "_load_lint_runner", return_value=FakeRunner)):
+            r = self._result({"file_path": "/tmp/x.FCStd", "bop_check": True, "timeout_s": 60, "runs": 9})
+        assert r == {"ok": True} and seen["binary"] == "/fake/FreeCADCmd"
+        assert seen["kw"] == {"bop_check": True, "timeout_s": 60}
+
+    def test_omitted_options_are_not_forwarded_so_runner_defaults_apply(self):
+        seen = {}
+
+        class FakeRunner:
+            @staticmethod
+            def run_lint(file_path, binary, module_dir, **kw):
+                seen["kw"] = kw
+                return {}
+
+        with (patch.object(freecad_mcp_server, "_find_freecadcmd", return_value="/fake/FreeCADCmd"),
+              patch.object(freecad_mcp_server, "_load_lint_runner", return_value=FakeRunner)):
+            self._result({"file_path": "/tmp/x.FCStd"})
+        assert seen["kw"] == {}
+
+    def test_blocking_run_happens_off_the_event_loop_thread(self):
+        import threading
+        seen = {}
+
+        class FakeRunner:
+            @staticmethod
+            def run_lint(*a, **kw):
+                seen["worker"] = threading.current_thread() is not threading.main_thread()
+                return {}
+
+        with (patch.object(freecad_mcp_server, "_find_freecadcmd", return_value="/fake/FreeCADCmd"),
+              patch.object(freecad_mcp_server, "_load_lint_runner", return_value=FakeRunner)):
+            self._result({"file_path": "/tmp/x.FCStd"})
+        assert seen["worker"] is True
+
+    def test_the_real_lint_runner_loads_by_path_without_touching_sys_path(self):
+        module_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot"))
+        before = list(sys.path)
+        runner = freecad_mcp_server._load_lint_runner(module_dir)
+        assert callable(runner.run_lint) and sys.path == before
+
+    def test_a_failed_lint_load_restores_every_module_it_touched(self, tmp_path):
+        names = ("regression_analysis", "regression_runner", "lint_analysis", "lint_runner")
+        module_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot"))
+        freecad_mcp_server._load_lint_runner(module_dir)
+        before = {n: sys.modules.get(n) for n in names}
+        with pytest.raises((ImportError, OSError)):
+            freecad_mcp_server._load_lint_runner(str(tmp_path))
+        assert {n: sys.modules.get(n) for n in names} == before
+
+    def test_regression_loader_is_unchanged_by_the_shared_loader(self):
+        module_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot"))
+        runner = freecad_mcp_server._load_regression_runner(module_dir)
+        assert callable(runner.run_check) and callable(runner.run_worker_process)
