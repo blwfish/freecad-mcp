@@ -124,18 +124,49 @@ class TestLegacyFlagConflict:
 
 class TestOrphanEmptySketch:
 
-    def test_empty_unused_sketch_is_flagged_as_info(self):
-        assert lint_object({"sketch": {"geometry_count": 0, "dependents": []}}) == {la.KIND_ORPHAN_EMPTY_SKETCH: {}}
+    ATTACHED = {"mode": "FlatFace", "support": [["XY_Plane", [""]]]}
+
+    def _facts(self, geometry_count=0, dependents=(), external=0, attach=ATTACHED):
+        f = {"sketch": {"geometry_count": geometry_count, "dependents": list(dependents),
+                        "external_geometry_count": external}}
+        if attach is not None:
+            f["attach"] = attach
+        return f
+
+    def test_attached_empty_unused_sketch_is_flagged_as_info(self):
+        assert lint_object(self._facts()) == {la.KIND_ORPHAN_EMPTY_SKETCH: {}}
         assert la.SEVERITY[la.KIND_ORPHAN_EMPTY_SKETCH] == la.SEVERITY_INFO
 
     def test_empty_but_used_sketch_is_clean(self):
-        assert lint_object({"sketch": {"geometry_count": 0, "dependents": ["Pad"]}}) == {}
+        assert lint_object(self._facts(dependents=["Pad"])) == {}
 
     def test_unused_but_not_empty_sketch_is_clean(self):
-        assert lint_object({"sketch": {"geometry_count": 1, "dependents": []}}) == {}
+        assert lint_object(self._facts(geometry_count=1)) == {}
+
+    def test_unattached_empty_sketch_is_a_placeholder_not_a_finding(self):
+        """The 'Master XY/XZ/YZ' skeleton sketches: MapMode Deactivated, empty, unused."""
+        assert lint_object(self._facts(attach={"mode": "Deactivated", "support": []})) == {}
+
+    def test_sketch_with_no_attach_facts_is_not_flagged(self):
+        assert lint_object(self._facts(attach=None)) == {}
+
+    def test_empty_sketch_with_only_external_geometry_is_not_flagged(self):
+        assert lint_object(self._facts(external=1)) == {}
+
+    def test_missing_external_count_counts_as_none(self):
+        f = self._facts()
+        del f["sketch"]["external_geometry_count"]
+        assert la.KIND_ORPHAN_EMPTY_SKETCH in lint_object(f)
 
     def test_missing_dependents_key_counts_as_unused(self):
-        assert la.KIND_ORPHAN_EMPTY_SKETCH in lint_object({"sketch": {"geometry_count": 0}})
+        f = self._facts()
+        del f["sketch"]["dependents"]
+        assert la.KIND_ORPHAN_EMPTY_SKETCH in lint_object(f)
+
+    def test_lost_support_empty_sketch_gets_both_findings(self):
+        """Sketch052: Flat-face mode, empty support list, nothing drawn."""
+        got = lint_object(self._facts(attach={"mode": "FlatFace", "support": []}))
+        assert set(got) == {la.KIND_ORPHAN_EMPTY_SKETCH, la.KIND_LOST_SUPPORT}
 
 
 class TestJunkShellBoundaries:
