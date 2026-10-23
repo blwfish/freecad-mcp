@@ -65,8 +65,9 @@ def validate_file_path(path: str) -> "str | None":
             f"Resolved path: {resolved}")
 
 
-def _validate_args(file_path, freecad_binary, module_dir, tolerance, runs, timeout_s,
-                   check_validity=True) -> "str | None":
+def validate_file_and_binary(file_path, freecad_binary, module_dir, needed_files) -> "str | None":
+    """Checks shared by every worker-based tool: an allowed, existing .FCStd, an
+    executable FreeCAD binary, and the worker's own files present in module_dir."""
     err = validate_file_path(file_path)
     if err:
         return err
@@ -77,17 +78,33 @@ def _validate_args(file_path, freecad_binary, module_dir, tolerance, runs, timeo
         return f"file not found: {resolved}"
     if not (freecad_binary and os.path.isfile(freecad_binary) and os.access(freecad_binary, os.X_OK)):
         return f"FreeCAD binary not found or not executable: {freecad_binary!r}"
-    for needed in ("regression_worker.py", "regression_analysis.py"):
+    for needed in needed_files:
         if not os.path.isfile(os.path.join(module_dir, needed)):
             return f"{needed} not found in {module_dir}"
+    return None
+
+
+def validate_timeout(timeout_s) -> "str | None":
+    if (isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float))
+            or not MIN_TIMEOUT_S <= timeout_s <= MAX_TIMEOUT_S):
+        return f"timeout_s must be between {MIN_TIMEOUT_S} and {MAX_TIMEOUT_S}, got {timeout_s!r}"
+    return None
+
+
+def _validate_args(file_path, freecad_binary, module_dir, tolerance, runs, timeout_s,
+                   check_validity=True) -> "str | None":
+    err = validate_file_and_binary(file_path, freecad_binary, module_dir,
+                                   ("regression_worker.py", "regression_analysis.py"))
+    if err:
+        return err
     if isinstance(runs, bool) or not isinstance(runs, int) or not 1 <= runs <= MAX_RUNS:
         return f"runs must be an integer between 1 and {MAX_RUNS}, got {runs!r}"
     if (isinstance(tolerance, bool) or not isinstance(tolerance, (int, float))
             or not math.isfinite(tolerance) or not 0 < tolerance <= 1):
         return f"tolerance must be a number with 0 < tolerance <= 1, got {tolerance!r}"
-    if (isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float))
-            or not MIN_TIMEOUT_S <= timeout_s <= MAX_TIMEOUT_S):
-        return f"timeout_s must be between {MIN_TIMEOUT_S} and {MAX_TIMEOUT_S}, got {timeout_s!r}"
+    err = validate_timeout(timeout_s)
+    if err:
+        return err
     if not isinstance(check_validity, bool):
         return f"check_validity must be a boolean, got {check_validity!r}"
     return None
@@ -117,27 +134,15 @@ def _tail(path: str) -> str:
     return data[-_LOG_TAIL_CHARS:].decode("utf-8", errors="replace")
 
 
-def _run_one(index: int, binary: str, module_dir: str, work_copy: str, tmp: str,
-             tolerance: float, deadline: float, check_validity: bool = True) -> dict:
-    """Run one worker. Returns {"ok": True, "report": {...}} or
-    {"ok": False, "failure": {...}} -- never raises for a bad worker."""
-    out_path = os.path.join(tmp, f"run{index}.json")
-    log_path = os.path.join(tmp, f"run{index}.log")
-    junk = JUNK_SEQUENCE[index % len(JUNK_SEQUENCE)]
-    env = dict(os.environ)
-    env.update({
-        "FREECAD_MCP_REGRESSION_IN": work_copy,
-        "FREECAD_MCP_REGRESSION_OUT": out_path,
-        "FREECAD_MCP_REGRESSION_MODDIR": module_dir,
-        "FREECAD_MCP_REGRESSION_TOL": repr(float(tolerance)),
-        "FREECAD_MCP_REGRESSION_JUNK": str(junk),
-        "FREECAD_MCP_REGRESSION_VALIDITY": "1" if check_validity else "0",
-    })
-    script = os.path.join(module_dir, "regression_worker.py")
+def run_worker_process(binary: str, script: str, env: dict, out_path: str, log_path: str,
+                       deadline: float, base: dict) -> dict:
+    """Run one FreeCAD worker script and collect its JSON report. Shared by the
+    regression and lint runners. Returns {"ok": True, "report": {...}} or
+    {"ok": False, "failure": {**base, "status": ...}} -- never raises for a bad
+    worker (crash, timeout, no/garbled output, worker-reported error)."""
     # `-c <code>` rather than a script argument: accepted by FreeCADCmd and the
     # GUI binary alike, and some builds reject unknown flags.
     code = f"exec(compile(open({script!r}).read(), {script!r}, 'exec'))"
-    base = {"run": index, "junk": junk}
 
     # Output goes to a file, not a pipe: FreeCAD's console chatter can fill an
     # unread pipe and wedge the process (the CI hang documented in CLAUDE.md).
@@ -174,8 +179,30 @@ def _run_one(index: int, binary: str, module_dir: str, work_copy: str, tmp: str,
         detail = report.get("error") if isinstance(report, dict) else "report is not a JSON object"
         return {"ok": False, "failure": {**base, "status": STATUS_WORKER_ERROR, "detail": detail,
                                          "log_tail": _tail(log_path)}}
-    report["junk"] = junk
     return {"ok": True, "report": report}
+
+
+def _run_one(index: int, binary: str, module_dir: str, work_copy: str, tmp: str,
+             tolerance: float, deadline: float, check_validity: bool = True) -> dict:
+    """Run one regression worker. Returns {"ok": True, "report": {...}} or
+    {"ok": False, "failure": {...}} -- never raises for a bad worker."""
+    out_path = os.path.join(tmp, f"run{index}.json")
+    log_path = os.path.join(tmp, f"run{index}.log")
+    junk = JUNK_SEQUENCE[index % len(JUNK_SEQUENCE)]
+    env = dict(os.environ)
+    env.update({
+        "FREECAD_MCP_REGRESSION_IN": work_copy,
+        "FREECAD_MCP_REGRESSION_OUT": out_path,
+        "FREECAD_MCP_REGRESSION_MODDIR": module_dir,
+        "FREECAD_MCP_REGRESSION_TOL": repr(float(tolerance)),
+        "FREECAD_MCP_REGRESSION_JUNK": str(junk),
+        "FREECAD_MCP_REGRESSION_VALIDITY": "1" if check_validity else "0",
+    })
+    result = run_worker_process(binary, os.path.join(module_dir, "regression_worker.py"), env,
+                                out_path, log_path, deadline, {"run": index, "junk": junk})
+    if result["ok"]:
+        result["report"]["junk"] = junk
+    return result
 
 
 def run_check(file_path: str, freecad_binary: str, module_dir: str,
