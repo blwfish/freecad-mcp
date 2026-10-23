@@ -62,6 +62,38 @@ class TestCompareValidity:
         assert KIND_STORED_INVALID not in ra.REGRESSION_KINDS
 
 
+class TestCompareValidityUnchecked:
+    """valid is None means the shape had too many faces for the (super-linear)
+    validity analyzer; it is informational and must never read as a regression."""
+
+    def test_unchecked_stored_is_informational_only(self):
+        f = compare_snapshots(snap(valid=None), snap(valid=True), TOL)
+        assert set(f) == {ra.KIND_VALIDITY_UNCHECKED}
+        assert ra.KIND_VALIDITY_UNCHECKED not in ra.REGRESSION_KINDS
+
+    def test_unchecked_fresh_is_informational_only(self):
+        assert set(compare_snapshots(snap(valid=True), snap(valid=None), TOL)) == {ra.KIND_VALIDITY_UNCHECKED}
+
+    def test_unchecked_both_sides(self):
+        assert set(compare_snapshots(snap(valid=None), snap(valid=None), TOL)) == {ra.KIND_VALIDITY_UNCHECKED}
+
+    def test_unknown_validity_never_becomes_validity_lost_or_gained(self):
+        for stored, fresh in ((None, False), (False, None), (None, True), (True, None)):
+            f = compare_snapshots(snap(valid=stored), snap(valid=fresh), TOL)
+            assert KIND_VALIDITY_LOST not in f and KIND_VALIDITY_GAINED not in f and KIND_STORED_INVALID not in f
+
+    def test_other_measurements_are_still_compared(self):
+        f = compare_snapshots(snap(valid=None, faces=6001, volume=1000.0), snap(valid=None, faces=6002, volume=500.0), TOL)
+        assert set(f) == {ra.KIND_VALIDITY_UNCHECKED, KIND_TOPOLOGY_CHANGED, KIND_VOLUME_CHANGED}
+        assert f[ra.KIND_VALIDITY_UNCHECKED] == {"faces_stored": 6001, "faces_recomputed": 6002, "limit": ra.MAX_FACES_FOR_VALIDITY_CHECK}
+
+    def test_unchecked_does_not_count_as_a_regression_in_the_aggregate(self):
+        runs = [run_report({"Array": {ra.KIND_VALIDITY_UNCHECKED: {"limit": 5000}}}, order=("Array",), inputs={})]
+        rep = aggregate_runs(runs, 1)
+        assert rep["regression_count"] == 0 and rep["unstable_count"] == 0
+        assert rep["informational"] == [{"name": "Array", "kinds": [ra.KIND_VALIDITY_UNCHECKED]}]
+
+
 class TestCompareNullAndErrors:
 
     def test_shape_lost_returns_early(self):
@@ -211,7 +243,7 @@ class TestAttribution:
 def run_report(findings, order=("Pad", "Fillet"), inputs=None, **extra):
     base = {"order": list(order), "inputs": inputs if inputs is not None else {"Fillet": ["Pad"]},
             "findings": findings, "tolerance": TOL, "features_compared": len(order),
-            "skipped_non_feature": 0, "snapshot_errors": {}, "freecad_version": "26.3.0 test",
+            "skipped_non_feature": 0, "snapshot_errors": {}, "validity_face_limit": 5000, "freecad_version": "26.3.0 test",
             "occt_version": "8.0.1", "saved_by_program_version": "1.0R39109"}
     base.update(extra)
     return base

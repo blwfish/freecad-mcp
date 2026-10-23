@@ -20,6 +20,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'AICopilo
 import regression_analysis as analysis
 import regression_worker as w
 
+LIMIT = analysis.MAX_FACES_FOR_VALIDITY_CHECK
+
 
 def fake_shape(valid=True, volume=10.0, faces=6, solids=1, shells=1, null=False, bbox_valid=True):
     s = MagicMock()
@@ -51,24 +53,68 @@ def fake_obj(name, shape=None, part_feature=True, out=(), state=("Up-to-date",),
 class TestTakeSnapshot:
 
     def test_ordinary_shape(self):
-        snap = w.take_snapshot(fake_obj("A", fake_shape(volume=3.5, faces=25, solids=1, shells=2)))
+        snap = w.take_snapshot(fake_obj("A", fake_shape(volume=3.5, faces=25, solids=1, shells=2)), LIMIT)
         assert snap == {"null": False, "valid": True, "solids": 1, "shells": 2, "faces": 25, "volume": 3.5,
                         "bbox": [0, 0, 0, 1, 2, 3], "recompute_error": None}
 
     def test_null_shape_reads_nothing_else(self):
         s = fake_shape(null=True)
-        snap = w.take_snapshot(fake_obj("A", s))
+        snap = w.take_snapshot(fake_obj("A", s), LIMIT)
         assert snap["null"] is True and snap["bbox"] is None
         s.isValid.assert_not_called()
 
     def test_invalid_bounding_box_is_none_and_diagonal_never_read(self):
         """An empty shape's BoundBox.DiagonalLength raises FloatingPointError;
         fake_shape makes reading it an AssertionError."""
-        snap = w.take_snapshot(fake_obj("A", fake_shape(bbox_valid=False)))
+        snap = w.take_snapshot(fake_obj("A", fake_shape(bbox_valid=False)), LIMIT)
         assert snap["bbox"] is None
 
     def test_invalid_shape_is_recorded_not_raised(self):
-        assert w.take_snapshot(fake_obj("A", fake_shape(valid=False)))["valid"] is False
+        assert w.take_snapshot(fake_obj("A", fake_shape(valid=False)), LIMIT)["valid"] is False
+
+
+class TestValidityFaceLimit:
+    """isValid() (BRepCheck_Analyzer) took 33 s on a 22,545-face array and never
+    finished on a 143,400-face one, wedging whole checks. Shapes above the limit
+    are not validity-checked; exactly at the limit still is."""
+
+    def test_limit_is_five_thousand(self):
+        assert LIMIT == 5000
+
+    def test_exactly_at_the_limit_is_checked(self):
+        s = fake_shape(faces=LIMIT)
+        snap = w.take_snapshot(fake_obj("A", s), LIMIT)
+        s.isValid.assert_called_once()
+        assert snap["valid"] is True and snap["faces"] == LIMIT
+
+    def test_just_below_the_limit_is_checked(self):
+        s = fake_shape(faces=LIMIT - 1)
+        assert w.take_snapshot(fake_obj("A", s), LIMIT)["valid"] is True
+        s.isValid.assert_called_once()
+
+    def test_just_above_the_limit_is_not_checked_and_never_calls_isvalid(self):
+        s = fake_shape(faces=LIMIT + 1)
+        snap = w.take_snapshot(fake_obj("A", s), LIMIT)
+        s.isValid.assert_not_called()
+        assert snap["valid"] is None and snap["faces"] == LIMIT + 1
+
+    def test_other_measurements_are_still_taken_above_the_limit(self):
+        snap = w.take_snapshot(fake_obj("A", fake_shape(faces=LIMIT + 1, volume=7.5, solids=3)), LIMIT)
+        assert snap["volume"] == 7.5 and snap["solids"] == 3 and snap["bbox"] == [0, 0, 0, 1, 2, 3]
+
+    def test_a_limit_of_zero_skips_every_nonempty_shape(self):
+        s = fake_shape(faces=1)
+        assert w.take_snapshot(fake_obj("A", s), 0)["valid"] is None
+
+    def test_run_reports_unchecked_and_still_compares_volume(self):
+        big_before = fake_shape(faces=LIMIT + 1, volume=100.0)
+        big_after = fake_shape(faces=LIMIT + 1, volume=50.0)
+        rep = run_worker(make_doc([fake_obj("Array", big_before)], after={"Array": big_after}))
+        f = rep["findings"]["Array"]
+        assert set(f) == {"validity_unchecked", "volume_changed"}
+        assert f["validity_unchecked"]["limit"] == LIMIT and rep["validity_face_limit"] == LIMIT
+        big_before.isValid.assert_not_called()
+        big_after.isValid.assert_not_called()
 
 
 class TestSnapshotTarget:
@@ -239,7 +285,54 @@ class TestRun:
         assert len(w._JUNK_KEEPALIVE) == before
 
 
+class TestCheckValidityOff:
+    """check_validity=False: nothing with faces is validity-checked (limit 0), but
+    everything else is still compared. For files whose isValid() never returns."""
+
+    def test_isvalid_is_never_called_on_a_shape_with_faces(self):
+        before, after = fake_shape(faces=6, volume=10.0), fake_shape(faces=6, volume=5.0)
+        rep = run_worker_validity(make_doc([fake_obj("Pad", before)], after={"Pad": after}), check_validity=False)
+        before.isValid.assert_not_called()
+        after.isValid.assert_not_called()
+        assert set(rep["findings"]["Pad"]) == {"validity_unchecked", "volume_changed"}
+        assert rep["validity_face_limit"] == 0
+
+    def test_a_shape_without_faces_is_still_checked(self):
+        """Sketch wires have no faces and isValid is cheap on them."""
+        wire = fake_shape(faces=0, solids=0, shells=0)
+        run_worker_validity(make_doc([fake_obj("Sketch", wire)], after={}), check_validity=False)
+        wire.isValid.assert_called()
+
+    def test_default_keeps_the_normal_limit(self):
+        rep = run_worker_validity(make_doc([fake_obj("Pad")], after={}), check_validity=True)
+        assert rep["validity_face_limit"] == LIMIT and rep["findings"] == {"Pad": {}}
+
+
+def run_worker_validity(doc, check_validity):
+    with patch.dict(sys.modules, {"FreeCAD": FakeFreeCAD(doc), "Part": MagicMock(OCC_VERSION="8.0.1")}):
+        return w.run("/tmp/x.FCStd", 0.001, 0, analysis, check_validity)
+
+
 class TestMain:
+
+    def test_validity_env_zero_disables_the_check(self, tmp_path):
+        seen = {}
+
+        def fake_run(path, tol, junk, ana, check_validity):
+            seen["cv"] = check_validity
+            return {"format_version": 1}
+        with patch.dict(os.environ, self._env(tmp_path, FREECAD_MCP_REGRESSION_VALIDITY="0")), \
+                patch.object(w, "run", side_effect=fake_run):
+            w.main()
+        assert seen == {"cv": False}
+
+    @pytest.mark.parametrize("value", ["1", "", "yes", "true"])
+    def test_any_other_validity_env_leaves_it_on(self, tmp_path, value):
+        seen = {}
+        with patch.dict(os.environ, self._env(tmp_path, FREECAD_MCP_REGRESSION_VALIDITY=value)), \
+                patch.object(w, "run", side_effect=lambda *a: seen.setdefault("cv", a[4]) or {"format_version": 1}):
+            w.main()
+        assert seen == {"cv": True}
 
     def _env(self, tmp_path, **extra):
         env = {"FREECAD_MCP_REGRESSION_IN": "/tmp/x.FCStd", "FREECAD_MCP_REGRESSION_OUT": str(tmp_path / "out.json"),
@@ -270,7 +363,7 @@ class TestMain:
         env = self._env(tmp_path, FREECAD_MCP_REGRESSION_TOL="abc", FREECAD_MCP_REGRESSION_JUNK="x")
         seen = {}
 
-        def fake_run(path, tol, junk, ana):
+        def fake_run(path, tol, junk, ana, check_validity):
             seen.update(tol=tol, junk=junk)
             return {"format_version": 1, "ok": True}
         with patch.dict(os.environ, env), patch.object(w, "run", side_effect=fake_run):

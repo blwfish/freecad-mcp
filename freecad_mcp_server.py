@@ -856,7 +856,7 @@ def _run_regression_check(args: dict) -> dict:
     except (ImportError, OSError, SyntaxError) as e:
         return {"error": f"cannot load regression_runner from {module_dir}: {e}",
                 "error_kind": "module_load_failed"}
-    kwargs = {k: args[k] for k in ("tolerance", "runs", "timeout_s") if k in args}
+    kwargs = {k: args[k] for k in ("tolerance", "runs", "timeout_s", "check_validity") if k in args}
     return runner.run_check(file_path, binary, module_dir, **kwargs)
 
 
@@ -1351,7 +1351,10 @@ async def main():
                 "processes on a temp copy of the file: it never touches the open document "
                 "or the file on disk, needs no running FreeCAD instance, and checks the "
                 "SAVED file, not unsaved edits. Files linking to other documents see those "
-                "links unresolved. Pass freecad_binary to compare builds."
+                "links unresolved. Shapes with more than 5000 faces are not validity-checked "
+                "(OCCT's analyzer takes minutes to hours on huge arrays) and are reported as "
+                "`validity_unchecked` in `informational`; their topology, volume and bounding "
+                "box are still compared. Pass freecad_binary to compare builds."
             ),
             inputSchema={
                 "type": "object",
@@ -1380,6 +1383,14 @@ async def main():
                         "type": "string",
                         "description": "FreeCADCmd binary to use instead of the auto-detected one "
                                        "(e.g. to compare FreeCAD versions).",
+                    },
+                    "check_validity": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "Run OCCT's validity analyzer (Shape.isValid) on shapes. Set false "
+                                       "for files that time out: it can take minutes on huge arrays and "
+                                       "fusions. Topology, volume and bounding box are still compared; "
+                                       "faceted shapes are reported validity_unchecked.",
                     },
                     "timeout_s": {
                         "type": "number",
