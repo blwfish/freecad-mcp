@@ -212,19 +212,22 @@ from gui_heartbeat import GuiHeartbeat
 from handler_registry import _GUI_SENSITIVE, _HANDLER_CLASS_NAMES
 from universal_selector import UniversalSelector
 
-# Version: 8.3.0 - execute_python fixes plus an opt-out, screenshot transport,
-#                   sketch diagnostics, and security bumps:
-#                   execute_python now runs code with __name__ == "__main__"
-#                   and reports a result only when the call itself set one
-#                   (no stale value from a previous call); a preference turns
-#                   off the dedicated-tool tip. Screenshots are handed over by
-#                   file path and returned as MCP image content. verify_sketch
-#                   diagnoses isolated vertices that make a sketch ineligible
-#                   as a sweep profile. pyjwt 2.15.1 / urllib3 2.8.0 for
-#                   security advisories. CI now exercises the real
-#                   spawn/stop_freecad_instance path against the AppImage.
+# Version: 8.4.0 - find_root_cause crash fix and autosave behavior:
+#                   find_root_cause no longer segfaults FreeCAD when the
+#                   dependency tree reaches a Body origin axis (an Edge
+#                   spanning +-2e100, OCCT's Precision::Infinite, on which
+#                   shape.check(True) crashes the process): the walk now
+#                   classifies only sketches and Part::Feature objects,
+#                   reports how many origin features it skipped, and skips
+#                   the BOP check for any shape with a bounding-box diagonal
+#                   over 1e9 mm (reported as unbounded_shape). The pre-run
+#                   autosave no longer rewrites a document with no unsaved
+#                   changes, and when it does write (or fail to), the outcome
+#                   is returned in the execute_python response. CI's
+#                   upstream-release check handles multiple dev-weekly slots.
+#                   mcp 2.3.0 and ruff 0.17.1.
 
-__version__ = "8.3.0"
+__version__ = "8.4.0"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
