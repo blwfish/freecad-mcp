@@ -220,3 +220,64 @@ class TestMeasureDistance:
         assert "Distance" in text or "distance" in text
         # Min gap (face-to-face): x[0,10] → x[30,40] = 20 mm
         assert "20.00" in text, f"Expected distance 20.00 in: {text[:300]}"
+
+
+class TestFindRootCause:
+    def test_find_root_cause_survives_origin_axis_in_subtree(self, clean_document):
+        """Regression (2026-10-22): a Revolution about the Body's origin axis
+        puts App::Line (an Edge spanning +-2e100, OCCT's Precision::Infinite)
+        in the dependency subtree. find_root_cause used to run
+        shape.check(True) on it, which SEGFAULTS the whole FreeCAD process --
+        not an exception, so this test dying with a socket error / dead
+        instance is the failure mode, not an assertion message."""
+        doc = clean_document
+        setup = send_command("execute_python_sync", {"code": f"""
+import Part, Sketcher
+doc = FreeCAD.getDocument({doc!r})
+body = doc.addObject('PartDesign::Body', 'Body')
+feats = {{f.Role: f for f in body.Origin.OriginFeatures}}
+sk = body.newObject('Sketcher::SketchObject', 'Profile')
+sk.AttachmentSupport = (feats['XY_Plane'], [''])
+sk.MapMode = 'FlatFace'
+sk.addGeometry(Part.LineSegment(FreeCAD.Vector(2, 0, 0), FreeCAD.Vector(5, 0, 0)))
+sk.addGeometry(Part.LineSegment(FreeCAD.Vector(5, 0, 0), FreeCAD.Vector(5, 4, 0)))
+sk.addGeometry(Part.LineSegment(FreeCAD.Vector(5, 4, 0), FreeCAD.Vector(2, 4, 0)))
+sk.addGeometry(Part.LineSegment(FreeCAD.Vector(2, 4, 0), FreeCAD.Vector(2, 0, 0)))
+for i in range(4):
+    sk.addConstraint(Sketcher.Constraint('Coincident', i, 2, (i + 1) % 4, 1))
+doc.recompute()
+rev = body.newObject('PartDesign::Revolution', 'Revolve')
+rev.Profile = sk
+rev.ReferenceAxis = (feats['Y_Axis'], [''])
+rev.Angle = 360
+doc.recompute()
+"""})
+        assert "error" not in setup, f"fixture build failed: {setup}"
+        # Precondition: the subtree really does contain an origin axis whose
+        # shape is the +-2e100 edge, otherwise this test proves nothing.
+        pre = send_command("execute_python_sync", {"code": f"""
+doc = FreeCAD.getDocument({doc!r})
+names = []
+def walk(o, seen):
+    if o.Name in seen:
+        return
+    seen.add(o.Name)
+    for u in o.OutList:
+        walk(u, seen)
+    bb = o.Shape.BoundBox if hasattr(o, 'Shape') else None
+    names.append((o.TypeId, bb.DiagonalLength if bb is not None and bb.isValid() else None))
+walk(doc.getObject('Revolve'), set())
+any(t == 'App::Line' and d is not None and d > 1e50 for t, d in names)
+"""})
+        assert "True" in _text(pre), f"origin axis not in subtree: {_text(pre)[:300]}"
+
+        result = send_command("measurement_operations", {
+            "operation": "find_root_cause",
+            "object_name": "Revolve",
+        })
+        assert_op_succeeded(result, "find_root_cause")
+        text = _text(result)
+        assert "Error finding root cause" not in text, text[:300]
+        assert "no anomalies found" in text, text[:300]
+        assert "non-Part::Feature" in text, \
+            f"expected the origin features to be reported as skipped: {text[:300]}"
