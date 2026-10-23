@@ -275,17 +275,49 @@ class TestHappyPath:
 # ---------------------------------------------------------------------------
 # Behaviour with a misbehaving worker
 # ---------------------------------------------------------------------------
+class TestSignalNameMapping:
+    """A worker ended by a signal reports a negative return code; the runner
+    turns it into the signal's name. Driven with a stub process so no real
+    segfault (and no macOS crash notification) is needed."""
+
+    class _StubProc:
+        pid = 1
+
+        def __init__(self, returncode):
+            self._rc = returncode
+
+        def wait(self, timeout=None):
+            return self._rc
+
+    @pytest.mark.parametrize("returncode,name", [
+        (-11, "SIGSEGV"), (-6, "SIGABRT"), (-9, "SIGKILL"), (-15, "SIGTERM"), (-10000, "10000"),
+    ])
+    def test_negative_returncode_becomes_signal_name(self, monkeypatch, fcstd, tmp_path, returncode, name):
+        monkeypatch.setattr(rr.subprocess, "Popen", lambda *a, **k: self._StubProc(returncode))
+        r = run(fcstd, make_fake(tmp_path, CLEAN), runs=1)
+        f = r["failures"][0]
+        assert f["status"] == rr.STATUS_CRASHED and f["signal"] == name
+
+    def test_positive_returncode_is_not_a_crash(self, monkeypatch, fcstd, tmp_path):
+        monkeypatch.setattr(rr.subprocess, "Popen", lambda *a, **k: self._StubProc(3))
+        r = run(fcstd, make_fake(tmp_path, CLEAN), runs=1)
+        assert r["failures"][0]["status"] == rr.STATUS_NONZERO_EXIT
+
+
 class TestWorkerFailures:
 
-    def test_segfault_is_a_typed_crash_with_the_signal_name(self, fcstd, tmp_path):
+    def test_death_by_signal_is_a_typed_crash_with_the_signal_name(self, fcstd, tmp_path):
+        # SIGKILL, not SIGSEGV: macOS raises a CrashReporter notification for every
+        # real segfault/abort, and this suite kills dozens of fake workers. The
+        # SIGSEGV/SIGABRT name mapping is covered without a real crash below.
         body = """
             print("about to die", flush=True)
-            os.kill(os.getpid(), signal.SIGSEGV)
+            os.kill(os.getpid(), signal.SIGKILL)
         """
         r = run(fcstd, make_fake(tmp_path, body), runs=1)
         assert r["error_kind"] == "all_runs_failed"
         f = r["failures"][0]
-        assert f["status"] == rr.STATUS_CRASHED and f["signal"] == "SIGSEGV"
+        assert f["status"] == rr.STATUS_CRASHED and f["signal"] == "SIGKILL"
         assert "about to die" in f["log_tail"]
 
     def test_one_crash_among_three_runs_still_yields_a_report(self, fcstd, tmp_path):
@@ -294,7 +326,7 @@ class TestWorkerFailures:
             n = int(open({str(counter)!r}).read()) if os.path.exists({str(counter)!r}) else 0
             open({str(counter)!r}, "w").write(str(n + 1))
             if n == 1:
-                os.kill(os.getpid(), signal.SIGSEGV)
+                os.kill(os.getpid(), signal.SIGKILL)
             report({{"Pad": {{}}, "Fillet": {{}}}})
         """
         r = run(fcstd, make_fake(tmp_path, body), runs=3)
@@ -355,18 +387,18 @@ class TestWorkerFailures:
 
     def test_temp_dir_is_removed_after_a_crash(self, fcstd, tmp_path):
         before = set(glob.glob(os.path.join(tempfile.gettempdir(), "fcmcp_regress_*")))
-        run(fcstd, make_fake(tmp_path, "os.kill(os.getpid(), signal.SIGSEGV)"), runs=2)
+        run(fcstd, make_fake(tmp_path, "os.kill(os.getpid(), signal.SIGKILL)"), runs=2)
         assert set(glob.glob(os.path.join(tempfile.gettempdir(), "fcmcp_regress_*"))) == before
 
     def test_original_untouched_after_a_crash(self, fcstd, tmp_path):
         before = hashlib.sha256(Path(fcstd).read_bytes()).hexdigest()
-        run(fcstd, make_fake(tmp_path, "os.kill(os.getpid(), signal.SIGSEGV)"), runs=1)
+        run(fcstd, make_fake(tmp_path, "os.kill(os.getpid(), signal.SIGKILL)"), runs=1)
         assert hashlib.sha256(Path(fcstd).read_bytes()).hexdigest() == before
 
     def test_log_tail_is_bounded(self, fcstd, tmp_path):
         body = """
             sys.stdout.write("y" * 100000); sys.stdout.flush()
-            os.kill(os.getpid(), signal.SIGSEGV)
+            os.kill(os.getpid(), signal.SIGKILL)
         """
         r = run(fcstd, make_fake(tmp_path, body), runs=1)
         assert len(r["failures"][0]["log_tail"]) == rr._LOG_TAIL_CHARS

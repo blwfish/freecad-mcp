@@ -131,10 +131,11 @@ class TestRegressionCheckLive:
         assert "error" not in r and r["runs_used"] == 1 and r["unstable_count"] == 0
 
     def test_a_binary_that_dies_comes_back_as_a_typed_failure(self, saved_model, tmp_path):
-        """Real subprocess plumbing with a binary that segfaults immediately."""
+        """Real subprocess plumbing with a binary that is killed immediately (SIGKILL: a real
+        segfault would raise a macOS CrashReporter notification)."""
         bad = tmp_path / "crashing-freecadcmd"
-        bad.write_text(f"#!{sys.executable}\nimport os, signal\nos.kill(os.getpid(), signal.SIGSEGV)\n")
+        bad.write_text(f"#!{sys.executable}\nimport os, signal\nos.kill(os.getpid(), signal.SIGKILL)\n")
         bad.chmod(0o755)
         model, _ = saved_model
         r = _check(model, runs=1, freecad_binary=str(bad))
-        assert r["error_kind"] == "all_runs_failed" and r["failures"][0]["signal"] == "SIGSEGV"
+        assert r["error_kind"] == "all_runs_failed" and r["failures"][0]["signal"] == "SIGKILL"
