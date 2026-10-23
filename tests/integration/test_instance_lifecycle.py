@@ -27,6 +27,7 @@ import os
 import signal
 import stat
 import subprocess
+import sys
 import time
 
 import pytest
@@ -52,13 +53,24 @@ def _call(name: str, **arguments) -> dict:
 
 
 def _pid_exists(pid: int) -> bool:
+    """True if `pid` is a live process. A zombie (exited, not yet reaped) is NOT
+    live: os.kill(pid, 0) succeeds for one, and the real FreeCAD process is
+    reparented to init when its wrapper dies, so on a slow runner there is a
+    window where it is dead but unreaped (CI 1.1-stable, "pid survived stop",
+    after the product code had stopped it correctly). Same rule as
+    _live_group_members, which already excludes state Z."""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True
-    return True
+        pass  # exists, owned by someone else; fall through to the state check
+    stat = subprocess.run(
+        ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False,
+    ).stdout.strip()
+    if not stat:
+        return False  # vanished between kill() and ps
+    return not stat.startswith("Z")
 
 
 def _live_group_members(pgid: int) -> list[str]:
@@ -171,3 +183,34 @@ def test_forking_wrapper_layout(tmp_path):
         "wrapper and real process share a pid -- the forking layout was not "
         "reproduced, so this test proves nothing about #90/#99"
     )
+
+
+def test_pid_exists_treats_an_unreaped_zombie_as_gone():
+    """Regression for the CI flake above, with a REAL zombie: a child that has
+    exited but whose parent (this test) has not reaped it."""
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])  # noqa: S603 -- constant args
+    try:
+        deadline = time.monotonic() + 10
+        stat = ""
+        while time.monotonic() < deadline:
+            stat = subprocess.run(["ps", "-o", "stat=", "-p", str(proc.pid)],
+                                  capture_output=True, text=True, check=False).stdout.strip()
+            if stat.startswith("Z"):
+                break
+            time.sleep(0.05)
+        assert stat.startswith("Z"), f"expected a zombie, ps says {stat!r}"
+        assert os.kill(proc.pid, 0) is None  # the naive check would call it alive
+        assert _pid_exists(proc.pid) is False
+    finally:
+        proc.wait()
+    assert _pid_exists(proc.pid) is False  # reaped: gone entirely
+
+
+def test_pid_exists_is_true_for_a_running_process_and_false_after_it_is_killed():
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])  # noqa: S603
+    try:
+        assert _pid_exists(proc.pid) is True
+    finally:
+        proc.kill()
+        proc.wait()
+    assert _pid_exists(proc.pid) is False
