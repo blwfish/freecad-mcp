@@ -29,6 +29,18 @@ class MeasurementOpsHandler(BaseHandler):
     # collides with every other space-separated class.
     _BOP_ERROR_LINE = re.compile(r'Error in \w+:\s*(.+?)\s*$')
 
+    # shape.check(True) (BOPAlgo_ArgumentAnalyzer) segfaults -- a process
+    # crash, uncatchable by `except Exception` -- on shapes sized near OCCT's
+    # "infinity" sentinel, Precision::Infinite() == 2e100. Confirmed live
+    # 2026-10-22: the origin axis (App::Line, an Edge spanning +-2e100) took
+    # FreeCAD 26.3 down with find_root_cause, while the identical call on a
+    # 10 mm edge, a box and a vertex is clean. The walk only visits
+    # Part::Feature objects (which excludes App::Line/Plane/Point), and this
+    # extent cap is the backstop for any other effectively-unbounded shape
+    # that gets through. Strictly greater-than: a shape exactly at the cap is
+    # still checked.
+    _BOP_CHECK_MAX_EXTENT_MM = 1e9
+
     def diagnose_invalid_shape(self, args: dict[str, Any]) -> str:
         """Check whether object_name's Shape is topologically valid
         (Shape.isValid(), OCCT's BRepCheck_Analyzer) and, if not, walk its
@@ -96,6 +108,8 @@ class MeasurementOpsHandler(BaseHandler):
           'bop_errors'       -- {error_class: count}, parsed from
                                  shape.check(True) -- self-intersections,
                                  invalid-curve-on-surface, etc.
+          'unbounded_shape'  -- str (bounding box beyond _BOP_CHECK_MAX_EXTENT_MM;
+                                 check(True) is NOT run, it would segfault)
 
         Checks every anomaly independently rather than stopping at the
         first one found -- a single object can be simultaneously not-solid
@@ -125,6 +139,18 @@ class MeasurementOpsHandler(BaseHandler):
                 f"{len(shape.Faces)} face(s) / {len(shape.Shells)} shell(s) "
                 f"but 0 Solids -- produced a Shell/Face, not a Solid"
             )
+
+        # An invalid BoundBox (e.g. an empty Compound) has no diagonal --
+        # DiagonalLength raises FloatingPointError -- so only apply the cap
+        # when the box is valid; an empty shape is safe to check().
+        bbox = shape.BoundBox
+        if bbox.isValid() and bbox.DiagonalLength > self._BOP_CHECK_MAX_EXTENT_MM:
+            findings['unbounded_shape'] = (
+                f"bounding-box diagonal {bbox.DiagonalLength:.3g} mm exceeds "
+                f"{self._BOP_CHECK_MAX_EXTENT_MM:.0e} mm -- BOP check skipped "
+                f"(OCCT's analyzer crashes on near-infinite shapes)"
+            )
+            return findings
 
         try:
             shape.check(True)
@@ -174,6 +200,12 @@ class MeasurementOpsHandler(BaseHandler):
             findings_by_name: dict[str, Any] = {}
             objects_by_name: dict[str, Any] = {}
             visited = set()
+            # Objects that carry a .Shape but are not Part::Feature -- the
+            # Body's origin axes/planes/point (App::Line/Plane/Point). Their
+            # shapes are unbounded construction geometry, not modeling
+            # results: checking them crashes OCCT and the planes read as a
+            # bogus 'not_solid'. Skipped, but counted so it's visible.
+            skipped_non_feature: list[str] = []
 
             def walk(o, depth=0):
                 if o is None or o.Name in visited or depth > 60:
@@ -181,17 +213,27 @@ class MeasurementOpsHandler(BaseHandler):
                 visited.add(o.Name)
                 for upstream in getattr(o, 'OutList', []):
                     walk(upstream, depth + 1)
-                if o.TypeId == 'Sketcher::SketchObject' or hasattr(o, 'Shape'):
-                    objects_by_name[o.Name] = o
-                    findings_by_name[o.Name] = self._classify_shape_findings(o)
-                    order.append(o.Name)
+                if o.TypeId == 'Sketcher::SketchObject':
+                    pass
+                elif not hasattr(o, 'Shape'):
+                    return
+                elif not o.isDerivedFrom('Part::Feature'):
+                    skipped_non_feature.append(o.Name)
+                    return
+                objects_by_name[o.Name] = o
+                findings_by_name[o.Name] = self._classify_shape_findings(o)
+                order.append(o.Name)
 
             walk(obj)
+
+            skipped_clause = (f"{len(skipped_non_feature)} non-Part::Feature object(s) "
+                              f"such as origin axes/planes skipped") if skipped_non_feature else ""
 
             flagged_names = [n for n in order if findings_by_name[n]]
             if not flagged_names:
                 return (f"{object_name}: no anomalies found across "
-                        f"{len(order)} shape-bearing object(s) in its dependency subtree.")
+                        f"{len(order)} shape-bearing object(s) in its dependency subtree"
+                        f"{f' ({skipped_clause})' if skipped_clause else ''}.")
 
             def immediate_flagged_inputs(name):
                 return [u.Name for u in getattr(objects_by_name[name], 'OutList', [])
@@ -235,7 +277,8 @@ class MeasurementOpsHandler(BaseHandler):
                     )
 
             lines = [f"Root-cause scan of {object_name}'s dependency subtree "
-                     f"({len(order)} object(s) checked, {len(flagged_names)} flagged):", ""]
+                     f"({len(order)} object(s) checked, {len(flagged_names)} flagged"
+                     f"{', ' + skipped_clause if skipped_clause else ''}):", ""]
             lines.append("\n\n".join(root_blocks))
             if propagating_lines:
                 lines.append(f"\n{len(propagating_lines)} downstream object(s) inheriting "

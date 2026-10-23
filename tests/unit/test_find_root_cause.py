@@ -13,7 +13,7 @@ Run with: python3 -m pytest tests/unit/test_find_root_cause.py -v
 
 import os
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 if 'FreeCAD' not in sys.modules:
     _fc = MagicMock()
@@ -38,15 +38,30 @@ def make_handler():
 
 def _make_object(name, type_id="Part::Feature", out_list=None,
                   is_null=False, is_valid=True, faces=0, solids=0, shells=0,
-                  check_side_effect=None, label2=""):
+                  check_side_effect=None, label2="", part_feature=True,
+                  extent=10.0, bbox_valid=True):
     """A generic shape-bearing mock object. faces/solids/shells are plain
     counts (len() of the corresponding list), not real geometry -- every
-    check under test reads only len(shape.Faces)/.Solids/.Shells."""
+    check under test reads only len(shape.Faces)/.Solids/.Shells and the
+    bounding-box diagonal (`extent`, mm). part_feature=False models an
+    object like the origin's App::Line/Plane: has a .Shape but is not
+    derived from Part::Feature. bbox_valid=False models an empty shape,
+    whose real BoundBox.DiagonalLength raises FloatingPointError."""
     obj = MagicMock()
     obj.Name = name
     obj.TypeId = type_id
     obj.OutList = out_list or []
     obj.Label2 = label2
+    obj.isDerivedFrom = MagicMock(
+        side_effect=lambda cls: part_feature if cls == 'Part::Feature' else False)
+    bbox = obj.Shape.BoundBox
+    bbox.isValid = MagicMock(return_value=bbox_valid)
+    if bbox_valid:
+        bbox.DiagonalLength = extent
+    else:
+        type(bbox).DiagonalLength = PropertyMock(
+            side_effect=FloatingPointError(
+                "Cannot determine diagonal length of invalid bounding box"))
     obj.Shape.isNull = MagicMock(return_value=is_null)
     obj.Shape.isValid = MagicMock(return_value=is_valid)
     obj.Shape.Faces = [MagicMock() for _ in range(faces)]
@@ -269,6 +284,164 @@ class TestBopErrorPropagation:
 
         result = handler.find_root_cause({'object_name': 'Clean'})
         assert "no anomalies found" in result
+
+
+class TestOriginFeaturesSkipped:
+    """Regression for the 2026-10-22 crash: find_root_cause walked into the
+    Body origin's App::Line/Plane/Point (they have a .Shape but are not
+    Part::Feature) and shape.check(True) on the origin axis -- an Edge
+    spanning +-2e100, OCCT's Precision::Infinite() -- segfaulted FreeCAD."""
+
+    def test_origin_axis_never_gets_shape_check(self):
+        handler = make_handler()
+        axis = _make_object("Y_Axis", type_id="App::Line", part_feature=False,
+                             extent=4e100)
+        pad = _make_object("Pad", out_list=[axis], faces=6, solids=1)
+        handler.resolve_object = MagicMock(return_value=(MagicMock(), pad, None))
+
+        result = handler.find_root_cause({'object_name': 'Pad'})
+
+        axis.Shape.check.assert_not_called()
+        axis.Shape.isValid.assert_not_called()
+        assert "no anomalies found" in result
+        assert "1 shape-bearing" in result  # Pad only; the axis is not counted
+        assert "1 non-Part::Feature object(s)" in result
+
+    def test_origin_plane_not_reported_as_not_solid(self):
+        """The live origin planes read 1 face / 0 solids -- a bogus
+        'not_solid' ROOT CAUSE if they were classified."""
+        handler = make_handler()
+        plane = _make_object("XZ_Plane", type_id="App::Plane", part_feature=False,
+                              faces=1, solids=0)
+        pad = _make_object("Pad", out_list=[plane], faces=6, solids=1)
+        handler.resolve_object = MagicMock(return_value=(MagicMock(), pad, None))
+
+        result = handler.find_root_cause({'object_name': 'Pad'})
+
+        assert "ROOT CAUSE: XZ_Plane" not in result
+        assert "not_solid" not in result
+
+    def test_skipped_count_appears_alongside_real_findings(self):
+        handler = make_handler()
+        axis = _make_object("Y_Axis", type_id="App::Line", part_feature=False)
+        point = _make_object("Origin_Pt", type_id="App::Point", part_feature=False)
+        bad = _make_object("Shell", out_list=[axis, point], faces=4, solids=0)
+        handler.resolve_object = MagicMock(return_value=(MagicMock(), bad, None))
+
+        result = handler.find_root_cause({'object_name': 'Shell'})
+
+        assert "ROOT CAUSE: Shell" in result
+        assert "2 non-Part::Feature object(s)" in result
+        assert "1 object(s) checked" in result
+
+    def test_part_feature_behind_a_skipped_object_is_still_reached(self):
+        """Skipping classification must not stop the walk -- a broken
+        Part::Feature reachable only through a non-Part::Feature is still
+        found."""
+        handler = make_handler()
+        broken = _make_object("Broken", faces=3, solids=0)
+        link = _make_object("Link", type_id="App::Line", part_feature=False,
+                             out_list=[broken])
+        root = _make_object("Root", out_list=[link], faces=6, solids=1)
+        handler.resolve_object = MagicMock(return_value=(MagicMock(), root, None))
+
+        result = handler.find_root_cause({'object_name': 'Root'})
+
+        assert "ROOT CAUSE: Broken" in result
+
+    def test_shapeless_object_is_not_counted_as_skipped(self):
+        """A Spreadsheet has no .Shape at all -- it's not 'skipped origin
+        geometry' and must not inflate the skipped count."""
+        handler = make_handler()
+        sheet = MagicMock()
+        sheet.Name = "Sheet"
+        sheet.TypeId = "Spreadsheet::Sheet"
+        sheet.OutList = []
+        del sheet.Shape
+        root = _make_object("Root", out_list=[sheet], faces=6, solids=1)
+        handler.resolve_object = MagicMock(return_value=(MagicMock(), root, None))
+
+        result = handler.find_root_cause({'object_name': 'Root'})
+
+        assert "non-Part::Feature" not in result
+
+    def test_sketch_is_still_classified(self):
+        """Sketches are Part::Feature descendants in real FreeCAD, but the
+        walk keys them by TypeId and must not depend on isDerivedFrom."""
+        handler = make_handler()
+        sketch = _make_sketch("Sketch001", open_vertices=[(0.0, 0.0, 0.0)])
+        sketch.isDerivedFrom = MagicMock(return_value=False)
+        handler.resolve_object = MagicMock(return_value=(MagicMock(), sketch, None))
+
+        with patch.object(base_module, 'FreeCAD') as mock_fc:
+            mock_fc.Vector = lambda x=0, y=0, z=0: MagicMock(x=x, y=y, z=z)
+            result = handler.find_root_cause({'object_name': 'Sketch001'})
+
+        assert "ROOT CAUSE: Sketch001" in result
+
+
+class TestUnboundedExtentGuard:
+    """Backstop for an effectively-infinite shape that IS a Part::Feature:
+    check(True) must not run on it. Cap is strictly greater-than
+    _BOP_CHECK_MAX_EXTENT_MM; the three cases pin which side the boundary
+    falls on."""
+
+    CAP = 1e9  # literal on purpose: the boundary is contract, not whatever the handler says
+
+    def _run(self, extent=10.0, bbox_valid=True):
+        handler = make_handler()
+        leaf = _make_object("Leaf", faces=6, solids=1, extent=extent,
+                             bbox_valid=bbox_valid)
+        handler.resolve_object = MagicMock(return_value=(MagicMock(), leaf, None))
+        return leaf, handler.find_root_cause({'object_name': 'Leaf'})
+
+    def test_cap_value_is_the_documented_one(self):
+        assert MeasurementOpsHandler._BOP_CHECK_MAX_EXTENT_MM == self.CAP
+
+    def test_exactly_at_cap_is_still_checked(self):
+        leaf, result = self._run(extent=self.CAP)
+        leaf.Shape.check.assert_called_once_with(True)
+        assert "unbounded_shape" not in result
+
+    def test_just_below_cap_is_checked(self):
+        leaf, result = self._run(extent=self.CAP - 1)
+        leaf.Shape.check.assert_called_once_with(True)
+        assert "no anomalies found" in result
+
+    def test_just_above_cap_skips_check_and_is_reported(self):
+        leaf, result = self._run(extent=self.CAP + 1)
+        leaf.Shape.check.assert_not_called()
+        assert "ROOT CAUSE: Leaf" in result
+        assert "unbounded_shape" in result
+        assert "BOP check skipped" in result
+
+    def test_precision_infinite_scale_skips_check(self):
+        """The real origin-axis diagonal: 2e100."""
+        leaf, result = self._run(extent=2e100)
+        leaf.Shape.check.assert_not_called()
+        assert "unbounded_shape" in result
+
+    def test_unbounded_shape_still_reports_other_findings(self):
+        """The guard skips only check(True); isValid/not_solid findings
+        recorded before it must survive."""
+        handler = make_handler()
+        leaf = _make_object("Leaf", is_valid=False, faces=3, solids=0, extent=1e12)
+        handler.resolve_object = MagicMock(return_value=(MagicMock(), leaf, None))
+
+        result = handler.find_root_cause({'object_name': 'Leaf'})
+
+        assert "invalid_topology" in result
+        assert "not_solid" in result
+        assert "unbounded_shape" in result
+
+    def test_invalid_bbox_is_checked_not_crashed(self):
+        """Empty shape: DiagonalLength raises FloatingPointError on a real
+        invalid BoundBox. The guard must consult isValid() first and fall
+        through to the normal check(True), not propagate the error."""
+        leaf, result = self._run(bbox_valid=False)
+        leaf.Shape.check.assert_called_once_with(True)
+        assert "no anomalies found" in result
+        assert "Error finding root cause" not in result
 
 
 class TestTraversal:
