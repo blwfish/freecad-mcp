@@ -65,7 +65,8 @@ def validate_file_path(path: str) -> "str | None":
             f"Resolved path: {resolved}")
 
 
-def _validate_args(file_path, freecad_binary, module_dir, tolerance, runs, timeout_s) -> "str | None":
+def _validate_args(file_path, freecad_binary, module_dir, tolerance, runs, timeout_s,
+                   check_validity=True) -> "str | None":
     err = validate_file_path(file_path)
     if err:
         return err
@@ -87,6 +88,8 @@ def _validate_args(file_path, freecad_binary, module_dir, tolerance, runs, timeo
     if (isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float))
             or not MIN_TIMEOUT_S <= timeout_s <= MAX_TIMEOUT_S):
         return f"timeout_s must be between {MIN_TIMEOUT_S} and {MAX_TIMEOUT_S}, got {timeout_s!r}"
+    if not isinstance(check_validity, bool):
+        return f"check_validity must be a boolean, got {check_validity!r}"
     return None
 
 
@@ -115,7 +118,7 @@ def _tail(path: str) -> str:
 
 
 def _run_one(index: int, binary: str, module_dir: str, work_copy: str, tmp: str,
-             tolerance: float, deadline: float) -> dict:
+             tolerance: float, deadline: float, check_validity: bool = True) -> dict:
     """Run one worker. Returns {"ok": True, "report": {...}} or
     {"ok": False, "failure": {...}} -- never raises for a bad worker."""
     out_path = os.path.join(tmp, f"run{index}.json")
@@ -128,6 +131,7 @@ def _run_one(index: int, binary: str, module_dir: str, work_copy: str, tmp: str,
         "FREECAD_MCP_REGRESSION_MODDIR": module_dir,
         "FREECAD_MCP_REGRESSION_TOL": repr(float(tolerance)),
         "FREECAD_MCP_REGRESSION_JUNK": str(junk),
+        "FREECAD_MCP_REGRESSION_VALIDITY": "1" if check_validity else "0",
     })
     script = os.path.join(module_dir, "regression_worker.py")
     # `-c <code>` rather than a script argument: accepted by FreeCADCmd and the
@@ -176,11 +180,11 @@ def _run_one(index: int, binary: str, module_dir: str, work_copy: str, tmp: str,
 
 def run_check(file_path: str, freecad_binary: str, module_dir: str,
               tolerance: float = analysis.DEFAULT_TOLERANCE, runs: int = DEFAULT_RUNS,
-              timeout_s: float = DEFAULT_TIMEOUT_S) -> dict:
+              timeout_s: float = DEFAULT_TIMEOUT_S, check_validity: bool = True) -> dict:
     """Run the regression check. Returns the aggregated report, or
     {"error": ..., ...} when it could not run at all. `timeout_s` bounds the
     whole check, not each run."""
-    err = _validate_args(file_path, freecad_binary, module_dir, tolerance, runs, timeout_s)
+    err = _validate_args(file_path, freecad_binary, module_dir, tolerance, runs, timeout_s, check_validity)
     if err:
         return {"error": err, "error_kind": "invalid_argument"}
 
@@ -202,7 +206,7 @@ def run_check(file_path: str, freecad_binary: str, module_dir: str,
                 failures.append({"run": i, "junk": JUNK_SEQUENCE[i % len(JUNK_SEQUENCE)],
                                  "status": STATUS_TIMEOUT, "detail": "overall timeout reached before this run started"})
                 continue
-            result = _run_one(i, freecad_binary, module_dir, work_copy, tmp, tolerance, deadline)
+            result = _run_one(i, freecad_binary, module_dir, work_copy, tmp, tolerance, deadline, check_validity)
             if result["ok"]:
                 reports.append(result["report"])
             else:

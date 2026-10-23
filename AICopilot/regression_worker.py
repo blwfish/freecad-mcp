@@ -19,6 +19,8 @@
 #   FREECAD_MCP_REGRESSION_TOL      relative tolerance (optional)
 #   FREECAD_MCP_REGRESSION_JUNK     number of throwaway shapes to allocate
 #                                   before opening the file (optional)
+#   FREECAD_MCP_REGRESSION_VALIDITY "0" skips Shape.isValid() on every shape that
+#                                   has faces (optional; see regression_analysis)
 #
 # JUNK exists because recompute results can depend on unrelated process state:
 # OCCT-based fillets were observed flipping valid/invalid with how much had
@@ -32,23 +34,27 @@ import sys
 _JUNK_KEEPALIVE: list = []  # module-level on purpose: the allocations must outlive the recompute
 
 
-def take_snapshot(obj) -> dict:
+def take_snapshot(obj, max_faces: int) -> dict:
     """Snapshot obj.Shape. Raises if it can't be read; the caller counts the
-    failure per object instead of skipping it silently."""
+    failure per object instead of skipping it silently. Shapes with more than
+    `max_faces` faces are not validity-checked ("valid" is None): OCCT's
+    BRepCheck_Analyzer is super-linear in face count and can run for hours on
+    big arrays (see regression_analysis.MAX_FACES_FOR_VALIDITY_CHECK)."""
     shape = obj.Shape
     if shape.isNull():
         return {"null": True, "valid": False, "solids": 0, "shells": 0, "faces": 0,
                 "volume": 0.0, "bbox": None, "recompute_error": None}
+    faces = len(shape.Faces)
     bb = shape.BoundBox
     # An empty shape has an invalid BoundBox whose DiagonalLength raises; read
     # the six coordinates only when it's valid.
     bbox = [bb.XMin, bb.YMin, bb.ZMin, bb.XMax, bb.YMax, bb.ZMax] if bb.isValid() else None
     return {
         "null": False,
-        "valid": bool(shape.isValid()),
+        "valid": bool(shape.isValid()) if faces <= max_faces else None,
         "solids": len(shape.Solids),
         "shells": len(shape.Shells),
-        "faces": len(shape.Faces),
+        "faces": faces,
         "volume": float(shape.Volume),
         "bbox": bbox,
         "recompute_error": None,
@@ -92,17 +98,21 @@ def _topo_order(doc, names: set) -> list:
     return order
 
 
-def run(in_path: str, tolerance: float, junk: int, analysis) -> dict:
+def run(in_path: str, tolerance: float, junk: int, analysis, check_validity: bool = True) -> dict:
     import FreeCAD
 
     if junk > 0:
         import Part
         _JUNK_KEEPALIVE.extend(Part.makeBox(1 + i % 7, 2, 3) for i in range(junk))
 
+    # check_validity=False -> limit 0: every shape with at least one face is
+    # reported validity_unchecked (wires/sketches, which have none, are cheap).
+    max_faces = analysis.MAX_FACES_FOR_VALIDITY_CHECK if check_validity else 0
     report: dict = {
         "format_version": analysis.FORMAT_VERSION,
         "tolerance": tolerance,
         "junk": junk,
+        "validity_face_limit": max_faces,
         "freecad_version": "{}.{}.{} {}".format(*(FreeCAD.Version()[:4])),
     }
     try:
@@ -120,7 +130,7 @@ def run(in_path: str, tolerance: float, junk: int, analysis) -> dict:
     snapshot_errors: dict = {}
     for o in targets:
         try:
-            stored[o.Name] = take_snapshot(o)
+            stored[o.Name] = take_snapshot(o, max_faces)
         except Exception as e:  # noqa: BLE001 -- counted and reported per object below
             snapshot_errors[o.Name] = f"stored snapshot failed: {type(e).__name__}: {e}"
 
@@ -133,7 +143,7 @@ def run(in_path: str, tolerance: float, junk: int, analysis) -> dict:
         if o.Name in snapshot_errors:
             continue
         try:
-            snap = take_snapshot(o)
+            snap = take_snapshot(o, max_faces)
             if "Invalid" in o.State:
                 snap["recompute_error"] = str(o.getStatusString())  # FreeCAD's own per-object status
             fresh[o.Name] = snap
@@ -174,8 +184,9 @@ def main() -> int:
 
     tolerance = _num("FREECAD_MCP_REGRESSION_TOL", analysis.DEFAULT_TOLERANCE, float)
     junk = _num("FREECAD_MCP_REGRESSION_JUNK", 0, int)
+    check_validity = os.environ.get("FREECAD_MCP_REGRESSION_VALIDITY", "1") != "0"
     try:
-        report = run(in_path, tolerance, junk, analysis)
+        report = run(in_path, tolerance, junk, analysis, check_validity)
     except Exception as e:  # noqa: BLE001 -- surfaced as a typed field, not swallowed
         report = {"format_version": analysis.FORMAT_VERSION, "error": f"{type(e).__name__}: {e}"}
     tmp = out_path + ".tmp"

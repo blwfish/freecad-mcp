@@ -146,6 +146,15 @@ class TestArgumentValidation:
     def test_tolerance_boundaries_accepted(self, good, tol):
         assert "error" not in self._err(good, tolerance=tol, runs=1)
 
+    @pytest.mark.parametrize("cv", [0, 1, "no", None, "false"])
+    def test_non_boolean_check_validity_rejected(self, good, cv):
+        r = self._err(good, check_validity=cv)
+        assert r["error_kind"] == "invalid_argument" and "check_validity" in r["error"]
+
+    @pytest.mark.parametrize("cv", [True, False])
+    def test_boolean_check_validity_accepted(self, good, cv):
+        assert "error" not in self._err(good, check_validity=cv, runs=1)
+
     @pytest.mark.parametrize("t", [9.99, 0, -5, 1800.01, 10 ** 6, True, "300", None])
     def test_bad_timeout_rejected(self, good, t):
         r = self._err(good, timeout_s=t)
@@ -236,6 +245,25 @@ class TestHappyPath:
         seen = json.loads(side.read_text())
         assert seen["tol"] == "0.25" and seen["moddir"] == MODULE_DIR
         assert seen["argv"][0] == "-c" and "regression_worker.py" in seen["argv"][1] and len(seen["argv"]) == 2
+
+    @pytest.mark.parametrize("cv,expected", [(True, "1"), (False, "0")])
+    def test_validity_flag_reaches_the_worker_environment(self, fcstd, tmp_path, cv, expected):
+        side = tmp_path / "validity.txt"
+        body = f"""
+            open({str(side)!r}, "w").write(os.environ["FREECAD_MCP_REGRESSION_VALIDITY"])
+            report({{"Pad": {{}}, "Fillet": {{}}}})
+        """
+        run(fcstd, make_fake(tmp_path, body), runs=1, check_validity=cv)
+        assert side.read_text() == expected
+
+    def test_validity_is_on_by_default(self, fcstd, tmp_path):
+        side = tmp_path / "validity.txt"
+        body = f"""
+            open({str(side)!r}, "w").write(os.environ["FREECAD_MCP_REGRESSION_VALIDITY"])
+            report({{"Pad": {{}}, "Fillet": {{}}}})
+        """
+        run(fcstd, make_fake(tmp_path, body), runs=1)
+        assert side.read_text() == "1"
 
     def test_worker_gets_a_copy_never_the_original(self, fcstd, tmp_path):
         side = tmp_path / "in.txt"

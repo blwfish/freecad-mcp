@@ -14,6 +14,14 @@
 FORMAT_VERSION = 1
 DEFAULT_TOLERANCE = 1e-3
 
+# OCCT's BRepCheck_Analyzer (Shape.isValid()) is super-linear in face count:
+# measured 2026-10-23 on the MillingMachine-era corpus, a 22,545-face array
+# took 33 s and a 143,400-face one had not finished after minutes, wedging whole
+# checks. Shapes with MORE faces than this are not validity-checked (reported as
+# `validity_unchecked`); topology counts, volume and bounding box are still
+# compared. Strictly greater-than: a shape with exactly this many faces is checked.
+MAX_FACES_FOR_VALIDITY_CHECK = 5000
+
 # Closed vocabulary of finding kinds. Consumers branch on these, never on text.
 KIND_VALIDITY_LOST = "validity_lost"          # valid as stored, invalid now
 KIND_VALIDITY_GAINED = "validity_gained"      # invalid as stored, valid now
@@ -23,9 +31,11 @@ KIND_RECOMPUTE_ERROR = "recompute_error"      # FreeCAD flagged the object Inval
 KIND_TOPOLOGY_CHANGED = "topology_changed"    # solid/shell/face counts differ
 KIND_VOLUME_CHANGED = "volume_changed"        # relative volume delta > tolerance
 KIND_EXTENT_CHANGED = "extent_changed"        # bbox moved/resized > tolerance of its stored diagonal
+KIND_VALIDITY_UNCHECKED = "validity_unchecked"  # too many faces to validity-check (informational)
 ALL_KINDS = (
     KIND_VALIDITY_LOST, KIND_VALIDITY_GAINED, KIND_STORED_INVALID, KIND_SHAPE_LOST,
     KIND_RECOMPUTE_ERROR, KIND_TOPOLOGY_CHANGED, KIND_VOLUME_CHANGED, KIND_EXTENT_CHANGED,
+    KIND_VALIDITY_UNCHECKED,
 )
 
 # "This feature got worse or different" kinds. stored_invalid is pre-existing
@@ -52,10 +62,11 @@ def _diagonal(bbox) -> float:
 def compare_snapshots(stored: dict, fresh: dict, tolerance: float) -> dict:
     """Return {kind: detail} for how `fresh` differs from `stored`.
 
-    Snapshots (regression_worker.take_snapshot): null, valid, solids, shells,
-    faces, volume, bbox ([xmin,ymin,zmin,xmax,ymax,zmax] or None),
-    recompute_error (str or None). Comparisons against `tolerance` are
-    strictly greater-than: a delta exactly at the tolerance is NOT a change.
+    Snapshots (regression_worker.take_snapshot): null, valid (True/False, or
+    None when the shape had too many faces to check), solids, shells, faces,
+    volume, bbox ([xmin,ymin,zmin,xmax,ymax,zmax] or None), recompute_error
+    (str or None). Comparisons against `tolerance` are strictly greater-than: a
+    delta exactly at the tolerance is NOT a change.
     """
     findings: dict = {}
 
@@ -68,7 +79,12 @@ def compare_snapshots(stored: dict, fresh: dict, tolerance: float) -> dict:
     if fresh["null"] or stored["null"]:
         return findings  # nothing comparable
 
-    if stored["valid"] and not fresh["valid"]:
+    if stored["valid"] is None or fresh["valid"] is None:
+        findings[KIND_VALIDITY_UNCHECKED] = {
+            "faces_stored": stored["faces"], "faces_recomputed": fresh["faces"],
+            "limit": MAX_FACES_FOR_VALIDITY_CHECK,
+        }
+    elif stored["valid"] and not fresh["valid"]:
         findings[KIND_VALIDITY_LOST] = "valid as stored, Shape.isValid() == False after recompute"
     elif not stored["valid"] and fresh["valid"]:
         findings[KIND_VALIDITY_GAINED] = "invalid as stored, valid after recompute"
@@ -164,6 +180,7 @@ def aggregate_runs(run_reports: list, requested_runs: int) -> dict:
         "runs_requested": requested_runs,
         "runs_used": n,
         "tolerance": first.get("tolerance"),
+        "validity_face_limit": first.get("validity_face_limit"),
         "freecad_version": first.get("freecad_version"),
         "occt_version": first.get("occt_version"),
         "saved_by_program_version": first.get("saved_by_program_version"),

@@ -496,7 +496,7 @@ class TestRegressionCheckTool:
     def test_tool_is_registered_with_a_required_file_path(self):
         tool = next(t for t in _list_tools() if t.name == "regression_check")
         assert tool.input_schema["required"] == ["file_path"]
-        assert set(tool.input_schema["properties"]) == {"file_path", "runs", "tolerance", "freecad_binary", "timeout_s"}
+        assert set(tool.input_schema["properties"]) == {"file_path", "runs", "tolerance", "freecad_binary", "check_validity", "timeout_s"}
 
     def test_schema_bounds_match_the_runner(self):
         module_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot"))
@@ -555,10 +555,10 @@ class TestRegressionCheckTool:
         with (patch.object(freecad_mcp_server, "_find_freecadcmd", return_value="/fake/FreeCADCmd"),
               patch.object(freecad_mcp_server, "_load_regression_runner", return_value=FakeRunner)):
             r = self._result({"file_path": "/tmp/x.FCStd", "runs": 5, "tolerance": 0.01, "timeout_s": 60,
-                              "unknown_arg": "dropped"})
+                              "check_validity": False, "unknown_arg": "dropped"})
         assert r == {"ok": True}
         assert seen["file_path"] == "/tmp/x.FCStd" and seen["binary"] == "/fake/FreeCADCmd"
-        assert seen["kw"] == {"runs": 5, "tolerance": 0.01, "timeout_s": 60}
+        assert seen["kw"] == {"runs": 5, "tolerance": 0.01, "timeout_s": 60, "check_validity": False}
         assert os.path.basename(seen["module_dir"]) == "AICopilot"
 
     def test_omitted_optional_arguments_are_not_forwarded_so_runner_defaults_apply(self):
