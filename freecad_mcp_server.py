@@ -806,6 +806,60 @@ def _find_freecadcmd() -> str | None:
     return None
 
 
+def _load_regression_runner(module_dir: str):
+    """Load AICopilot/regression_runner.py (and its regression_analysis
+    dependency) by file path. Deliberately not cached and not via sys.path:
+    a redeploy of AICopilot is picked up on the next call, and the bridge's
+    import path stays untouched."""
+    import importlib.util
+    names = ("regression_analysis", "regression_runner")
+    previous = {n: sys.modules.get(n) for n in names}
+    try:
+        for mod_name in names:
+            spec = importlib.util.spec_from_file_location(mod_name, os.path.join(module_dir, f"{mod_name}.py"))
+            if spec is None or spec.loader is None:
+                raise ImportError(f"cannot load {mod_name} from {module_dir}")
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[mod_name] = mod  # regression_runner does `import regression_analysis`
+            spec.loader.exec_module(mod)
+        return sys.modules["regression_runner"]
+    except BaseException:
+        # A load that fails midway must not leave a half-initialised module
+        # (or a replaced good one) behind in sys.modules.
+        for n, old in previous.items():
+            if old is None:
+                sys.modules.pop(n, None)
+            else:
+                sys.modules[n] = old
+        raise
+
+
+def _run_regression_check(args: dict) -> dict:
+    """Blocking implementation of the regression_check tool (call via
+    asyncio.to_thread). Returns the runner's report, or {"error", "error_kind"}."""
+    file_path = args.get("file_path")
+    if not isinstance(file_path, str) or not file_path:
+        return {"error": "file_path is required", "error_kind": "invalid_argument"}
+    headless = _find_headless_script()
+    if not headless:
+        return {"error": ("Cannot find the AICopilot module directory. Set FREECAD_MCP_MODULE_DIR, "
+                          "or deploy AICopilot to ~/.freecad-mcp/AICopilot/."),
+                "error_kind": "module_dir_not_found"}
+    module_dir = os.path.dirname(headless)
+    binary = args.get("freecad_binary") or _find_freecadcmd()
+    if not binary:
+        return {"error": ("Cannot find a FreeCADCmd binary. Set FREECAD_MCP_FREECAD_BIN or pass "
+                          "freecad_binary=..."),
+                "error_kind": "binary_not_found"}
+    try:
+        runner = _load_regression_runner(module_dir)
+    except (ImportError, OSError, SyntaxError) as e:
+        return {"error": f"cannot load regression_runner from {module_dir}: {e}",
+                "error_kind": "module_load_failed"}
+    kwargs = {k: args[k] for k in ("tolerance", "runs", "timeout_s") if k in args}
+    return runner.run_check(file_path, binary, module_dir, **kwargs)
+
+
 def _find_freecad_gui() -> str | None:
     """Return path to the FreeCAD GUI binary, or None if not found.
 
@@ -1281,6 +1335,66 @@ async def main():
                 readOnlyHint=True,
                 destructiveHint=False,
                 idempotentHint=True,
+            ),
+        ),
+        types.Tool(
+            name="regression_check",
+            description=(
+                "On-demand check of whether a saved .FCStd still recomputes the way it was "
+                "saved. Compares each feature's STORED shape (what the saving FreeCAD "
+                "version produced) with its recomputed shape in the installed FreeCAD, and "
+                "reports the feature where each difference first appears, with downstream "
+                "features listed as inherited. Recompute is repeated `runs` times with "
+                "different memory state: a difference present in every run is a regression; "
+                "one present in only some runs is `unstable` (e.g. a fillet that sometimes "
+                "builds valid and sometimes invalid). Runs in separate headless FreeCAD "
+                "processes on a temp copy of the file: it never touches the open document "
+                "or the file on disk, needs no running FreeCAD instance, and checks the "
+                "SAVED file, not unsaved edits. Files linking to other documents see those "
+                "links unresolved. Pass freecad_binary to compare builds."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the .FCStd file (home dir, /tmp or /Volumes).",
+                    },
+                    "runs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 10,
+                        "default": 3,
+                        "description": "Independent recompute runs (each ~10s on a 240-object model). "
+                                       "1 disables the stability check.",
+                    },
+                    "tolerance": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "maximum": 1,
+                        "default": 0.001,
+                        "description": "Relative tolerance for volume and bounding-box differences "
+                                       "(default 0.001 = 0.1%). A delta exactly at the tolerance is not a change.",
+                    },
+                    "freecad_binary": {
+                        "type": "string",
+                        "description": "FreeCADCmd binary to use instead of the auto-detected one "
+                                       "(e.g. to compare FreeCAD versions).",
+                    },
+                    "timeout_s": {
+                        "type": "number",
+                        "minimum": 10,
+                        "maximum": 1800,
+                        "default": 300,
+                        "description": "Timeout for the whole check, all runs together.",
+                    },
+                },
+                "required": ["file_path"],
+            },
+            annotations=types.ToolAnnotations(
+                readOnlyHint=True,
+                destructiveHint=False,
+                idempotentHint=False,
             ),
         ),
         types.Tool(
@@ -3034,6 +3148,12 @@ async def main():
                     problem=args.get("problem"),
                 )
             )]
+
+        elif name == "regression_check":
+            # Bridge-only: runs headless FreeCAD on a temp copy of a file, so it
+            # needs no live instance (and a dead/hung GUI can't block it).
+            result = await asyncio.to_thread(_run_regression_check, arguments or {})
+            return [types.TextContent(type="text", text=json.dumps(result))]
 
         elif name == "restart_freecad":
             # Send restart command, then wait for new instance

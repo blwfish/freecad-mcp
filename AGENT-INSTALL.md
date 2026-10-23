@@ -4,11 +4,11 @@ This file is for you, the AI agent. It tells you what needs to be true on this s
 
 ## What This Is
 
-freecad-mcp is a Model Context Protocol (MCP) server providing 39 tools for FreeCAD 3D CAD modeling — parametric part design, CNC toolpath generation (CAM), mesh operations, spatial analysis, screenshots, and arbitrary Python execution inside FreeCAD. Once installed and registered, these tools appear in your tool list.
+freecad-mcp is a Model Context Protocol (MCP) server providing 40 tools for FreeCAD 3D CAD modeling — parametric part design, CNC toolpath generation (CAM), mesh operations, spatial analysis, screenshots, and arbitrary Python execution inside FreeCAD. Once installed and registered, these tools appear in your tool list.
 
 **Origin:** Built by one person for personal use, on a Mac, with Claude Code. Other platforms *should* work (the code handles macOS, Windows, and Linux) but are less tested. PRs for other agents and platforms will be considered.
 
-**Client tool count limits:** MCP clients vary in how many tools they support. This server currently exposes 39 tools, which is within the limits of most clients in use today. Be aware that some clients impose hard caps — if your client silently drops tools, behavior will be unpredictable and hard to diagnose. Claude Code has no hard tool count limit.
+**Client tool count limits:** MCP clients vary in how many tools they support. This server currently exposes 40 tools, which is within the limits of most clients in use today. Be aware that some clients impose hard caps — if your client silently drops tools, behavior will be unpredictable and hard to diagnose. Claude Code has no hard tool count limit.
 
 **Non-Claude client testing:** this server has been manually smoke-tested end-to-end (real tool calls against a real running FreeCAD instance) through LM Studio's native MCP client, against `qwen/qwen2.5-coder-14b` (the primary model used for behavioral testing), `qwen/qwen3-32b`, and `google/gemma-4-e4b`. This is manual spot-checking, not a CI-gated compatibility suite — treat it as evidence the protocol round-trips cleanly through at least one non-Claude client, not as a guarantee for clients or models not listed. One confirmed client-specific gap found this way: LM Studio silently drops the MCP `initialize` handshake's `instructions` field, which is why `get_usage_guidance` exists as a second, schema-visible channel for the same guidance.
 
@@ -221,7 +221,7 @@ The file `CLAUDE.md` in the repo root is your primary reference for **using** th
 | `geometric_verification` | Post-operation solid/shape validity checks |
 | `fixture_operations` | Fixture/jig topology capture and comparison |
 
-**23 Single-Purpose Tools:**
+**24 Single-Purpose Tools:**
 - `get_usage_guidance` — read before your first other operation in a new session: known issues to avoid, best practices, strategy/tactics overview
 - `execute_python` / `execute_python_async` — run arbitrary Python in FreeCAD (the escape hatch)
 - `poll_job` / `list_jobs` / `cancel_job` / `cancel_operation` — async job management
@@ -237,6 +237,7 @@ The file `CLAUDE.md` in the repo root is your primary reference for **using** th
 - `reload_modules` — hot-reload handler modules after deploying updated code
 - `manage_connection` — bridge-side diagnostics (status, clear crash-loop recovery files, validate FCStd)
 - `test_echo` — verify the bridge is reachable
+- `regression_check` — on-demand check that a saved `.FCStd` still recomputes as it was saved: compares each feature's stored shape with its recomputed one in headless FreeCAD on a temp copy (never touches the open document or the file), repeats the recompute so features that only sometimes go wrong are reported `unstable`; pass `freecad_binary` to compare FreeCAD versions
 - `spawn_freecad_instance` / `list_freecad_instances` / `select_freecad_instance` / `stop_freecad_instance` — headless instance management (see Headless Mode below)
 
 ### Critical Rules
