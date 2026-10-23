@@ -134,12 +134,16 @@ class TestLegacyAndSketchFacts:
     def test_sketch_facts_exclude_containers_from_dependents(self):
         body = fake_obj("Body", "PartDesign::Body")
         pad = fake_obj("Pad", "PartDesign::Pad")
-        sk = fake_obj("Sketch", "Sketcher::SketchObject", GeometryCount=0, in_list=[body, pad])
-        assert w.sketch_facts(sk) == {"geometry_count": 0, "dependents": ["Pad"]}
+        sk = fake_obj("Sketch", "Sketcher::SketchObject", GeometryCount=0, in_list=[body, pad], ExternalGeometry=[])
+        assert w.sketch_facts(sk) == {"geometry_count": 0, "dependents": ["Pad"], "external_geometry_count": 0}
+
+    def test_sketch_facts_count_external_geometry(self):
+        sk = fake_obj("Sketch", "Sketcher::SketchObject", GeometryCount=0, ExternalGeometry=[("Box", "Edge1")] * 4)
+        assert w.sketch_facts(sk)["external_geometry_count"] == 4
 
     def test_orphan_sketch_has_no_dependents_once_the_body_is_excluded(self):
         body = fake_obj("Body004", "PartDesign::Body")
-        sk = fake_obj("Sketch052", "Sketcher::SketchObject", GeometryCount=0, in_list=[body])
+        sk = fake_obj("Sketch052", "Sketcher::SketchObject", GeometryCount=0, in_list=[body], ExternalGeometry=[])
         assert w.sketch_facts(sk)["dependents"] == []
 
     def test_non_sketch_is_none(self):
@@ -311,7 +315,7 @@ class TestRun:
     def test_findings_from_every_fact_kind(self):
         base = fake_obj("Pocket008", shape=fake_shape())
         sk = fake_obj("Sketch018", "Sketcher::SketchObject", MapMode="FlatFace", AttachmentSupport=[], GeometryCount=3,
-                      in_list=[fake_obj("Pocket009")])
+                      in_list=[fake_obj("Pocket009")], ExternalGeometry=[])
         pad = fake_obj("Pad007", Midplane=True, SideType="Two sides", shape=fake_shape())
         rep, _, _ = run_worker([base, sk, pad])
         kinds = {r["name"]: set(r["findings"]) for r in rep["roots"]}

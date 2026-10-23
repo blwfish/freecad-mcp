@@ -10,7 +10,7 @@
 #   lost_support          Sketch018: Flat-face mode but an empty support list
 #   unresolved_reference  a support sub-name that no longer resolves ("?Face28")
 #   legacy_flag_conflict  Pad007: Midplane=true with SideType != Symmetric
-#   orphan_empty_sketch   Sketch052: no geometry, nothing uses it
+#   orphan_empty_sketch   Sketch052: attached, no geometry, nothing uses it
 #   junk_shell            Fusion: zero-size 3-face shells inside a "valid" solid
 #   internal_void         a solid's extra shell that is NOT junk (a real cavity)
 #   sliver_face           faces of ~1e-6 mm^2 or less, including negative areas
@@ -101,7 +101,7 @@ def lint_object(facts: dict) -> dict:
     """Return {kind: detail} for everything the lint finds on one object.
 
     `facts` (all optional keys): attach {mode, support [[obj, [subs]]]},
-    legacy {midplane, side_type}, sketch {geometry_count, dependents},
+    legacy {midplane, side_type}, sketch {geometry_count, dependents, external_geometry_count},
     shape {faces, extra_shells [{faces, area, volume}], small_faces [area...],
     small_edges [length...], max_tolerance, micro_steps [{gap,...}],
     bop {self_intersect}}.
@@ -121,8 +121,15 @@ def lint_object(facts: dict) -> dict:
     if legacy and legacy.get("midplane") and legacy.get("side_type") not in (None, "Symmetric"):
         findings[KIND_LEGACY_FLAG_CONFLICT] = {"midplane": True, "side_type": legacy["side_type"]}
 
+    # An abandoned sketch: attached to something, nothing drawn, nothing projected,
+    # nothing uses it. An UNATTACHED empty sketch is deliberately not flagged: that
+    # is a placeholder (e.g. the "Master XY/XZ/YZ" skeleton trio, 36 of the 58
+    # empty sketches in the 297-file corpus), and one with only external geometry
+    # is an unfinished projection, not an empty one.
     sketch = facts.get("sketch")
-    if sketch and sketch.get("geometry_count") == 0 and not sketch.get("dependents"):
+    if (sketch and sketch.get("geometry_count") == 0 and not sketch.get("dependents")
+            and not sketch.get("external_geometry_count")
+            and attach and _modes_needing_support(attach.get("mode"))):
         findings[KIND_ORPHAN_EMPTY_SKETCH] = {}
 
     shape = facts.get("shape")

@@ -53,7 +53,8 @@ def sketch_facts(obj):
     if obj.TypeId != "Sketcher::SketchObject":
         return None
     dependents = [x.Name for x in obj.InList if x.TypeId not in _CONTAINER_TYPES]
-    return {"geometry_count": int(obj.GeometryCount), "dependents": dependents}
+    return {"geometry_count": int(obj.GeometryCount), "dependents": dependents,
+            "external_geometry_count": len(obj.ExternalGeometry)}
 
 
 def _normal_key(axis, offset):
