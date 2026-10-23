@@ -130,7 +130,8 @@ jobs:
     # its own Popen and stops it with its own terminate/kill. The job above
     # installs only pytest, and the bridge imports `mcp`, so this one installs
     # the project from the lockfile (same as the unit-test job) and runs just
-    # that file.
+    # that file -- and test_regression_check.py, which drives the bridge's
+    # regression_check tool against the real FreeCADCmd (same `mcp` requirement).
     runs-on: ubuntu-latest
 
     strategy:
@@ -162,11 +163,11 @@ jobs:
           appimage: ${{ matrix.appimage }}
           use-cache: 'true'
 
-      - name: Run instance lifecycle tests
+      - name: Run instance lifecycle and regression_check tests
         shell: bash
         run: |
           set -o pipefail
-          uv run python -m pytest tests/integration/test_instance_lifecycle.py -v -rs 2>&1 | tee pytest-output.log
+          uv run python -m pytest tests/integration/test_instance_lifecycle.py tests/integration/test_regression_check.py -v -rs 2>&1 | tee pytest-output.log
           exit_code=$?
           # Same guard as the integration job: a module-level skip (no mcp,
           # no FreeCADCmd) still exits 0, and "ran nothing" must not read as green.

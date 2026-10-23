@@ -24,7 +24,13 @@ import zipfile
 
 import pytest
 
-from . import conftest as _conftest
+# The bridge imports `mcp`, which the plain integration job doesn't install; this
+# file runs in the instance-lifecycle job (uv sync from the lockfile) -- see
+# test_instance_lifecycle.py, which skips the same way.
+pytest.importorskip("mcp", reason="bridge needs the mcp package; run via the instance-lifecycle job / `uv run`")
+pytest.importorskip("mcp_agent_notes", reason="bridge imports mcp_agent_notes first; run via the instance-lifecycle job / `uv run`")
+
+from . import conftest as _conftest  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import freecad_mcp_server  # noqa: E402
