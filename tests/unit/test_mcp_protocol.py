@@ -476,3 +476,158 @@ class TestGetUsageGuidance:
         assert "error" in result
         assert "unknown operation" in result
         assert "strategy|tactics|find" in result
+
+
+# ---------------------------------------------------------------------------
+# regression_check (bridge-only tool)
+# ---------------------------------------------------------------------------
+
+class TestRegressionCheckTool:
+    """regression_check runs headless FreeCAD on a temp copy of a file, so it is
+    handled entirely in the bridge (no FreeCAD round-trip, no live instance
+    needed). The real work is AICopilot/regression_runner.py, tested with fake
+    binaries in test_regression_runner.py; these cover the MCP surface and the
+    bridge glue."""
+
+    @staticmethod
+    def _result(args):
+        return json.loads(_call_tool("regression_check", args)[0].text)
+
+    def test_tool_is_registered_with_a_required_file_path(self):
+        tool = next(t for t in _list_tools() if t.name == "regression_check")
+        assert tool.input_schema["required"] == ["file_path"]
+        assert set(tool.input_schema["properties"]) == {"file_path", "runs", "tolerance", "freecad_binary", "timeout_s"}
+
+    def test_schema_bounds_match_the_runner(self):
+        module_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot"))
+        regression_runner = freecad_mcp_server._load_regression_runner(module_dir)  # not via sys.path: order-independent
+        props = next(t for t in _list_tools() if t.name == "regression_check").input_schema["properties"]
+        assert props["runs"]["maximum"] == regression_runner.MAX_RUNS and props["runs"]["minimum"] == 1
+        assert props["timeout_s"]["minimum"] == regression_runner.MIN_TIMEOUT_S
+        assert props["timeout_s"]["maximum"] == regression_runner.MAX_TIMEOUT_S
+        assert props["runs"]["default"] == regression_runner.DEFAULT_RUNS
+        assert props["timeout_s"]["default"] == regression_runner.DEFAULT_TIMEOUT_S
+
+    def test_tool_is_declared_read_only(self):
+        tool = next(t for t in _list_tools() if t.name == "regression_check")
+        assert tool.annotations.read_only_hint is True and tool.annotations.destructive_hint is False
+
+    def test_missing_file_path_is_a_typed_error(self):
+        r = self._result({})
+        assert r["error_kind"] == "invalid_argument"
+
+    def test_non_string_file_path_is_a_typed_error(self):
+        assert self._result({"file_path": 5})["error_kind"] == "invalid_argument"
+
+    def test_path_outside_the_allowlist_is_rejected_before_anything_runs(self):
+        with patch.object(freecad_mcp_server, "_find_freecadcmd", return_value=sys.executable):
+            r = self._result({"file_path": "/etc/passwd"})
+        assert r["error_kind"] == "invalid_argument" and "outside allowed" in r["error"]
+
+    def test_module_dir_not_found_is_typed(self):
+        with patch.object(freecad_mcp_server, "_find_headless_script", return_value=None):
+            assert self._result({"file_path": "/tmp/x.FCStd"})["error_kind"] == "module_dir_not_found"
+
+    def test_binary_not_found_is_typed(self):
+        with patch.object(freecad_mcp_server, "_find_freecadcmd", return_value=None):
+            assert self._result({"file_path": "/tmp/x.FCStd"})["error_kind"] == "binary_not_found"
+
+    def test_explicit_freecad_binary_skips_auto_detection(self):
+        with patch.object(freecad_mcp_server, "_find_freecadcmd", side_effect=AssertionError("must not be called")):
+            r = self._result({"file_path": "/etc/passwd", "freecad_binary": sys.executable})
+        assert r["error_kind"] == "invalid_argument"  # got past binary lookup to path validation
+
+    def test_runner_that_cannot_load_is_typed(self):
+        with (patch.object(freecad_mcp_server, "_find_freecadcmd", return_value=sys.executable),
+              patch.object(freecad_mcp_server, "_load_regression_runner", side_effect=ImportError("boom"))):
+            r = self._result({"file_path": "/tmp/x.FCStd"})
+        assert r["error_kind"] == "module_load_failed" and "boom" in r["error"]
+
+    def test_only_known_arguments_are_forwarded_with_binary_and_module_dir(self):
+        seen = {}
+
+        class FakeRunner:
+            @staticmethod
+            def run_check(file_path, binary, module_dir, **kw):
+                seen.update(file_path=file_path, binary=binary, module_dir=module_dir, kw=kw)
+                return {"ok": True}
+
+        with (patch.object(freecad_mcp_server, "_find_freecadcmd", return_value="/fake/FreeCADCmd"),
+              patch.object(freecad_mcp_server, "_load_regression_runner", return_value=FakeRunner)):
+            r = self._result({"file_path": "/tmp/x.FCStd", "runs": 5, "tolerance": 0.01, "timeout_s": 60,
+                              "unknown_arg": "dropped"})
+        assert r == {"ok": True}
+        assert seen["file_path"] == "/tmp/x.FCStd" and seen["binary"] == "/fake/FreeCADCmd"
+        assert seen["kw"] == {"runs": 5, "tolerance": 0.01, "timeout_s": 60}
+        assert os.path.basename(seen["module_dir"]) == "AICopilot"
+
+    def test_omitted_optional_arguments_are_not_forwarded_so_runner_defaults_apply(self):
+        seen = {}
+
+        class FakeRunner:
+            @staticmethod
+            def run_check(file_path, binary, module_dir, **kw):
+                seen["kw"] = kw
+                return {}
+
+        with (patch.object(freecad_mcp_server, "_find_freecadcmd", return_value="/fake/FreeCADCmd"),
+              patch.object(freecad_mcp_server, "_load_regression_runner", return_value=FakeRunner)):
+            self._result({"file_path": "/tmp/x.FCStd"})
+        assert seen["kw"] == {}
+
+    def test_blocking_check_runs_off_the_event_loop_thread(self):
+        """The check takes tens of seconds; it must not block the bridge's
+        event loop (and with it every other MCP request)."""
+        import threading
+        seen = {}
+
+        class FakeRunner:
+            @staticmethod
+            def run_check(*a, **kw):
+                seen["worker_thread"] = threading.current_thread() is not threading.main_thread()
+                return {}
+
+        with (patch.object(freecad_mcp_server, "_find_freecadcmd", return_value="/fake/FreeCADCmd"),
+              patch.object(freecad_mcp_server, "_load_regression_runner", return_value=FakeRunner)):
+            self._result({"file_path": "/tmp/x.FCStd"})
+        assert seen["worker_thread"] is True
+
+    def test_load_regression_runner_loads_by_path_without_touching_sys_path(self):
+        module_dir = os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot")
+        before = list(sys.path)
+        runner = freecad_mcp_server._load_regression_runner(os.path.realpath(module_dir))
+        assert callable(runner.run_check) and sys.path == before
+
+    def test_load_regression_runner_reloads_so_a_redeploy_is_picked_up(self):
+        module_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot"))
+        a = freecad_mcp_server._load_regression_runner(module_dir)
+        b = freecad_mcp_server._load_regression_runner(module_dir)
+        assert a is not b
+
+    def test_load_regression_runner_missing_files_raises_importerror_or_oserror(self, tmp_path):
+        with pytest.raises((ImportError, OSError)):
+            freecad_mcp_server._load_regression_runner(str(tmp_path))
+
+    def test_failed_load_leaves_sys_modules_exactly_as_it_found_it(self, tmp_path):
+        """A load that fails midway used to leave a half-initialised
+        `regression_analysis` in sys.modules (breaking every later importer);
+        found when another test file then failed with 'no attribute
+        DEFAULT_TOLERANCE'."""
+        good_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot"))
+        freecad_mcp_server._load_regression_runner(good_dir)
+        before = {n: sys.modules.get(n) for n in ("regression_analysis", "regression_runner")}
+        with pytest.raises((ImportError, OSError)):
+            freecad_mcp_server._load_regression_runner(str(tmp_path))
+        assert {n: sys.modules.get(n) for n in before} == before
+        assert hasattr(sys.modules["regression_analysis"], "DEFAULT_TOLERANCE")
+
+    def test_failed_first_load_leaves_no_module_behind(self, tmp_path):
+        saved = {n: sys.modules.pop(n, None) for n in ("regression_analysis", "regression_runner")}
+        try:
+            with pytest.raises((ImportError, OSError)):
+                freecad_mcp_server._load_regression_runner(str(tmp_path))
+            assert "regression_analysis" not in sys.modules and "regression_runner" not in sys.modules
+        finally:
+            for n, mod in saved.items():
+                if mod is not None:
+                    sys.modules[n] = mod
