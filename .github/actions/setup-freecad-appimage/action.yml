@@ -69,10 +69,26 @@ runs:
           gh release download "$TAG" \
             --repo FreeCAD/FreeCAD \
             --pattern '*Linux-x86_64.AppImage' \
-            --pattern '*Linux-x86_64.AppImage-SHA256.txt' \
             --dir .
           APPIMAGE=$(ls *Linux-x86_64.AppImage | head -1)
-          sha256sum -c "${APPIMAGE}-SHA256.txt"
+
+          # Verify against the `digest` GitHub records on the release asset,
+          # not a `*-SHA256.txt` sidecar: upstream stopped publishing the
+          # sidecar after weekly-2026.10.14 (weekly-2026.10.21 and later ship
+          # only the AppImage and its .zsync), which made this step fail on
+          # every newer weekly. For weeklies that still have a sidecar the two
+          # sources agree (checked on weekly-2026.09.09). A missing digest is a
+          # hard failure -- never fall through to an unverified download.
+          EXPECTED=$(gh api "repos/FreeCAD/FreeCAD/releases/tags/${TAG}" \
+            --jq ".assets[] | select(.name == \"${APPIMAGE}\") | .digest")
+          case "$EXPECTED" in
+            sha256:????????????????????????????????????????????????????????????????) ;;
+            *)
+              echo "::error::No sha256 digest on release asset ${APPIMAGE} (${TAG}); got '${EXPECTED}'. Refusing to use an unverified AppImage."
+              exit 1
+              ;;
+          esac
+          echo "${EXPECTED#sha256:}  ${APPIMAGE}" | sha256sum -c -
         fi
 
         chmod +x "$APPIMAGE"
