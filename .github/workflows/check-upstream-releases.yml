@@ -32,7 +32,19 @@ jobs:
           # Dockerfile installs (`micromamba create -c conda-forge freecad=...`),
           # so it's the only version that's actually actionable right now.
           # conda-forge routinely lags the GitHub release by weeks/months.
-          CONDA_LATEST_1_1=$(curl -s "https://api.anaconda.org/package/conda-forge/freecad" | jq -r '.latest_version')
+          #
+          # Filter to 1.1.x explicitly instead of trusting `.latest_version`:
+          # conda-forge also publishes calendar-versioned dev builds under the
+          # same `main` label (e.g. `2026.09.16` is weekly-2026.09.16, built
+          # against OCCT 8.0 rather than the 7.9 line 1.1.x uses), and
+          # `.latest_version` happily returns one of those. Bumping the
+          # Dockerfile to it would silently move the published image from a
+          # stable release onto a dev build.
+          CONDA_LATEST_1_1=$(curl -sf "https://api.anaconda.org/package/conda-forge/freecad" | jq -r '[.versions[] | select(test("^1\\.1\\.[0-9]+$"))] | sort_by(split(".") | map(tonumber)) | last // empty')
+          if [ -z "$CONDA_LATEST_1_1" ]; then
+            echo "::error::Could not determine the latest 1.1.x freecad version on conda-forge (API failure, or no 1.1.x versions listed)"
+            exit 1
+          fi
 
           echo "gh_latest_1_1=$GH_LATEST_1_1" >> $GITHUB_OUTPUT
           echo "current_1_1=$CURRENT_1_1" >> $GITHUB_OUTPUT
