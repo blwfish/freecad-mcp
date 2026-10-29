@@ -83,7 +83,7 @@ def main():
     # or partial baseline was only discoverable via git blame, not the
     # artifact itself (full-review 2026-07-24 finding #20).
     meta = snapshot.setdefault("__meta__", {})
-    meta["generated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    meta["generated_at"] = datetime.datetime.now(datetime.UTC).isoformat()
 
     with open(SNAPSHOT_PATH, "w") as f:
         json.dump(snapshot, f, indent=2, sort_keys=True)

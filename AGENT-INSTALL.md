@@ -49,7 +49,7 @@ The following must be present on the system. Check each one. Install anything mi
 - **Linux:** AppImage from https://www.freecad.org/downloads.php, or PPA/Flatpak. Distro packages are usually outdated.
 - **Windows:** Installer from https://www.freecad.org/downloads.php
 
-### 2. Python 3.10+ (required)
+### 2. Python 3.11+ (required)
 
 The MCP bridge runs on the system Python (not FreeCAD's bundled Python).
 
@@ -57,7 +57,7 @@ The MCP bridge runs on the system Python (not FreeCAD's bundled Python).
 
 **Install:**
 - **macOS:** `brew install python@3.12`
-- **Linux:** `sudo apt install python3`
+- **Linux:** `sudo apt install python3` — needs 3.11 or newer (Debian 12+, Ubuntu 24.04+). Ubuntu 22.04's system Python is 3.10; install a newer one (e.g. `uv python install 3.12`) instead.
 - **Windows:** https://www.python.org/downloads/
 
 ### 3. MCP Python packages (required)
