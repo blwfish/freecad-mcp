@@ -212,22 +212,26 @@ from gui_heartbeat import GuiHeartbeat
 from handler_registry import _GUI_SENSITIVE, _HANDLER_CLASS_NAMES
 from universal_selector import UniversalSelector
 
-# Version: 8.4.0 - find_root_cause crash fix and autosave behavior:
-#                   find_root_cause no longer segfaults FreeCAD when the
-#                   dependency tree reaches a Body origin axis (an Edge
-#                   spanning +-2e100, OCCT's Precision::Infinite, on which
-#                   shape.check(True) crashes the process): the walk now
-#                   classifies only sketches and Part::Feature objects,
-#                   reports how many origin features it skipped, and skips
-#                   the BOP check for any shape with a bounding-box diagonal
-#                   over 1e9 mm (reported as unbounded_shape). The pre-run
-#                   autosave no longer rewrites a document with no unsaved
-#                   changes, and when it does write (or fail to), the outcome
-#                   is returned in the execute_python response. CI's
-#                   upstream-release check handles multiple dev-weekly slots.
-#                   mcp 2.3.0 and ruff 0.17.1.
+# Version: 8.5.0 - regression_check and model_lint (bridge-only tools):
+#                   regression_check recomputes a saved .FCStd in separate
+#                   headless FreeCAD processes on a temp copy and reports
+#                   which features differ from what the file stored, where
+#                   each difference first appears, and which are unstable
+#                   across repeated runs; it never touches the open document.
+#                   model_lint opens a temp copy without recomputing and
+#                   reports latent problems in the stored file (lost sketch
+#                   supports, legacy Midplane conflicts, orphan sketches,
+#                   junk shells, slivers, inflated tolerances, micro-steps),
+#                   attributed to the root feature. Shapes over 5000 faces
+#                   skip the validity check (check_validity option). Also:
+#                   weekly-AppImage CI verifies against the release asset
+#                   digest (upstream dropped the SHA256 sidecar), the dev-
+#                   weekly pin moves to weekly-2026.10.28, the upstream check
+#                   no longer proposes conda-forge dev builds as 1.1.x, and
+#                   filelock, opentelemetry-api, certifi and msgpack are
+#                   bumped to patched versions.
 
-__version__ = "8.4.0"
+__version__ = "8.5.0"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
