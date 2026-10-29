@@ -212,26 +212,15 @@ from gui_heartbeat import GuiHeartbeat
 from handler_registry import _GUI_SENSITIVE, _HANDLER_CLASS_NAMES
 from universal_selector import UniversalSelector
 
-# Version: 8.5.0 - regression_check and model_lint (bridge-only tools):
-#                   regression_check recomputes a saved .FCStd in separate
-#                   headless FreeCAD processes on a temp copy and reports
-#                   which features differ from what the file stored, where
-#                   each difference first appears, and which are unstable
-#                   across repeated runs; it never touches the open document.
-#                   model_lint opens a temp copy without recomputing and
-#                   reports latent problems in the stored file (lost sketch
-#                   supports, legacy Midplane conflicts, orphan sketches,
-#                   junk shells, slivers, inflated tolerances, micro-steps),
-#                   attributed to the root feature. Shapes over 5000 faces
-#                   skip the validity check (check_validity option). Also:
-#                   weekly-AppImage CI verifies against the release asset
-#                   digest (upstream dropped the SHA256 sidecar), the dev-
-#                   weekly pin moves to weekly-2026.10.28, the upstream check
-#                   no longer proposes conda-forge dev builds as 1.1.x, and
-#                   filelock, opentelemetry-api, certifi and msgpack are
-#                   bumped to patched versions.
+# Version: 8.6.0 - Python 3.11 minimum for the bridge:
+#                   requires-python is now >=3.11 (Python 3.10 reached end of
+#                   life on 2026-10-01), which removes the pre-3.11 branch of
+#                   the lockfile and with it every open filelock advisory.
+#                   AICopilot itself is deliberately still free of 3.11-only
+#                   APIs: it runs on FreeCAD's own interpreter, and some
+#                   installs still embed 3.10.
 
-__version__ = "8.5.0"
+__version__ = "8.6.0"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
