@@ -21,7 +21,7 @@ jobs:
             # it belongs to the separate PR-only job below, on every push.
             pytest_args: "-m 'not cam and not real_document and not fc_tools'"
           - slot: "dev-weekly"
-            tag: "weekly-2026.09.09"
+            tag: "weekly-2026.10.28"
             appimage: ""  # resolved by glob below
             pytest_args: "-m 'not real_document and not fc_tools'"
 
@@ -143,7 +143,7 @@ jobs:
             tag: "1.1.1"
             appimage: "FreeCAD_1.1.1-Linux-x86_64-py311.AppImage"
           - slot: "dev-weekly"
-            tag: "weekly-2026.09.09"
+            tag: "weekly-2026.10.28"
             appimage: ""
 
     name: "Instance lifecycle (${{ matrix.slot }})"
