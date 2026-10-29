@@ -17,7 +17,7 @@ import os
 import sys
 import tempfile
 import types
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -149,15 +149,15 @@ class TestFuzzyScore:
 # ---------------------------------------------------------------------------
 class TestRecencyDecay:
     def test_now_is_full_weight(self):
-        ts = datetime.now(timezone.utc).isoformat()
+        ts = datetime.now(UTC).isoformat()
         assert _recency_decay(ts) == pytest.approx(1.0, abs=0.05)
 
     def test_thirty_days_is_half(self):
-        ts = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        ts = (datetime.now(UTC) - timedelta(days=30)).isoformat()
         assert _recency_decay(ts) == pytest.approx(0.5, abs=0.05)
 
     def test_floor_clamp(self):
-        ts = (datetime.now(timezone.utc) - timedelta(days=3650)).isoformat()
+        ts = (datetime.now(UTC) - timedelta(days=3650)).isoformat()
         assert _recency_decay(ts) == 0.1
 
     def test_invalid_timestamp_returns_one(self):
@@ -175,7 +175,7 @@ class TestFeedbackBoost:
         assert _feedback_boost({"queries": {}}, "q", "p") == 1.0
 
     def test_boost_increases_with_count(self):
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         fb = {"queries": {"q": {"p": {"count": 5, "last_used": now}}}}
         boost = _feedback_boost(fb, "q", "p")
         assert boost > 1.0
@@ -183,7 +183,7 @@ class TestFeedbackBoost:
         assert _feedback_boost(fb2, "q", "p") > boost
 
     def test_boost_does_not_apply_to_other_queries(self):
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         fb = {"queries": {"q": {"p": {"count": 100, "last_used": now}}}}
         assert _feedback_boost(fb, "different-query", "p") == 1.0
 

@@ -18,7 +18,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: Manufacturing",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "mcp>=2.3.0",
     "mcp-events>=0.1.0",
@@ -61,7 +61,7 @@ allow-direct-references = true
 package = false
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
@@ -76,6 +76,12 @@ ignore = ["E501"]
 # Bare attribute access under `pytest.raises(AttributeError)` IS the test --
 # the "useless expression" is the thing asserted to raise.
 "tests/unit/test_freecad_mocks_spec.py" = ["B018"]
+# AICopilot/ is copied into FreeCAD's Mod/ dir and runs on FreeCAD's own
+# interpreter, not the system Python that requires-python governs. Some
+# FreeCAD installs still embed 3.10 (conda-forge freecad 1.1.x py310 builds,
+# Ubuntu 22.04 packages), so keep it free of 3.11-only APIs: UP017's
+# `datetime.UTC` rewrite of `timezone.utc` would break import there for no gain.
+"AICopilot/**" = ["UP017"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
