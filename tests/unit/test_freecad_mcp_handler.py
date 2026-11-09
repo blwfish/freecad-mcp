@@ -2725,6 +2725,67 @@ class TestWindowsAuthTokenProcessCommand:
         assert "error" in parsed
         server._execute_tool.assert_not_called()
 
+    # Ambiguous token inputs, each pinned to "rejected with the *Unauthorized*
+    # message and nothing dispatched". Regression: a non-ASCII str made
+    # secrets.compare_digest raise TypeError, which the generic handler turned
+    # into "Command processing error: ..." -- still rejected, but misclassified.
+    # A lone surrogate (JSON "\ud800") additionally breaks a plain .encode().
+    @pytest.mark.parametrize("bad_token", [
+        "é" * 64,            # non-ASCII, same length as the real token
+        "é",                 # non-ASCII, short
+        "\ud800",                 # lone surrogate: str.encode("utf-8") would raise
+        "\U0001f511" * 16,        # astral-plane characters
+        "correct-tokeń",    # real token + combining mark (no code-point-parser fooling)
+        "CORRECT-TOKEN",          # case differs
+        "correct-token ",         # trailing whitespace is not stripped
+        "correct-toke",           # one char short
+        "correct-token0",         # one char long
+        "",                       # empty
+        None, 123, ["correct-token"], {"t": "correct-token"}, True,   # non-str types
+    ])
+    def test_rejects_ambiguous_tokens_with_unauthorized(self, server, monkeypatch, bad_token):
+        import freecad_mcp_handler as ss_mod
+        monkeypatch.setattr(ss_mod, "IS_WINDOWS", True)
+        server._windows_auth_token = "correct-token"
+        server._execute_tool = MagicMock(return_value=json.dumps({"result": "ok"}))
+
+        parsed = json.loads(server._process_command(json.dumps({
+            "tool": "execute_python_sync", "args": {"code": "1+1"}, "token": bad_token,
+        })))
+
+        assert "Unauthorized" in parsed.get("error", ""), parsed
+        server._execute_tool.assert_not_called()
+
+    def test_lone_surrogate_survives_the_json_roundtrip_we_are_testing(self):
+        """Guard the test above: json.dumps escapes the surrogate and json.loads
+        restores it, so the handler really does receive a lone-surrogate str."""
+        restored = json.loads(json.dumps({"token": "\ud800"}))["token"]
+        assert restored == "\ud800"
+        with pytest.raises(UnicodeEncodeError):
+            restored.encode("utf-8")
+
+    def test_correct_token_still_accepted_and_dispatches(self, server, monkeypatch):
+        import freecad_mcp_handler as ss_mod
+        monkeypatch.setattr(ss_mod, "IS_WINDOWS", True)
+        server._windows_auth_token = "correct-token"
+        server._execute_tool = MagicMock(return_value=json.dumps({"result": "ok"}))
+
+        parsed = json.loads(server._process_command(json.dumps({
+            "tool": "execute_python_sync", "args": {}, "token": "correct-token",
+        })))
+
+        assert parsed == {"result": "ok"}
+        server._execute_tool.assert_called_once()
+
+    def test_non_ascii_server_secret_is_compared_correctly(self, ss_module):
+        """The real secret is hex, but the comparison itself must not depend on
+        that: identical non-ASCII strings match, near-misses don't (and nothing raises)."""
+        assert ss_module._token_matches("sécret", "sécret") is True
+        assert ss_module._token_matches("secret", "sécret") is False
+        assert ss_module._token_matches("sécret", "secret") is False
+        assert ss_module._token_matches("\ud800", "\ud800") is True   # surrogatepass round-trips exactly
+        assert ss_module._token_matches("\ud800", "\ud801") is False  # ...and does not collide
+
     def test_non_windows_path_unaffected(self, server, monkeypatch):
         """The Unix-domain socket's access boundary is the 0600 socket
         file, not this token -- it must keep working with no token at all."""

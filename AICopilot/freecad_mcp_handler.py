@@ -347,6 +347,27 @@ WINDOWS_AUTH_TOKEN_DIR = os.path.expanduser("~/.freecad-mcp")
 WINDOWS_AUTH_TOKEN_PATH = os.path.join(WINDOWS_AUTH_TOKEN_DIR, "windows_auth_token")
 
 
+def _token_matches(supplied: object, expected: str | None) -> bool:
+    """Constant-time check of a request's token against the server's secret.
+
+    Fails closed: an empty/None server-side secret never matches, and neither
+    does a non-str token. Both sides are compared as UTF-8 *bytes* because
+    ``secrets.compare_digest`` raises ``TypeError`` for two ``str`` containing
+    any non-ASCII character. The bytes form must also tolerate lone surrogates
+    (JSON ``"\\ud800"`` decodes to one, and a plain ``.encode()`` would raise),
+    hence ``surrogatepass``, which round-trips them exactly with no collisions.
+    Before this, a non-ASCII token was still rejected -- but only by the
+    generic ``except Exception`` in ``_process_command``, which answered
+    "Command processing error: ..." instead of "Unauthorized".
+    """
+    if not expected or not isinstance(supplied, str):
+        return False
+    return secrets.compare_digest(
+        supplied.encode("utf-8", "surrogatepass"),
+        expected.encode("utf-8", "surrogatepass"),
+    )
+
+
 def _restrict_token_file_to_current_user_windows(path: str) -> bool:
     """Best-effort: strip inherited ACEs from `path` and grant Full Control
     only to the current user account, via the `icacls` tool built into every
@@ -1636,16 +1657,12 @@ class FreeCADSocketServer:
             # TCP connection to this port gets unauthenticated
             # execute_python access (CWE-306). secrets.compare_digest avoids
             # a timing side-channel on the comparison itself.
-            if IS_WINDOWS:
-                supplied_token = command.get("token")
-                expected_token = self._windows_auth_token
-                if (not expected_token or not isinstance(supplied_token, str)
-                        or not secrets.compare_digest(supplied_token, expected_token)):
-                    return json.dumps({
-                        "error": "Unauthorized: missing or invalid token. This "
-                                 "endpoint requires the auth token FreeCAD wrote "
-                                 f"to {WINDOWS_AUTH_TOKEN_PATH} at startup."
-                    })
+            if IS_WINDOWS and not _token_matches(command.get("token"), self._windows_auth_token):
+                return json.dumps({
+                    "error": "Unauthorized: missing or invalid token. This "
+                             "endpoint requires the auth token FreeCAD wrote "
+                             f"to {WINDOWS_AUTH_TOKEN_PATH} at startup."
+                })
 
             tool_name = command.get("tool", "")
             args = command.get("args", {})
