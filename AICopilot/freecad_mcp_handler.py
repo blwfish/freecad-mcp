@@ -304,6 +304,48 @@ except ValueError as _port_exc:
     WINDOWS_PORT = _DEFAULT_WINDOWS_PORT
     _WINDOWS_PORT_ERROR = str(_port_exc)
 
+_DEFAULT_RECV_TIMEOUT = 30.0
+_MAX_RECV_TIMEOUT = 3600.0
+
+
+def _parse_recv_timeout(raw: str | None) -> float:
+    """Parse FREECAD_MCP_RECV_TIMEOUT: seconds to wait for one complete request
+    frame on a client connection (header + body together -- a single deadline,
+    not per recv()).
+
+    - unset, empty, or whitespace-only -> 30.0 (the long-standing default).
+    - otherwise a plain ASCII decimal number > 0 and <= 3600 ("0.5", "30",
+      ".25", "5."). Anything else raises ValueError naming the variable: zero
+      (which socket code treats as non-blocking, not "no timeout"), negatives,
+      NaN/inf, exponents, and underscores are all rejected rather than guessed
+      at, and a bad value never silently becomes the default -- a caller who
+      asked for a short timeout and quietly got 30 s would only find out by
+      waiting.
+    """
+    if raw is None:
+        return _DEFAULT_RECV_TIMEOUT
+    text = raw.strip()
+    if not text:
+        return _DEFAULT_RECV_TIMEOUT
+    if text.isascii() and text.replace(".", "", 1).isdigit():
+        value = float(text)
+        if 0 < value <= _MAX_RECV_TIMEOUT:
+            return value
+    raise ValueError(
+        f"FREECAD_MCP_RECV_TIMEOUT={raw!r} is not a valid timeout; expected a "
+        f"plain decimal number of seconds greater than 0 and at most {_MAX_RECV_TIMEOUT:g}"
+    )
+
+
+# Applies on every platform. As with the port, a bad value must not break
+# importing this module; start_server() reports it and refuses to start.
+try:
+    RECV_TIMEOUT = _parse_recv_timeout(os.environ.get("FREECAD_MCP_RECV_TIMEOUT"))
+    _RECV_TIMEOUT_ERROR: str | None = None
+except ValueError as _timeout_exc:
+    RECV_TIMEOUT = _DEFAULT_RECV_TIMEOUT
+    _RECV_TIMEOUT_ERROR = str(_timeout_exc)
+
 # =============================================================================
 # Windows TCP auth token (CWE-306 mitigation)
 # =============================================================================
@@ -867,6 +909,10 @@ class FreeCADSocketServer:
     def start_server(self):
         """Start the socket server."""
         try:
+            if _RECV_TIMEOUT_ERROR:
+                # Misconfiguration: report it and refuse to start (caught below)
+                # rather than silently running with the default timeout.
+                raise ValueError(_RECV_TIMEOUT_ERROR)
             # Always generate a UUID for this instance — used for discovery file
             # whether the socket path was env-supplied or auto-generated.
             try:
@@ -1594,7 +1640,7 @@ class FreeCADSocketServer:
         with self._active_connections_lock:
             self._active_connections += 1
         try:
-            message_str = receive_message(client_socket)
+            message_str = receive_message(client_socket, timeout=RECV_TIMEOUT)
             if message_str:
                 response = self._process_command(message_str)
                 if not send_message(client_socket, response):

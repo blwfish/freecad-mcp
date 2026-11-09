@@ -2886,6 +2886,42 @@ class TestRestrictTokenFileToCurrentUserWindows:
         ) is False
 
 
+class TestRecvTimeoutConfig:
+    """FREECAD_MCP_RECV_TIMEOUT: the handler must actually pass the configured
+    value to receive_message (a constant that nothing reads is not a feature),
+    and refuse to start on a bad value on every platform."""
+
+    @pytest.mark.parametrize("configured", [30.0, 0.5, 3600.0])
+    def test_handle_client_passes_configured_timeout(self, server, monkeypatch, configured):
+        import freecad_mcp_handler as ss_mod
+        monkeypatch.setattr(ss_mod, "RECV_TIMEOUT", configured)
+        recv = MagicMock(return_value=None)   # peer sent nothing usable -> handler just closes
+        monkeypatch.setattr(ss_mod, "receive_message", recv)
+
+        server._handle_client(MagicMock())
+
+        recv.assert_called_once()
+        assert recv.call_args.kwargs["timeout"] == configured
+
+    @pytest.mark.parametrize("is_windows", [True, False])
+    def test_bad_timeout_refuses_to_start_on_every_platform(self, server, monkeypatch, is_windows):
+        import freecad_mcp_handler as ss_mod
+        monkeypatch.setattr(ss_mod, "IS_WINDOWS", is_windows)
+        monkeypatch.setattr(ss_mod, "_RECV_TIMEOUT_ERROR", "FREECAD_MCP_RECV_TIMEOUT='abc' is not a valid timeout")
+        make_socket = MagicMock()
+        monkeypatch.setattr(ss_mod.socket, "socket", make_socket)
+        server._init_windows_auth_token = MagicMock()
+        print_error = MagicMock()
+        monkeypatch.setattr(ss_mod.FreeCAD.Console, "PrintError", print_error, raising=False)
+
+        assert server.start_server() is False
+
+        make_socket.assert_not_called()                       # nothing bound
+        server._init_windows_auth_token.assert_not_called()   # no secret written for a server that never starts
+        message = " ".join(str(c.args[0]) for c in print_error.call_args_list)
+        assert "FREECAD_MCP_RECV_TIMEOUT" in message and "abc" in message
+
+
 class TestStartServerWindowsPortConfigError:
     """A bad FREECAD_MCP_PORT must fail start_server() loudly on Windows -- before
     any token file or socket exists -- instead of crashing the module import
