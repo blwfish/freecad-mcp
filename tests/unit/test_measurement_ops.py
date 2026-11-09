@@ -11,6 +11,7 @@ Run with: python3 -m pytest tests/unit/test_measurement_ops.py -v
 import unittest
 from unittest.mock import MagicMock
 
+import pytest
 from handlers.measurement_ops import MeasurementOpsHandler
 
 from tests.unit._freecad_mocks import (
@@ -23,6 +24,8 @@ from tests.unit._freecad_mocks import (
     mock_FreeCAD,
     reset_mocks,
 )
+
+pytestmark = pytest.mark.windows_safe
 
 
 def _attach_face_geometry(obj, faces_data):

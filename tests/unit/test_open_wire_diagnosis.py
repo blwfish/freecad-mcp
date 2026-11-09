@@ -72,9 +72,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'AICopilo
 import handlers.base as base_module
 import handlers.partdesign_ops as partdesign_ops_module
 import handlers.sketch_ops as sketch_ops_module
+import pytest
 from handlers.base import BaseHandler
 from handlers.partdesign_ops import PartDesignOpsHandler
 from handlers.sketch_ops import SketchOpsHandler
+
+pytestmark = pytest.mark.windows_safe
 
 # ---------------------------------------------------------------------------
 # Helpers

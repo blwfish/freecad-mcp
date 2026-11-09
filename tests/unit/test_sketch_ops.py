@@ -20,6 +20,7 @@ import math
 import unittest
 from unittest.mock import MagicMock
 
+import pytest
 from handlers.sketch_ops import SketchOpsHandler
 
 from tests.unit._freecad_mocks import (
@@ -34,6 +35,8 @@ from tests.unit._freecad_mocks import (
     mock_Sketcher,
     reset_mocks,
 )
+
+pytestmark = pytest.mark.windows_safe
 
 
 def _make_real_sketch_mock(name="Sketch"):

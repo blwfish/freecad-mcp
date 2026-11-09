@@ -17,6 +17,7 @@ plus the non-selection auto/explicit-edges paths.
 import unittest
 from unittest.mock import MagicMock
 
+import pytest
 from handlers.partdesign_ops import PartDesignOpsHandler
 
 from tests.unit._freecad_mocks import (
@@ -34,6 +35,8 @@ from tests.unit._freecad_mocks import (
     mock_FreeCAD,
     reset_mocks,
 )
+
+pytestmark = pytest.mark.windows_safe
 
 
 def _make_next_addobject_invalid(doc, type_id):

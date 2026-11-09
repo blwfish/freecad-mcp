@@ -17,6 +17,7 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
+import pytest
 from handlers.execute_python_ops import ExecutePythonOpsHandler
 
 from tests.unit._freecad_mocks import (
@@ -24,6 +25,8 @@ from tests.unit._freecad_mocks import (
     mock_FreeCAD,
     reset_mocks,
 )
+
+pytestmark = pytest.mark.windows_safe
 
 
 def _run_on_gui_thread_headless(fn, timeout=30.0):

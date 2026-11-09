@@ -9,7 +9,11 @@ whole-type staleness vs. per-property staleness (a new property added to an
 the deliberate non-goal of reporting property *additions*.
 """
 
+import pytest
+
 from tests.integration._api_surface_diff import diff_snapshots
+
+pytestmark = pytest.mark.windows_safe
 
 EMPTY = {
     "stale_snapshot_types": {},

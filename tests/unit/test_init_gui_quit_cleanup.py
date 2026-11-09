@@ -20,6 +20,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytestmark = pytest.mark.windows_safe
+
 AICOPILOT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot")
 INIT_GUI_PATH = os.path.join(AICOPILOT_DIR, "InitGui.py")
 

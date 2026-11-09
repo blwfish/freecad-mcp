@@ -35,6 +35,8 @@ from tests.unit._freecad_mocks import (  # noqa: E402
     reset_mocks,
 )
 
+pytestmark = pytest.mark.windows_safe
+
 
 @pytest.fixture(autouse=True)
 def _reset():

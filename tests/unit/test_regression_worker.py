@@ -20,6 +20,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'AICopilo
 import regression_analysis as analysis
 import regression_worker as w
 
+pytestmark = pytest.mark.windows_safe
+
 LIMIT = analysis.MAX_FACES_FOR_VALIDITY_CHECK
 
 

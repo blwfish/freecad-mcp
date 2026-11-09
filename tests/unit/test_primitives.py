@@ -8,6 +8,7 @@ assignment (e62ebc5 fix), and document creation behavior.
 import unittest
 from unittest.mock import MagicMock
 
+import pytest
 from handlers.primitives import PrimitivesHandler
 
 from tests.unit._freecad_mocks import (
@@ -18,6 +19,8 @@ from tests.unit._freecad_mocks import (
     mock_FreeCAD,
     reset_mocks,
 )
+
+pytestmark = pytest.mark.windows_safe
 
 
 class TestCreateBox(unittest.TestCase):

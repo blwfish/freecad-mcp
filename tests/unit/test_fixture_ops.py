@@ -22,6 +22,7 @@ import unittest
 from unittest.mock import MagicMock
 
 import handlers.fixture_ops as _fixture_ops_module
+import pytest
 from handlers.fixture_ops import FixtureOpsHandler
 
 from tests.unit._freecad_mocks import (
@@ -31,6 +32,8 @@ from tests.unit._freecad_mocks import (
     mock_FreeCAD,
     reset_mocks,
 )
+
+pytestmark = pytest.mark.windows_safe
 
 # ---------------------------------------------------------------------------
 # Helpers

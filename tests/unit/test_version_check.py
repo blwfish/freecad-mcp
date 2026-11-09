@@ -18,6 +18,8 @@ from unittest.mock import patch
 
 import pytest
 
+pytestmark = pytest.mark.windows_safe
+
 BRIDGE_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "freecad_mcp_server.py")
 
 

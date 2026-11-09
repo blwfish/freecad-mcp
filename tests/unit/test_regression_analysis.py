@@ -17,6 +17,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'AICopilot'))
 
+import pytest
 import regression_analysis as ra
 from regression_analysis import (
     KIND_EXTENT_CHANGED,
@@ -31,6 +32,8 @@ from regression_analysis import (
     attribute_findings,
     compare_snapshots,
 )
+
+pytestmark = pytest.mark.windows_safe
 
 TOL = 0.001
 

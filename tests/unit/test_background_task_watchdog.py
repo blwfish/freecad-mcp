@@ -23,6 +23,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import freecad_mcp_server as bridge
 
+pytestmark = pytest.mark.windows_safe
+
 
 @pytest.fixture
 def fake_debugger():

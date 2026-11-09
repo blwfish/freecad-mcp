@@ -12,6 +12,10 @@ import json
 import os
 import re
 
+import pytest
+
+pytestmark = pytest.mark.windows_safe
+
 REPO_ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 
 

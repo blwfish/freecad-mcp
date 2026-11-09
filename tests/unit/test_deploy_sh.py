@@ -21,6 +21,8 @@ import subprocess
 
 import pytest
 
+pytestmark = pytest.mark.windows_safe
+
 REPO_ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 DEPLOY_SH = os.path.join(REPO_ROOT, "deploy.sh")
 

@@ -17,7 +17,11 @@ from mcp_agent_notes import NoteKind, Priority
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+import pytest
+
 from usage_guidance import NOTES, query
+
+pytestmark = pytest.mark.windows_safe
 
 
 class TestDispatch:

@@ -18,6 +18,7 @@ Not covered here:
 import unittest
 from unittest.mock import MagicMock, patch
 
+import pytest
 from handlers.draft_ops import DraftOpsHandler
 
 from tests.unit._freecad_mocks import (
@@ -31,6 +32,8 @@ from tests.unit._freecad_mocks import (
     mock_FreeCAD,
     reset_mocks,
 )
+
+pytestmark = pytest.mark.windows_safe
 
 # ---------------------------------------------------------------------------
 # Clone

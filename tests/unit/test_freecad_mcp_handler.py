@@ -8,6 +8,7 @@ import collections
 import json
 import os
 import queue
+import socket
 import struct
 import sys
 import threading
@@ -41,6 +42,8 @@ from handlers.partdesign_ops import PartDesignOpsHandler
 # auto-vivifies any attribute you ask for.
 import tests.unit._freecad_mocks  # noqa: F401 — installs FreeCAD/Part/etc. mocks into sys.modules
 
+pytestmark = pytest.mark.windows_safe
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -72,13 +75,20 @@ def mock_handlers(monkeypatch):
 
 
 @pytest.fixture
-def server(mock_freecad, mock_handlers):
-    """Create a FreeCADSocketServer instance with mocked dependencies."""
+def server(mock_freecad, mock_handlers, monkeypatch):
+    """Create a FreeCADSocketServer instance with mocked dependencies.
+
+    IS_WINDOWS is pinned to False so the generic tests exercise the POSIX path
+    (no token check) on every host; on a real Windows host it would otherwise be
+    True and every _process_command test would be answered "Unauthorized".
+    Tests of the Windows branch set it to True explicitly.
+    """
     # Need to clear any cached module to pick up our mocks
     if "freecad_mcp_handler" in sys.modules:
         del sys.modules["freecad_mcp_handler"]
 
     import freecad_mcp_handler as ss_mod
+    monkeypatch.setattr(ss_mod, "IS_WINDOWS", False)
     server = ss_mod.FreeCADSocketServer()
     return server
 
@@ -101,19 +111,8 @@ class TestServerFraming:
     """Test the server-side send_message/receive_message/recv_exact."""
 
     def _make_socketpair(self):
-        import socket as sock_mod
-        server_sock = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
-        path = f"/tmp/test_ss_framing_{os.getpid()}.sock"
-        if os.path.exists(path):
-            os.remove(path)
-        server_sock.bind(path)
-        server_sock.listen(1)
-        client = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
-        client.connect(path)
-        peer, _ = server_sock.accept()
-        server_sock.close()
-        os.remove(path)
-        return client, peer
+        # AF_UNIX pair on POSIX, loopback-TCP pair on Windows (no socket.AF_UNIX there).
+        return socket.socketpair()
 
     def test_send_message(self, ss_module):
         client, peer = self._make_socketpair()
@@ -2627,6 +2626,8 @@ class TestStartServerMonitorSocketPath:
         monkeypatch.setattr(ss_mod, "_monitor", fake_monitor)
         monkeypatch.setattr(ss_mod, "SOCKET_PATH", custom_path)
         monkeypatch.setattr(ss_mod, "IS_WINDOWS", False)
+        # start_server's POSIX branch reads socket.AF_UNIX, which Python on Windows lacks.
+        monkeypatch.setattr(ss_mod.socket, "AF_UNIX", 1, raising=False)
         # Avoid real socket/OS/thread work — start_server does a real
         # AF_UNIX bind otherwise.
         monkeypatch.setattr(ss_mod.socket, "socket", MagicMock(return_value=MagicMock()))
@@ -2647,6 +2648,7 @@ class TestStartServerMonitorSocketPath:
         monkeypatch.setattr(ss_mod, "_monitor", None)
         monkeypatch.setattr(ss_mod, "SOCKET_PATH", str(tmp_path / "custom.sock"))
         monkeypatch.setattr(ss_mod, "IS_WINDOWS", False)
+        monkeypatch.setattr(ss_mod.socket, "AF_UNIX", 1, raising=False)
         monkeypatch.setattr(ss_mod.socket, "socket", MagicMock(return_value=MagicMock()))
         monkeypatch.setattr(ss_mod.os, "chmod", MagicMock())
         monkeypatch.setattr(ss_mod.os.path, "exists", MagicMock(return_value=False))

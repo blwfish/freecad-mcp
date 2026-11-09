@@ -21,6 +21,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytestmark = pytest.mark.windows_safe
+
 # Make AICopilot importable, but DO NOT import any handler module here.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot"))
 
