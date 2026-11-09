@@ -28,6 +28,8 @@ import freecad_mcp_handler  # noqa: E402
 
 import freecad_mcp_server  # noqa: E402
 
+pytestmark = pytest.mark.windows_safe
+
 HANDLER_PATH = os.path.join(AICOPILOT_DIR, "freecad_mcp_handler.py")
 DEFAULT = 23456
 
