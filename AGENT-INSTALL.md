@@ -182,7 +182,8 @@ All optional. The server auto-detects sensible defaults.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `FREECAD_MCP_SOCKET` | Unix socket path | `/tmp/freecad_mcp.sock` |
-| `FREECAD_MCP_PORT` | TCP port (Windows) | `23456` |
+| `FREECAD_MCP_PORT` | TCP port (Windows); integer 1-65535, invalid values refuse to start | `23456` |
+| `FREECAD_MCP_RECV_TIMEOUT` | Seconds the FreeCAD side waits for one complete request frame per connection (one deadline for header + body); number > 0 and ≤ 3600, invalid values refuse to start | `30` |
 | `FREECAD_MCP_FREECAD_BIN` | Path to FreeCADCmd binary | auto-detected |
 | `FREECAD_MCP_MODULE_DIR` | Path to AICopilot module | auto-detected |
 | `FREECAD_MCP_TEST_MODE` | Disable auto-startup in GUI | unset |
