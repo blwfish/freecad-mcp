@@ -25,6 +25,7 @@ manually in sync.
 import socket
 import struct
 import sys
+import time
 
 # Maximum message size for the length-prefixed protocol (single source of truth
 # on the bridge side). The handler (freecad_mcp_handler.py) embeds its own copy
@@ -111,9 +112,12 @@ def receive_message(sock: socket.socket, timeout: float = 30.0) -> str | None:
     try:
         # Set socket timeout
         sock.settimeout(timeout)
+        # One budget for the whole frame, not a fresh timeout per recv or body.
+        # Keep None/zero's existing blocking/nonblocking socket semantics.
+        deadline = time.monotonic() + timeout if timeout is not None and timeout > 0 else None
 
         # Read the 4-byte length prefix (None => connection closed)
-        length_bytes = _recv_exact(sock, 4)
+        length_bytes = _recv_exact(sock, 4, deadline=deadline)
         if length_bytes is None:
             return None
 
@@ -132,7 +136,7 @@ def receive_message(sock: socket.socket, timeout: float = 30.0) -> str | None:
         # 0 (an empty-body frame); _recv_exact returns b'' for that and None only
         # on a closed connection, so distinguish with `is None` — never falsiness,
         # which would misread a valid empty frame as a disconnect.
-        message_bytes = _recv_exact(sock, message_len)
+        message_bytes = _recv_exact(sock, message_len, deadline=deadline)
         if message_bytes is None:
             return None
 
@@ -153,7 +157,7 @@ def receive_message(sock: socket.socket, timeout: float = 30.0) -> str | None:
         sock.settimeout(old_timeout)
 
 
-def _recv_exact(sock: socket.socket, num_bytes: int) -> bytes | None:
+def _recv_exact(sock: socket.socket, num_bytes: int, *, deadline: float | None = None) -> bytes | None:
     """Receive exactly num_bytes from socket, handling partial reads.
 
     This is critical because recv() may return less than requested bytes,
@@ -169,6 +173,11 @@ def _recv_exact(sock: socket.socket, num_bytes: int) -> bytes | None:
     buffer = bytearray()
 
     while len(buffer) < num_bytes:
+        if deadline is not None:
+            remaining_time = deadline - time.monotonic()
+            if remaining_time <= 0:
+                raise TimeoutError("Message receive deadline exceeded")
+            sock.settimeout(remaining_time)
         remaining = num_bytes - len(buffer)
         chunk = sock.recv(min(remaining, 65536))  # Read in 64KB chunks max
         if not chunk:

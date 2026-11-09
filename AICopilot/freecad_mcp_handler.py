@@ -674,8 +674,10 @@ def receive_message(sock: socket.socket, timeout: float = 30.0) -> str | None:
     old_timeout = sock.gettimeout()
     try:
         sock.settimeout(timeout)
+        # Share one budget across the prefix, body, and all partial reads.
+        deadline = time.monotonic() + timeout if timeout is not None and timeout > 0 else None
 
-        length_bytes = _recv_exact(sock, 4)
+        length_bytes = _recv_exact(sock, 4, deadline=deadline)
         if length_bytes is None:
             return None
 
@@ -690,7 +692,7 @@ def receive_message(sock: socket.socket, timeout: float = 30.0) -> str | None:
         # message_len may legitimately be 0 (empty-body frame); _recv_exact returns
         # b'' for that and None only on a closed connection. Distinguish with
         # `is None` so a valid empty frame is not misread as a disconnect.
-        message_bytes = _recv_exact(sock, message_len)
+        message_bytes = _recv_exact(sock, message_len, deadline=deadline)
         if message_bytes is None:
             return None
 
@@ -710,10 +712,15 @@ def receive_message(sock: socket.socket, timeout: float = 30.0) -> str | None:
         sock.settimeout(old_timeout)
 
 
-def _recv_exact(sock: socket.socket, num_bytes: int) -> bytes | None:
+def _recv_exact(sock: socket.socket, num_bytes: int, *, deadline: float | None = None) -> bytes | None:
     """Receive exactly num_bytes, handling partial reads."""
     buf = bytearray()
     while len(buf) < num_bytes:
+        if deadline is not None:
+            remaining_time = deadline - time.monotonic()
+            if remaining_time <= 0:
+                raise TimeoutError("Message receive deadline exceeded")
+            sock.settimeout(remaining_time)
         chunk = sock.recv(min(num_bytes - len(buf), 65536))
         if not chunk:
             return None

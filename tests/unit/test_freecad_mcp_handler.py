@@ -110,6 +110,109 @@ def ss_module(mock_freecad, mock_handlers):
 class TestServerFraming:
     """Test the server-side send_message/receive_message/recv_exact."""
 
+    @pytest.mark.parametrize("side", ["bridge", "handler"])
+    @pytest.mark.parametrize("fragment", ["header", "body"])
+    def test_receive_timeout_bounds_entire_frame(self, ss_module, side, fragment):
+        import mcp_bridge_framing
+
+        receive = (mcp_bridge_framing if side == "bridge" else ss_module).receive_message
+        client, peer = socket.socketpair()
+        stop = threading.Event()
+        payload = b"hello"
+        frame = struct.pack(">I", len(payload)) + payload
+        initial = 1 if fragment == "header" else 5
+        peer.sendall(frame[:initial])
+
+        def trickle():
+            try:
+                for byte in frame[initial:]:
+                    if stop.wait(0.08):
+                        return
+                    peer.sendall(bytes([byte]))
+            except OSError:
+                pass  # The receiver can close after reaching its deadline.
+
+        sender = threading.Thread(target=trickle)
+        sender.start()
+        original_timeout = 2.0
+        client.settimeout(original_timeout)
+        try:
+            started = time.monotonic()
+            assert receive(client, timeout=0.2) is None
+            assert time.monotonic() - started < 0.6
+            assert client.gettimeout() == original_timeout
+        finally:
+            stop.set()
+            sender.join(timeout=2)
+            client.close()
+            peer.close()
+
+    @pytest.mark.parametrize("side", ["bridge", "handler"])
+    def test_fragmented_frame_finishes_within_deadline(self, ss_module, side):
+        import mcp_bridge_framing
+
+        receive = (mcp_bridge_framing if side == "bridge" else ss_module).receive_message
+        client, peer = socket.socketpair()
+        frame = struct.pack(">I", 5) + b"hello"
+        peer.sendall(frame[:2])
+
+        def finish():
+            time.sleep(0.02)
+            peer.sendall(frame[2:])
+
+        sender = threading.Thread(target=finish)
+        sender.start()
+        try:
+            assert receive(client, timeout=1) == "hello"
+            assert client.gettimeout() is None
+        finally:
+            sender.join(timeout=2)
+            client.close()
+            peer.close()
+
+    @pytest.mark.parametrize("side", ["bridge", "handler"])
+    def test_header_and_body_share_receive_deadline(self, ss_module, side):
+        import mcp_bridge_framing
+
+        receive = (mcp_bridge_framing if side == "bridge" else ss_module).receive_message
+        client, peer = socket.socketpair()
+        stop = threading.Event()
+
+        def send_parts():
+            try:
+                for part in (struct.pack(">I", 5), b"hello"):
+                    if stop.wait(0.12):
+                        return
+                    peer.sendall(part)
+            except OSError:
+                pass
+
+        sender = threading.Thread(target=send_parts)
+        sender.start()
+        try:
+            assert receive(client, timeout=0.2) is None
+            assert client.gettimeout() is None
+        finally:
+            stop.set()
+            sender.join(timeout=2)
+            client.close()
+            peer.close()
+
+    @pytest.mark.parametrize("side", ["bridge", "handler"])
+    @pytest.mark.parametrize("timeout", [None, 0])
+    def test_available_frame_preserves_blocking_modes(self, ss_module, side, timeout):
+        import mcp_bridge_framing
+
+        receive = (mcp_bridge_framing if side == "bridge" else ss_module).receive_message
+        client, peer = socket.socketpair()
+        try:
+            peer.sendall(struct.pack(">I", 5) + b"hello")
+            assert receive(client, timeout=timeout) == "hello"
+            assert client.gettimeout() is None
+        finally:
+            client.close()
+            peer.close()
+
     def _make_socketpair(self):
         # AF_UNIX pair on POSIX, loopback-TCP pair on Windows (no socket.AF_UNIX there).
         return socket.socketpair()
