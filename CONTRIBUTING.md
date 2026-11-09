@@ -29,14 +29,15 @@ CAM improvements for the dev-weekly build are welcome, as long as they track Fre
 
 Welcome, but a couple of preflight things. The [PR template](/.github/PULL_REQUEST_TEMPLATE.md) has a checklist — here's the reasoning behind it:
 
-1. **Open an issue first** if it's a non-trivial change. Saves both of us from wasted effort if I disagree on direction.
-2. **Run the tests** before pushing:
+1. **Target the `dev` branch, not `main`.** `main` is release-only: it only ever moves via a `dev` → `main` release PR, so a PR opened against `main` can't be merged as-is and will be asked to retarget. GitHub defaults the base to `main`, so check the "base" dropdown when you open the PR (or, for an open PR, use *Edit* next to its title). Branch from `dev` too, so your diff doesn't pick up unrelated changes.
+2. **Open an issue first** if it's a non-trivial change. Saves both of us from wasted effort if I disagree on direction.
+3. **Run the tests** before pushing:
    ```bash
    python3 -m pytest tests/unit/        # no FreeCAD required
    python3 -m pytest tests/integration/ # requires FreeCAD with AICopilot loaded
    ```
-3. **Match the commit style.** `git log --oneline` shows it. Conventional commits: lowercase prefix (`fix:`, `feat:`, `test:`, `docs:`), short imperative summary, body explains the *why*.
-4. **One concern per PR.** Bug fix and unrelated cleanup go in separate PRs.
+4. **Match the commit style.** `git log --oneline` shows it. Conventional commits: lowercase prefix (`fix:`, `feat:`, `test:`, `docs:`), short imperative summary, body explains the *why*.
+5. **One concern per PR.** Bug fix and unrelated cleanup go in separate PRs.
 
 PRs should include tests. For changes to platforms or FreeCAD versions covered by CI, tests are expected. For Windows, tests aren't just good practice — they're the minimum bar for the PR to be reviewable at all, since I have no other way to verify the fix holds or doesn't regress. If you're using this project, you already have a capable test-writer at hand.
 

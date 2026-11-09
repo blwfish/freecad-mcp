@@ -2,6 +2,7 @@
 One or two sentences. Link the issue it resolves if there is one.
 
 **Checklist**
+- [ ] This PR targets the `dev` branch (not `main`, which is release-only)
 - [ ] Tests pass: `python3 -m pytest tests/unit/`
 - [ ] New behaviour is tested (integration tests if FreeCAD-dependent)
 - [ ] Commit messages follow the project style (`fix:`, `feat:`, `docs:`, etc.)
