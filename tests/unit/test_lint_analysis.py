@@ -19,6 +19,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'AICopilo
 import lint_analysis as la
 from lint_analysis import attribute, boxes_touch, build_report, lint_object
 
+pytestmark = pytest.mark.windows_safe
+
 BIG = {"faces": 400, "area": 1000.0, "volume": 500.0}
 
 

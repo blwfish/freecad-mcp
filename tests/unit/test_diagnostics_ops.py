@@ -16,6 +16,7 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
+import pytest
 from handlers.diagnostics_ops import DiagnosticsOpsHandler
 
 from tests.unit._freecad_mocks import (
@@ -24,6 +25,8 @@ from tests.unit._freecad_mocks import (
     mock_FreeCAD,
     reset_mocks,
 )
+
+pytestmark = pytest.mark.windows_safe
 
 
 class TestGetDebugLogs(unittest.TestCase):

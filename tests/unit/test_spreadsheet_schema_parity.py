@@ -16,9 +16,12 @@ import ast
 import os
 import unittest
 
+import pytest
 from handlers.spreadsheet_ops import SpreadsheetOpsHandler
 
 from tests.unit._freecad_mocks import reset_mocks  # noqa: F401 -- ensures mock_FreeCAD is installed
+
+pytestmark = pytest.mark.windows_safe
 
 REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..'))
 SERVER_PY = os.path.join(REPO_ROOT, 'freecad_mcp_server.py')

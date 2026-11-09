@@ -46,6 +46,10 @@ from tests.unit._freecad_mocks import (  # isort: skip
 )
 from handlers.assembly_ops import _JOINT_TYPES, AssemblyOpsHandler  # isort: skip
 
+import pytest
+
+pytestmark = pytest.mark.windows_safe
+
 
 def _make_joint_group(name="Joints"):
     """Mock Assembly::JointGroup. newObject appends fresh joint mocks to .Group,

@@ -30,6 +30,8 @@ from tests.unit._freecad_mocks import (
     reset_mocks,
 )
 
+pytestmark = pytest.mark.windows_safe
+
 
 class TestSpecRejectsUnknownAttributes:
     """The actual bug class this closes: before spec=, none of these raised —

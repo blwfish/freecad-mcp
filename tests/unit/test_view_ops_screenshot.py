@@ -33,6 +33,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "AICopilo
 import handlers.view_ops as view_ops  # noqa: E402
 from handlers.view_ops import ViewOpsHandler  # noqa: E402
 
+pytestmark = pytest.mark.windows_safe
+
 # Patch targets inside the handler module
 _GUI_PATH = "handlers.view_ops.FreeCADGui"
 _PLATFORM_PATH = "handlers.view_ops.platform"

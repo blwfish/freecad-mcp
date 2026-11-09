@@ -42,6 +42,10 @@ entry — it is a call to `autosave_before`.
 import ast
 import os
 
+import pytest
+
+pytestmark = pytest.mark.windows_safe
+
 AICOPILOT_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot"))
 
 DOCUMENT_SAVE_ATTRS = frozenset({"save", "saveAs", "saveCopy"})

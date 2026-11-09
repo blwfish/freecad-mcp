@@ -29,7 +29,10 @@ sys.modules['FreeCAD'].ActiveDocument = None
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'AICopilot'))
 
 import handlers.base as base_module
+import pytest
 from handlers.measurement_ops import MeasurementOpsHandler
+
+pytestmark = pytest.mark.windows_safe
 
 
 def make_handler():

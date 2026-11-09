@@ -19,6 +19,10 @@ import os
 import re
 import unittest
 
+import pytest
+
+pytestmark = pytest.mark.windows_safe
+
 REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..'))
 SERVER_PY = os.path.join(REPO_ROOT, 'freecad_mcp_server.py')
 HANDLER_PY = os.path.join(REPO_ROOT, 'AICopilot', 'freecad_mcp_handler.py')

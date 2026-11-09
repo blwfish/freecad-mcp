@@ -12,6 +12,8 @@ import sys
 
 import pytest
 
+pytestmark = pytest.mark.windows_safe
+
 # Make sure the repo's `helpers/` package can be imported. tests/unit/conftest
 # already mocks FreeCAD before any import happens.
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))

@@ -22,6 +22,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'AICopilo
 import lint_analysis as la
 import lint_worker as w
 
+pytestmark = pytest.mark.windows_safe
+
 
 class Plane:
     def __init__(self, axis=(0, 0, 1), pos=(0, 0, 0)):

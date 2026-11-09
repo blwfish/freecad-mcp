@@ -15,7 +15,11 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot"))
 
+import pytest
+
 from tests.unit._freecad_mocks import _Rotation, _Vec
+
+pytestmark = pytest.mark.windows_safe
 
 
 def _vecs_close(a, b, tol=1e-9):

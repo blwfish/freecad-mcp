@@ -20,6 +20,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "AICopilo
 
 import freecad_debug
 
+pytestmark = pytest.mark.windows_safe
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

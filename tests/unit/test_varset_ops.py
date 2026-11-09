@@ -27,6 +27,7 @@ import json
 import unittest
 
 import handlers.varset_ops as varset_ops_module
+import pytest
 from handlers.varset_ops import _PROP_DYNAMIC_BIT, VarSetOpsHandler, _property_value_for_json
 
 from tests.unit._freecad_mocks import (
@@ -40,6 +41,8 @@ from tests.unit._freecad_mocks import (
     mock_FreeCAD,
     reset_mocks,
 )
+
+pytestmark = pytest.mark.windows_safe
 
 
 class TestPropertyValueForJson(unittest.TestCase):

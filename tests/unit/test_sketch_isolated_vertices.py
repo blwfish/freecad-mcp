@@ -39,6 +39,8 @@ import handlers.sketch_ops as sketch_ops_module  # noqa: E402
 from handlers.base import BaseHandler  # noqa: E402
 from handlers.sketch_ops import SketchOpsHandler  # noqa: E402
 
+pytestmark = pytest.mark.windows_safe
+
 # ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------
