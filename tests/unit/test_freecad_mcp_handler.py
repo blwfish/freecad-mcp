@@ -2825,6 +2825,45 @@ class TestRestrictTokenFileToCurrentUserWindows:
         ) is False
 
 
+class TestStartServerWindowsPortConfigError:
+    """A bad FREECAD_MCP_PORT must fail start_server() loudly on Windows -- before
+    any token file or socket exists -- instead of crashing the module import
+    (the old behavior, on every platform) or silently using the default."""
+
+    def test_bad_port_refuses_to_start_before_touching_token_or_socket(self, server, monkeypatch):
+        import freecad_mcp_handler as ss_mod
+        monkeypatch.setattr(ss_mod, "IS_WINDOWS", True)
+        monkeypatch.setattr(ss_mod, "_WINDOWS_PORT_ERROR", "FREECAD_MCP_PORT='abc' is not a valid TCP port")
+        make_socket = MagicMock()
+        monkeypatch.setattr(ss_mod.socket, "socket", make_socket)
+        server._init_windows_auth_token = MagicMock()
+        print_error = MagicMock()
+        monkeypatch.setattr(ss_mod.FreeCAD.Console, "PrintError", print_error, raising=False)
+
+        assert server.start_server() is False
+
+        server._init_windows_auth_token.assert_not_called()   # no secret written for a server that never starts
+        make_socket.assert_not_called()                        # nothing bound
+        message = " ".join(str(c.args[0]) for c in print_error.call_args_list)
+        assert "FREECAD_MCP_PORT" in message and "abc" in message
+
+    def test_no_error_when_port_is_valid_on_non_windows(self, server, monkeypatch):
+        """The stored error is only consulted in the Windows branch."""
+        import freecad_mcp_handler as ss_mod
+        monkeypatch.setattr(ss_mod, "IS_WINDOWS", False)
+        monkeypatch.setattr(ss_mod, "_WINDOWS_PORT_ERROR", "FREECAD_MCP_PORT='abc' is not a valid TCP port")
+        # Non-Windows start_server proceeds past the port check (it may still fail later for
+        # unrelated mock reasons; what matters is the port error is not what stops it).
+        monkeypatch.setattr(ss_mod.socket, "socket", MagicMock(side_effect=OSError("stop here")))
+        print_error = MagicMock()
+        monkeypatch.setattr(ss_mod.FreeCAD.Console, "PrintError", print_error, raising=False)
+
+        server.start_server()
+
+        message = " ".join(str(c.args[0]) for c in print_error.call_args_list)
+        assert "not a valid TCP port" not in message
+
+
 class TestStartServerWindowsSocketOptions:
     """start_server()'s Windows branch: SO_EXCLUSIVEADDRUSE instead of
     SO_REUSEADDR, and the auth token generated/stored before the listening

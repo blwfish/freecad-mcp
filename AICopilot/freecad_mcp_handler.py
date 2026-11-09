@@ -259,7 +259,50 @@ ASYNC_JOB_TTL = 600
 # generates /tmp/freecad_mcp_<uuid>.sock from instance_registry.
 SOCKET_PATH = os.environ.get("FREECAD_MCP_SOCKET") or None
 WINDOWS_HOST = "localhost"
-WINDOWS_PORT = int(os.environ.get("FREECAD_MCP_PORT", "23456"))
+_DEFAULT_WINDOWS_PORT = 23456
+
+
+def _parse_port(raw: str | None) -> int:
+    """Parse the FREECAD_MCP_PORT environment value into a TCP port.
+
+    Keep in sync with freecad_mcp_server._parse_port -- the bridge and this
+    module run in separate processes and can't import each other, so
+    tests/unit/test_port_env_parity.py pins that the two agree.
+
+    - unset, empty, or whitespace-only -> the default (23456). An env var that
+      is set-but-empty (e.g. ``FREECAD_MCP_PORT=`` in a compose file or CI
+      matrix) conventionally means "not configured".
+    - otherwise it must be plain ASCII decimal digits in 1..65535. Anything
+      else raises ValueError naming the variable: never fall back silently,
+      because a mistyped port that quietly used the default would make the
+      bridge and a second instance talk to the wrong endpoint -- the exact
+      failure this variable exists to avoid. ``int()`` alone would also have
+      accepted ``"+80"``, ``"2_3456"``, fullwidth digits, and out-of-range
+      values like 0, -1 and 65536.
+    """
+    if raw is None:
+        return _DEFAULT_WINDOWS_PORT
+    text = raw.strip()
+    if not text:
+        return _DEFAULT_WINDOWS_PORT
+    if text.isascii() and text.isdigit() and 1 <= int(text) <= 65535:
+        return int(text)
+    raise ValueError(
+        f"FREECAD_MCP_PORT={raw!r} is not a valid TCP port; "
+        "expected a plain decimal integer from 1 to 65535"
+    )
+
+
+# The port is only *used* on Windows. A bad value must not stop this module from
+# importing on Linux/macOS (where it is irrelevant, and an import failure would
+# take the whole addon down), so record the problem and surface it from
+# start_server()'s Windows branch, which reports it and refuses to start.
+try:
+    WINDOWS_PORT = _parse_port(os.environ.get("FREECAD_MCP_PORT"))
+    _WINDOWS_PORT_ERROR: str | None = None
+except ValueError as _port_exc:
+    WINDOWS_PORT = _DEFAULT_WINDOWS_PORT
+    _WINDOWS_PORT_ERROR = str(_port_exc)
 
 # =============================================================================
 # Windows TCP auth token (CWE-306 mitigation)
@@ -830,6 +873,10 @@ class FreeCADSocketServer:
             self.instance_uuid = generate_uuid()
 
             if IS_WINDOWS:
+                if _WINDOWS_PORT_ERROR:
+                    # Raised before the token file is written or a socket is
+                    # created; the except below reports it and returns False.
+                    raise ValueError(_WINDOWS_PORT_ERROR)
                 self.socket_path = None
                 self._windows_auth_token = self._init_windows_auth_token()
                 self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
