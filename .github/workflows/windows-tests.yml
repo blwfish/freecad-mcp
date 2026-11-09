@@ -1,0 +1,131 @@
+name: Windows Tests (advisory)
+
+# ADVISORY: deliberately NOT in the `all-tests-pass` gate (see CONTRIBUTING.md and
+# design-docs/freecad/windows-headless-testing-spec.md, decision D4). Windows is only partially
+# supported; this job exists so the Windows-specific code paths (TCP listener, auth token,
+# exclusive bind, pid liveness, process tree) run on a real Windows host at all.
+#
+#   tier1: the unit tests marked `windows_safe` (opt-in; see pyproject.toml markers)
+#   tier2: tests/windows -- a real headless FreeCADCmd.exe, driven over loopback TCP
+
+on:
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "AICopilot/**"
+      - "mcp_bridge_framing.py"
+      - "freecad_mcp_server.py"
+      - "tests/windows/**"
+      - "tests/unit/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/windows-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # The FreeCAD release the Windows suite runs against. Keep in step with the Linux
+  # `1.1-stable` slot in integration-tests.yml (decision D3: one pin, bumped together).
+  FREECAD_WINDOWS_TAG: "1.1.4"
+
+jobs:
+  tier1:
+    name: "Tier 1: unit tests (-m windows_safe)"
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps (from lockfile)
+        run: uv sync --frozen --group dev
+      - name: Run windows_safe unit tests
+        shell: pwsh
+        run: >
+          uv run python -m pytest tests/unit -m windows_safe -q -p no:cacheprovider
+          --ignore=tests/unit/test_headless_server.py --junitxml=tier1-junit.xml
+      - name: Fail if nothing actually ran
+        if: always()
+        shell: pwsh
+        run: uv run python .github/scripts/assert_tests_ran.py tier1-junit.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tier1-junit
+          path: tier1-junit.xml
+
+  tier2:
+    name: "Tier 2: headless FreeCADCmd.exe smoke"
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps (from lockfile)
+        run: uv sync --frozen --group dev
+
+      - name: Resolve FreeCAD release asset
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Weekly releases publish no -SHA256.txt; GitHub's per-asset `digest` works for every release.
+          $rel = gh api "repos/FreeCAD/FreeCAD/releases/tags/$env:FREECAD_WINDOWS_TAG" | ConvertFrom-Json
+          $asset = $rel.assets | Where-Object { $_.name -match '^FreeCAD_.*-Windows-x86_64.*\.7z$' -and $_.name -notmatch 'arm|installer|SHA256' } | Select-Object -First 1
+          if (-not $asset) { throw "no Windows x86_64 .7z asset in release $env:FREECAD_WINDOWS_TAG" }
+          $digest = ($asset.digest -replace '^sha256:', '')
+          if ($digest -notmatch '^[0-9a-fA-F]{64}$') { throw "no usable sha256 digest on asset: '$($asset.digest)'" }
+          "FC_ASSET=$($asset.name)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "FC_DIGEST=$digest"       | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Cache FreeCAD archive
+        id: fc-cache
+        uses: actions/cache@v4
+        with:
+          path: dl
+          key: freecad-${{ env.FC_ASSET }}-${{ env.FC_DIGEST }}
+
+      - name: Download FreeCAD
+        if: steps.fc-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force dl | Out-Null
+          gh release download $env:FREECAD_WINDOWS_TAG -R FreeCAD/FreeCAD -p $env:FC_ASSET -D dl
+
+      - name: Verify hash and extract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $actual = (Get-FileHash "dl/$env:FC_ASSET" -Algorithm SHA256).Hash
+          if ($actual.ToLower() -ne $env:FC_DIGEST.ToLower()) { throw "SHA256 mismatch: $actual vs $env:FC_DIGEST" }
+          & 'C:\Program Files\7-Zip\7z.exe' x "dl/$env:FC_ASSET" -oextract -y | Select-Object -Last 3
+          if ($LASTEXITCODE -ne 0) { throw "7z failed: $LASTEXITCODE" }
+          $top = (Get-ChildItem extract -Directory | Select-Object -First 1).FullName
+          # Always the real binary under bin\ (NEVER the 1.1.x root-level FreeCADCmd.exe launcher shim: the
+          # tracked pid would be the shim and stop would orphan the real process; see spec W-3).
+          $bins = @(Get-ChildItem (Join-Path $top 'bin') -Filter FreeCADCmd.exe)
+          if ($bins.Count -ne 1) { throw "expected exactly one bin\FreeCADCmd.exe under $top, found $($bins.Count)" }
+          "FREECAD_MCP_FREECAD_BIN=$($bins[0].FullName)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          Write-Host "FreeCAD: $($bins[0].FullName)"
+
+      - name: Run the Windows headless suite
+        shell: pwsh
+        run: >
+          uv run python -m pytest tests/windows -q -p no:cacheprovider -rsxX
+          --junitxml=tier2-junit.xml
+      - name: Fail if nothing actually ran
+        if: always()
+        shell: pwsh
+        run: uv run python .github/scripts/assert_tests_ran.py tier2-junit.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tier2-junit
+          path: tier2-junit.xml
