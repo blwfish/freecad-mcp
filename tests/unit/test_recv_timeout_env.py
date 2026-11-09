@@ -22,6 +22,8 @@ import tests.unit._freecad_mocks  # isort: skip  # noqa: E402,F401 -- must prece
 
 import freecad_mcp_handler  # noqa: E402
 
+pytestmark = pytest.mark.windows_safe
+
 HANDLER_PATH = os.path.join(AICOPILOT_DIR, "freecad_mcp_handler.py")
 DEFAULT = 30.0
 
