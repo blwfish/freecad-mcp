@@ -2,6 +2,9 @@ version: 2
 updates:
   - package-ecosystem: uv
     directory: /
+    # dev is the working branch; main is release-only (see CONTRIBUTING.md). Without this, version
+    # updates target the default branch (main) and auto-merge there, leaving main ahead of dev.
+    target-branch: dev
     schedule:
       interval: weekly
       day: monday
