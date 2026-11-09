@@ -45,6 +45,32 @@ DISCOVERY_DIR = os.path.expanduser("~/.cache/freecad-mcp/instances")
 WINDOWS_AUTH_TOKEN_PATH = os.path.expanduser("~/.freecad-mcp/windows_auth_token")
 
 
+_DEFAULT_WINDOWS_PORT = 23456
+
+
+def _parse_port(raw: str | None) -> int:
+    """Parse the FREECAD_MCP_PORT environment value into a TCP port.
+
+    Keep in sync with freecad_mcp_handler._parse_port (separate process, can't
+    import it; tests/unit/test_port_env_parity.py pins that the two agree).
+    Unset/empty/whitespace-only -> 23456; otherwise plain ASCII decimal digits
+    in 1..65535, else ValueError naming the variable. Never falls back
+    silently: a mistyped port that quietly used the default would point the
+    bridge at the wrong instance. See the handler copy for the full rationale.
+    """
+    if raw is None:
+        return _DEFAULT_WINDOWS_PORT
+    text = raw.strip()
+    if not text:
+        return _DEFAULT_WINDOWS_PORT
+    if text.isascii() and text.isdigit() and 1 <= int(text) <= 65535:
+        return int(text)
+    raise ValueError(
+        f"FREECAD_MCP_PORT={raw!r} is not a valid TCP port; "
+        "expected a plain decimal integer from 1 to 65535"
+    )
+
+
 def _read_windows_auth_token() -> str | None:
     """Read the shared-secret token the FreeCAD-side Windows TCP listener
     wrote at startup. Re-read on every call rather than cached at import
@@ -595,7 +621,7 @@ class _BridgeCtx:
             # second Windows instance silently broke connectivity (the
             # bridge kept connecting to the default port with no
             # diagnostic tying the failure to the env var).
-            _windows_port = int(os.environ.get("FREECAD_MCP_PORT", "23456"))
+            _windows_port = _parse_port(os.environ.get("FREECAD_MCP_PORT"))
             self.socket_path: str | None = f"localhost:{_windows_port}"
         else:
             # Honor an explicit env override; otherwise resolve lazily.
