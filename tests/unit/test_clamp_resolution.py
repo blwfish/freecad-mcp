@@ -17,6 +17,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'AICopilot'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'AICopilot', 'handlers'))
 
+import pytest
 from handlers.view_ops import (
     _FACE_THRESH_HIGH,
     _FACE_THRESH_HUGE,
@@ -25,6 +26,8 @@ from handlers.view_ops import (
 )
 
 from tests.unit._freecad_mocks import reset_mocks  # noqa: F401 -- ensures mock_FreeCAD is installed
+
+pytestmark = pytest.mark.windows_safe
 
 
 class TestClampResolutionMediumThreshold(unittest.TestCase):

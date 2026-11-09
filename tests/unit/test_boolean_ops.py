@@ -10,6 +10,7 @@ shape parameter assembly, source visibility hiding, and error paths
 import unittest
 from unittest.mock import MagicMock
 
+import pytest
 from handlers.boolean_ops import BooleanOpsHandler
 
 from tests.unit._freecad_mocks import (
@@ -21,6 +22,8 @@ from tests.unit._freecad_mocks import (
     mock_FreeCAD,
     reset_mocks,
 )
+
+pytestmark = pytest.mark.windows_safe
 
 
 class TestFuseObjects(unittest.TestCase):

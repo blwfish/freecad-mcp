@@ -8,6 +8,7 @@ helpers approach before expanding to primitives, boolean_ops, part_ops.
 
 import unittest
 
+import pytest
 from handlers.transforms import TransformsHandler
 
 from tests.unit._freecad_mocks import (
@@ -21,6 +22,8 @@ from tests.unit._freecad_mocks import (
     mock_FreeCAD,
     reset_mocks,
 )
+
+pytestmark = pytest.mark.windows_safe
 
 
 class TestMoveObject(unittest.TestCase):

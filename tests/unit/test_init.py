@@ -25,6 +25,8 @@ import signal
 
 import pytest
 
+pytestmark = pytest.mark.windows_safe
+
 AICOPILOT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot")
 INIT_PATH = os.path.join(AICOPILOT_DIR, "Init.py")
 

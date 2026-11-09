@@ -13,7 +13,11 @@ leaves its old type binding stale (pinned, not silently left undefined).
 import ast
 import textwrap
 
+import pytest
+
 from tests.integration._api_surface_scan import _type_id_from_call, scan_type_properties
+
+pytestmark = pytest.mark.windows_safe
 
 
 def _scan_source(tmp_path, source, filename="handler.py"):

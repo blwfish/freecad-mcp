@@ -10,6 +10,7 @@ and error paths.
 import unittest
 from unittest.mock import MagicMock, patch
 
+import pytest
 from handlers.part_ops import PartOpsHandler
 
 from tests.unit._freecad_mocks import (
@@ -25,6 +26,8 @@ from tests.unit._freecad_mocks import (
     mock_Part,
     reset_mocks,
 )
+
+pytestmark = pytest.mark.windows_safe
 
 
 def _make_next_addobject_invalid(doc, type_id):

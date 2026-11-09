@@ -63,6 +63,8 @@ for mod_name in list(sys.modules):
 import handlers.spatial_ops as spatial_ops_module
 from handlers.spatial_ops import SpatialOpsHandler
 
+pytestmark = pytest.mark.windows_safe
+
 # Deliberately hardcoded, NOT read from spatial_ops_module — these tests
 # exist to PIN the constants' values. Reading the live value would make the
 # test track any change to the source (including an accidental one)

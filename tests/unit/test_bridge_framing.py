@@ -18,26 +18,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from mcp_bridge_framing import MAX_MESSAGE_SIZE, _recv_exact, receive_message, send_message
 
+pytestmark = pytest.mark.windows_safe
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 def make_socketpair():
-    """Create a connected pair of sockets for testing."""
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    path = f"/tmp/test_framing_{os.getpid()}.sock"
-    if os.path.exists(path):
-        os.remove(path)
-    server.bind(path)
-    server.listen(1)
+    """Create a connected pair of sockets for testing.
 
-    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    client.connect(path)
-    peer, _ = server.accept()
-
-    server.close()
-    os.remove(path)
-    return client, peer
+    socket.socketpair() is an AF_UNIX pair on POSIX and a loopback-TCP pair on
+    Windows (which has no socket.AF_UNIX in Python), so these framing tests run
+    on all three platforms.
+    """
+    return socket.socketpair()
 
 
 def frame_message(msg_str: str) -> bytes:

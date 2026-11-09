@@ -17,6 +17,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'AICopilo
 import mcp_versions
 from mcp_versions import VersionRegistry, VersionSpec
 
+pytestmark = pytest.mark.windows_safe
+
 # ---------------------------------------------------------------------------
 # VersionSpec._parse_semver
 # ---------------------------------------------------------------------------

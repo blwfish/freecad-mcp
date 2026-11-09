@@ -26,7 +26,10 @@ sys.modules.setdefault("FreeCADGui", MagicMock())
 sys.modules.setdefault("Part", MagicMock())
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot"))
+import pytest
 from handlers.view_ops import ViewOpsHandler  # noqa: E402
+
+pytestmark = pytest.mark.windows_safe
 
 _GUI_PATH = "handlers.view_ops.FreeCADGui"
 _FREECAD_PATH = "handlers.view_ops.FreeCAD"

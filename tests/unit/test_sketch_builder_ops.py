@@ -38,6 +38,7 @@ sys.modules['sketch_builder'] = _mock_sketch_builder_module
 # Now we can import the handler
 # ---------------------------------------------------------------------------
 
+import pytest
 from handlers.sketch_builder_ops import (  # noqa: E402
     _FALLBACK_PATHS,
     SketchBuilderOpsHandler,
@@ -45,6 +46,8 @@ from handlers.sketch_builder_ops import (  # noqa: E402
     _ensure_sketch_builder_importable,
     _read_spreadsheet_params,
 )
+
+pytestmark = pytest.mark.windows_safe
 
 # ---------------------------------------------------------------------------
 # Helpers

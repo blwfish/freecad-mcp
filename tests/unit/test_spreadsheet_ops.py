@@ -16,6 +16,7 @@ import json
 import unittest
 from unittest.mock import MagicMock
 
+import pytest
 from handlers.spreadsheet_ops import SpreadsheetOpsHandler, _col_to_num, _num_to_col
 
 from tests.unit._freecad_mocks import (
@@ -28,6 +29,8 @@ from tests.unit._freecad_mocks import (
     mock_FreeCAD,
     reset_mocks,
 )
+
+pytestmark = pytest.mark.windows_safe
 
 
 class TestColumnConversionHelpers(unittest.TestCase):

@@ -21,6 +21,10 @@ import ast
 import importlib.util
 import os
 
+import pytest
+
+pytestmark = pytest.mark.windows_safe
+
 AICOPILOT_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "AICopilot"))
 HANDLERS_DIR = os.path.join(AICOPILOT_DIR, "handlers")
 SERVER_FILE = os.path.join(AICOPILOT_DIR, "freecad_mcp_handler.py")

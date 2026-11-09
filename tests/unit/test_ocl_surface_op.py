@@ -22,6 +22,8 @@ import pytest
 
 from tests.unit._freecad_mocks import reset_mocks  # noqa: E402
 
+pytestmark = pytest.mark.windows_safe
+
 # ---------------------------------------------------------------------------
 # Binary STL file builder
 # ---------------------------------------------------------------------------

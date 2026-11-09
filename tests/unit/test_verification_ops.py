@@ -21,6 +21,7 @@ import json
 import unittest
 from unittest.mock import MagicMock
 
+import pytest
 from handlers.verification_ops import VerificationOpsHandler
 
 from tests.unit._freecad_mocks import (
@@ -31,6 +32,8 @@ from tests.unit._freecad_mocks import (
     mock_FreeCAD,
     reset_mocks,
 )
+
+pytestmark = pytest.mark.windows_safe
 
 # ---------------------------------------------------------------------------
 # Helpers

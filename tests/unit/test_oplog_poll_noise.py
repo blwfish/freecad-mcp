@@ -19,7 +19,11 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+import pytest
+
 import freecad_mcp_server as bridge
+
+pytestmark = pytest.mark.windows_safe
 
 
 def _oplog_available():
