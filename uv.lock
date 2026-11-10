@@ -468,7 +468,7 @@ dev = [
 requires-dist = [
     { name = "mcp", specifier = ">=2.3.0" },
     { name = "mcp-agent-notes", git = "https://github.com/blwfish/mcp-agent-notes.git?rev=dd83adf8bb97755f91dbfcf857dbaeb987883f8f" },
-    { name = "mcp-events", specifier = ">=0.1.0" },
+    { name = "mcp-events", specifier = "~=0.1.0" },
 ]
 
 [package.metadata.requires-dev]
