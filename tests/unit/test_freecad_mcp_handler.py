@@ -113,22 +113,27 @@ class TestServerFraming:
     @pytest.mark.parametrize("side", ["bridge", "handler"])
     @pytest.mark.parametrize("fragment", ["header", "body"])
     def test_receive_timeout_bounds_entire_frame(self, ss_module, side, fragment):
+        """A peer that keeps every gap under the timeout but never finishes within it
+        must be dropped. Asserts *what* was delivered, not how long it took, so a slow
+        CI runner cannot turn it red: the trickle lasts ~3 s against a 0.3 s budget."""
         import mcp_bridge_framing
 
         receive = (mcp_bridge_framing if side == "bridge" else ss_module).receive_message
         client, peer = socket.socketpair()
         stop = threading.Event()
-        payload = b"hello"
+        payload = b"x" * 60
         frame = struct.pack(">I", len(payload)) + payload
         initial = 1 if fragment == "header" else 5
         peer.sendall(frame[:initial])
+        sent = [initial]
 
         def trickle():
             try:
                 for byte in frame[initial:]:
-                    if stop.wait(0.08):
+                    if stop.wait(0.05):  # each gap is well under the 0.3 s timeout
                         return
                     peer.sendall(bytes([byte]))
+                    sent[0] += 1
             except OSError:
                 pass  # The receiver can close after reaching its deadline.
 
@@ -137,13 +142,13 @@ class TestServerFraming:
         original_timeout = 2.0
         client.settimeout(original_timeout)
         try:
-            started = time.monotonic()
-            assert receive(client, timeout=0.2) is None
-            assert time.monotonic() - started < 0.6
+            assert receive(client, timeout=0.3) is None
+            # Gave up before the peer had even finished sending the frame.
+            assert sent[0] < len(frame)
             assert client.gettimeout() == original_timeout
         finally:
             stop.set()
-            sender.join(timeout=2)
+            sender.join(timeout=5)
             client.close()
             peer.close()
 
@@ -171,32 +176,55 @@ class TestServerFraming:
             peer.close()
 
     @pytest.mark.parametrize("side", ["bridge", "handler"])
-    def test_header_and_body_share_receive_deadline(self, ss_module, side):
+    def test_header_and_body_share_receive_deadline(self, ss_module, side, monkeypatch):
+        """Deterministic: a fake clock advances 0.06 s per recv() of one byte. Each
+        recv() stays under the 0.2 s timeout, but the frame as a whole does not."""
+        import time as real_time
+
         import mcp_bridge_framing
 
-        receive = (mcp_bridge_framing if side == "bridge" else ss_module).receive_message
-        client, peer = socket.socketpair()
-        stop = threading.Event()
+        mod = mcp_bridge_framing if side == "bridge" else ss_module
+        clock = [1000.0]
 
-        def send_parts():
-            try:
-                for part in (struct.pack(">I", 5), b"hello"):
-                    if stop.wait(0.12):
-                        return
-                    peer.sendall(part)
-            except OSError:
-                pass
+        class FakeTime:
+            def __getattr__(self, name):
+                return getattr(real_time, name)
 
-        sender = threading.Thread(target=send_parts)
-        sender.start()
-        try:
-            assert receive(client, timeout=0.2) is None
-            assert client.gettimeout() is None
-        finally:
-            stop.set()
-            sender.join(timeout=2)
-            client.close()
-            peer.close()
+            @staticmethod
+            def monotonic():
+                return clock[0]
+
+        monkeypatch.setattr(mod, "time", FakeTime())
+        frame = struct.pack(">I", 5) + b"hello"
+
+        class SlowSock:
+            def __init__(self):
+                self.timeout = None
+                self.pos = 0
+                self.timeouts_set = []
+
+            def gettimeout(self):
+                return self.timeout
+
+            def settimeout(self, value):
+                self.timeout = value
+                self.timeouts_set.append(value)
+
+            def recv(self, n):
+                step = 0.06
+                if self.timeout is not None and step > self.timeout:
+                    clock[0] += self.timeout
+                    raise TimeoutError("timed out")
+                clock[0] += step
+                chunk = frame[self.pos:self.pos + 1]
+                self.pos += len(chunk)
+                return chunk
+
+        sock = SlowSock()
+        assert mod.receive_message(sock, timeout=0.2) is None
+        assert sock.pos < len(frame)       # dropped part-way through the frame
+        assert sock.timeout is None        # caller's timeout restored
+        assert all(t is None or t > 0 for t in sock.timeouts_set)
 
     @pytest.mark.parametrize("side", ["bridge", "handler"])
     @pytest.mark.parametrize("timeout", [None, 0])
