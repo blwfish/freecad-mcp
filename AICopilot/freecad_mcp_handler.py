@@ -212,15 +212,24 @@ from gui_heartbeat import GuiHeartbeat
 from handler_registry import _GUI_SENSITIVE, _HANDLER_CLASS_NAMES
 from universal_selector import UniversalSelector
 
-# Version: 8.6.0 - Python 3.11 minimum for the bridge:
-#                   requires-python is now >=3.11 (Python 3.10 reached end of
-#                   life on 2026-10-01), which removes the pre-3.11 branch of
-#                   the lockfile and with it every open filelock advisory.
-#                   AICopilot itself is deliberately still free of 3.11-only
-#                   APIs: it runs on FreeCAD's own interpreter, and some
-#                   installs still embed 3.10.
+# Version: 8.7.0 - configurable per-connection request timeout, single
+#                   receive deadline per frame, Windows headless test suite:
+#                   FREECAD_MCP_RECV_TIMEOUT sets how long the FreeCAD side
+#                   waits for one complete request frame (default 30 s), and
+#                   that budget is now one monotonic deadline shared by the
+#                   length prefix and body in both framing implementations,
+#                   so a peer that trickles bytes just under the per-read
+#                   timeout can no longer hold a connection open indefinitely.
+#                   FREECAD_MCP_PORT is validated instead of crashing on
+#                   import, and the Windows auth token is compared as bytes
+#                   so a non-ASCII token gets "Unauthorized" rather than an
+#                   error. Adds a headless FreeCAD smoke suite
+#                   (tests/windows) with an advisory Windows CI workflow, an
+#                   operation-enum parity test across all 19 tools with an
+#                   operation argument, and Python 3.14 in the unit matrix.
+#                   pytest is bumped to 9.2.0 and ruff to 0.17.4.
 
-__version__ = "8.6.0"
+__version__ = "8.7.0"
 
 # Minimum FreeCAD version required for CAM tools (the new Path Toolbit API).
 # Below this, cam_operations / cam_tools / cam_tool_controllers return a clean
