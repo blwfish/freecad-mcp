@@ -280,7 +280,6 @@ def _trickle(server: FcServer, data: bytes, gap: float, give_up: float):
     return None
 
 
-@pytest.mark.xfail(strict=True, reason="needs PR #121 (single receive deadline per frame); remove this marker once it is on dev")
 def test_slow_trickle_is_dropped_at_the_single_deadline(short_timeout_server):
     s = short_timeout_server
     req = frame(json.dumps({"tool": "execute_python_sync", "args": {"code": "1"}, "token": s.read_token()}).encode())
