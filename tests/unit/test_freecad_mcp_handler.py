@@ -141,10 +141,18 @@ class TestServerFraming:
         sender.start()
         original_timeout = 2.0
         client.settimeout(original_timeout)
+        budget = 0.3
         try:
-            assert receive(client, timeout=0.3) is None
+            started = time.monotonic()
+            assert receive(client, timeout=budget) is None
+            waited = time.monotonic() - started
             # Gave up before the peer had even finished sending the frame.
             assert sent[0] < len(frame)
+            # None is also what a disconnect, decode error or oversize frame returns, so
+            # rule those out: the receiver must have held on for (almost) the whole budget.
+            # Only a LOWER bound -- a slow runner can lengthen the wait but never shorten
+            # it, so unlike an upper bound this cannot flake under load.
+            assert waited >= budget * 0.9
             assert client.gettimeout() == original_timeout
         finally:
             stop.set()
@@ -225,6 +233,69 @@ class TestServerFraming:
         assert sock.pos < len(frame)       # dropped part-way through the frame
         assert sock.timeout is None        # caller's timeout restored
         assert all(t is None or t > 0 for t in sock.timeouts_set)
+
+    @pytest.mark.parametrize("side", ["bridge", "handler"])
+    @pytest.mark.parametrize(
+        "spent, expect_message",
+        [
+            pytest.param(0.2 - 0.001, True, id="just-below-deadline"),
+            pytest.param(0.2, False, id="exactly-at-deadline"),
+            pytest.param(0.2 + 0.001, False, id="just-above-deadline"),
+        ],
+    )
+    def test_receive_deadline_boundary(self, ss_module, side, spent, expect_message, monkeypatch):
+        """Pins the `remaining_time <= 0` contract with a fake clock: the first recv()
+        returns one byte and consumes `spent` of a 0.2 s budget; everything after that is
+        instantaneous. Exactly-at-deadline must give up -- and must not hand the socket a
+        non-positive timeout, because settimeout(0.0) silently makes it non-blocking and
+        settimeout(<0) raises ValueError."""
+        import time as real_time
+
+        import mcp_bridge_framing
+
+        mod = mcp_bridge_framing if side == "bridge" else ss_module
+        clock = [1000.0]
+
+        class FakeTime:
+            def __getattr__(self, name):
+                return getattr(real_time, name)
+
+            @staticmethod
+            def monotonic():
+                return clock[0]
+
+        monkeypatch.setattr(mod, "time", FakeTime())
+        frame = struct.pack(">I", 5) + b"hello"
+
+        class Sock:
+            def __init__(self):
+                self.timeout = None
+                self.pos = 0
+                self.timeouts_set = []
+
+            def gettimeout(self):
+                return self.timeout
+
+            def settimeout(self, value):
+                self.timeout = value
+                self.timeouts_set.append(value)
+
+            def recv(self, n):
+                if self.pos == 0:
+                    clock[0] += spent  # the one slow read
+                chunk = frame[self.pos:self.pos + (1 if self.pos == 0 else n)]
+                self.pos += len(chunk)
+                return chunk
+
+        sock = Sock()
+        result = mod.receive_message(sock, timeout=0.2)
+        if expect_message:
+            assert result == "hello"
+        else:
+            assert result is None
+            assert sock.pos == 1  # gave up right after the slow read, before touching the peer again
+        assert sock.timeout is None  # caller's timeout restored
+        assert all(t is None or t > 0 for t in sock.timeouts_set), sock.timeouts_set
 
     @pytest.mark.parametrize("side", ["bridge", "handler"])
     @pytest.mark.parametrize("timeout", [None, 0])
