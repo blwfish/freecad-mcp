@@ -84,9 +84,16 @@ jobs:
           # order, and not just --limit 1 -- stable releases interleave
           # with weeklies in the same feed, so filter for "weekly-" before
           # picking the newest one).
+          #
+          # NOTE: `gh api --paginate --jq` runs the jq filter once PER PAGE,
+          # not once over the concatenated result, so a whole-array
+          # `sort_by | .[0]` yields one line per page (newest-per-page) and
+          # the multi-line value then breaks the $GITHUB_OUTPUT write
+          # ("Invalid format 'weekly-...'"). Emit one "<published_at> <tag>"
+          # line per matching release and do the global sort in the shell.
           LATEST_DEV_WEEKLY=$(gh api repos/FreeCAD/FreeCAD/releases --paginate --jq '
-            [.[] | select(.tag_name | startswith("weekly-"))] | sort_by(.published_at) | reverse | .[0].tag_name
-          ')
+            .[] | select(.tag_name | startswith("weekly-")) | "\(.published_at) \(.tag_name)"
+          ' | sort | tail -1 | cut -d' ' -f2)
 
           echo "current_dev_weekly=$CURRENT_DEV_WEEKLY" >> $GITHUB_OUTPUT
           echo "latest_dev_weekly=$LATEST_DEV_WEEKLY" >> $GITHUB_OUTPUT
