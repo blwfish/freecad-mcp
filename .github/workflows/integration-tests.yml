@@ -21,7 +21,7 @@ jobs:
             # it belongs to the separate PR-only job below, on every push.
             pytest_args: "-m 'not cam and not real_document and not fc_tools'"
           - slot: "dev-weekly"
-            tag: "weekly-2026.11.11"
+            tag: "weekly-2026.11.26"
             appimage: ""  # resolved by glob below
             pytest_args: "-m 'not real_document and not fc_tools'"
 
@@ -112,7 +112,10 @@ jobs:
       - name: Set up FreeCAD AppImage
         uses: ./.github/actions/setup-freecad-appimage
         with:
-          tag: "weekly-2026.08.05"
+          # Follows the dev-weekly pin above -- bump together.
+          # check-upstream-releases.yml requires every weekly tag: in this
+          # file to agree, so a missed bump here fails that check loudly.
+          tag: "weekly-2026.11.26"
           appimage: ""
           use-cache: 'true'
           install-gdb: 'true'
@@ -143,7 +146,7 @@ jobs:
             tag: "1.1.1"
             appimage: "FreeCAD_1.1.1-Linux-x86_64-py311.AppImage"
           - slot: "dev-weekly"
-            tag: "weekly-2026.11.11"
+            tag: "weekly-2026.11.26"
             appimage: ""
 
     name: "Instance lifecycle (${{ matrix.slot }})"

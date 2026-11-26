@@ -65,17 +65,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # The "dev-weekly" slot's tag in integration-tests.yml's matrices.
-          # Grep the two-line block rather than a generic "weekly-" search so
-          # this doesn't accidentally pick up a comment or an unrelated tag
-          # elsewhere in the file. More than one job carries a dev-weekly
-          # slot (test matrix + instance-lifecycle), so collect the distinct
-          # tags and require exactly one: if the slots drift apart that is a
-          # real inconsistency to surface, not something to resolve by
+          # Every weekly-* `tag:` pin in integration-tests.yml is the
+          # dev-weekly pin: the matrix slots (test matrix +
+          # instance-lifecycle) AND the non-matrix real-document-regression
+          # job. Matching only the `slot: "dev-weekly"` blocks used to miss
+          # that job, which sat at weekly-2026.08.05 for three months while
+          # every bump updated only the slots. Match the `tag:` key itself
+          # (not a generic "weekly-" search) so comments can't count, collect
+          # the distinct values, and require exactly one: pins drifting apart
+          # are a real inconsistency to surface, not something to resolve by
           # silently taking the first match.
-          CURRENT_TAGS=$(grep -A1 'slot: "dev-weekly"' .github/workflows/integration-tests.yml | grep -oE 'weekly-[0-9]{4}\.[0-9]{2}\.[0-9]{2}' | sort -u)
+          CURRENT_TAGS=$(grep -E '^[[:space:]]*tag:[[:space:]]*"weekly-' .github/workflows/integration-tests.yml | grep -oE 'weekly-[0-9]{4}\.[0-9]{2}\.[0-9]{2}' | sort -u)
           if [ "$(printf '%s\n' "$CURRENT_TAGS" | grep -c .)" -ne 1 ]; then
-            echo "::error::Expected exactly one distinct dev-weekly pin across integration-tests.yml slots, found: $(echo $CURRENT_TAGS)"
+            echo "::error::Expected exactly one distinct weekly pin across integration-tests.yml (dev-weekly matrix slots + real-document-regression), found: $(echo $CURRENT_TAGS)"
             exit 1
           fi
           CURRENT_DEV_WEEKLY="$CURRENT_TAGS"
@@ -185,7 +187,7 @@ jobs:
             }
 
             if ('${{ steps.dev_weekly.outputs.update_available }}' === 'true') {
-              body += `## FreeCAD dev-weekly CI pin\n- Current (integration-tests.yml \`dev-weekly\` slot): ${dev_weekly_current}\n- Latest weekly on GitHub: ${dev_weekly_latest}\n- **Action:** bump the \`tag:\` under the \`dev-weekly\` slot in \`.github/workflows/integration-tests.yml\` to ${dev_weekly_latest} -- test locally first (a real FreeCAD API/behavior change between weeklies has broken CI-relevant handler code before, e.g. the create_tool ToolBit.from_dict() parameter-format regression fixed 2026-07-20; see KNOWN_ISSUES.md). Do not auto-merge against a moving target -- this issue is informational, not a PR.\n\n`;
+              body += `## FreeCAD dev-weekly CI pin\n- Current (integration-tests.yml weekly pins): ${dev_weekly_current}\n- Latest weekly on GitHub: ${dev_weekly_latest}\n- **Action:** bump every weekly \`tag:\` in \`.github/workflows/integration-tests.yml\` (both \`dev-weekly\` matrix slots and the \`real-document-regression\` job) to ${dev_weekly_latest} -- test locally first (a real FreeCAD API/behavior change between weeklies has broken CI-relevant handler code before, e.g. the create_tool ToolBit.from_dict() parameter-format regression fixed 2026-07-20; see KNOWN_ISSUES.md). Do not auto-merge against a moving target -- this issue is informational, not a PR.\n\n`;
             }
 
             if (python_deps.trim()) {
